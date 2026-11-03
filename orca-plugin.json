@@ -1,7 +1,6 @@
 {
   "manifestVersion": 2,
   "id": "usage-insights",
-  "publisher": "etherll",
   "name": "Usage Insights",
   "version": "1.0.0",
   "execution": "trusted-worker",
