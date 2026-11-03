@@ -13,7 +13,7 @@
   "repository": "https://github.com/Etherll/orca-usage-insights",
   "icon": "images/icon.png",
   "engines": {
-    "orca": ">=1.4.246"
+    "orca": ">=1.4.248"
   },
   "pluginApi": 1,
   "main": "src/worker.mjs",
@@ -24,6 +24,14 @@
         "title": "Usage Insights",
         "icon": "bar-chart-3",
         "entry": "panel/index.html"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "today",
+        "text": "—",
+        "icon": "activity",
+        "tooltip": "Usage Insights"
       }
     ],
     "settings": [
