@@ -158,11 +158,11 @@ async function waitFor(check, ms = 2000) {
 
 test('manifest is the trusted worker with exactly the declared keys', () => {
   const manifest = JSON.parse(readFileSync(path.join(root, 'orca-plugin.json'), 'utf8'));
-  const allowedTop = ['manifestVersion', 'id', 'publisher', 'name', 'version', 'execution', 'description', 'author', 'license', 'repository', 'icon', 'cover', 'screenshots', 'engines', 'pluginApi', 'main', 'contributes', 'capabilities']
+  const allowedTop = ['manifestVersion', 'id', 'name', 'version', 'execution', 'description', 'author', 'license', 'repository', 'icon', 'cover', 'screenshots', 'engines', 'pluginApi', 'main', 'contributes', 'capabilities']
   assert.deepEqual(Object.keys(manifest).filter((k) => !allowedTop.includes(k)), [], 'no unknown top-level keys')
   assert.equal(manifest.manifestVersion, 2)
   assert.equal(manifest.id, 'usage-insights')
-  assert.equal(manifest.publisher, 'etherll')
+  assert.equal(manifest.publisher, undefined, 'publisher is derived from the repo owner')
   assert.equal(manifest.execution, 'trusted-worker')
   assert.equal(manifest.main, 'src/worker.mjs')
   assert.equal(manifest.pluginApi, 1)
