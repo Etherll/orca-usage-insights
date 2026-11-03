@@ -58,6 +58,8 @@ export function createSshSource({
   let saveTimer = null;
   let closed = false;
   let child = null;
+  // Ends the running exec at once (used by close, so it never waits for the process to exit).
+  let abortExec = null;
 
   function scan({ force = false } = {}) {
     if (closed) return Promise.resolve({ records: [], status, changed: false });
@@ -175,8 +177,16 @@ export function createSshSource({
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (child === proc) child = null;
+        if (child === proc) {
+          child = null;
+          abortExec = null;
+        }
         fn(value);
+      };
+      abortExec = (error) => {
+        proc.stdout.destroy();
+        proc.stderr.destroy();
+        settle(reject, error);
       };
       const arm = () => {
         clearTimeout(timer);
@@ -296,6 +306,7 @@ export function createSshSource({
       if (closed) return;
       closed = true;
       child?.kill();
+      abortExec?.(new Error('source closed'));
       await inFlight?.catch(() => {});
       dirty = true;
       await flush().catch(() => {});
