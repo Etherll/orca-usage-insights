@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'">
+<title>Usage Insights</title>
+<style>/* PANEL_STYLES */</style>
+</head>
+<body>
+<main id="app" aria-busy="true">
+  <section class="hero">
+    <div id="banner" class="banner-wrap"></div>
+    <div class="hero-text">
+      <h1>Usage Insights</h1>
+      <p id="updated" class="muted">Reading your Claude Code and Codex transcripts…</p>
+    </div>
+    <div class="hero-stat"><strong id="hero-total"></strong><span id="hero-sub" class="muted"></span></div>
+  </section>
+
+  <nav class="controls" aria-label="Filters">
+    <div class="seg" role="radiogroup" aria-label="Range" id="ranges">
+      <button role="radio" data-range="7d" aria-checked="true">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button>
+    </div>
+    <div class="seg" role="radiogroup" aria-label="Measure" id="metric">
+      <button role="radio" data-metric="tokens" aria-checked="true">Tokens</button><button role="radio" data-metric="cost" aria-checked="false" tabindex="-1">Cost</button>
+    </div>
+    <div class="filters-wrap">
+      <button class="filter-btn" id="filters-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="filters-pop">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+        Filters<span class="count" id="filters-count" hidden></span>
+      </button>
+      <div class="popover" id="filters-pop" role="dialog" aria-label="Filters" hidden>
+        <section class="pop-section">
+          <h3 class="pop-title" id="scope-title">Sessions</h3>
+          <div class="opt-list" role="radiogroup" aria-labelledby="scope-title" id="scope">
+            <button role="radio" data-scope="all" aria-checked="true"><span class="dot" aria-hidden="true"></span><span><b>All sessions</b><small>Everything on the sources below</small></span></button>
+            <button role="radio" data-scope="worktrees" aria-checked="false" tabindex="-1"><span class="dot" aria-hidden="true"></span><span><b>Orca worktrees only</b><small>Sessions that ran inside a worktree</small></span></button>
+          </div>
+        </section>
+        <section class="pop-section" id="sec-providers" hidden>
+          <h3 class="pop-title" id="providers-title">Provider</h3>
+          <div class="opt-list" role="radiogroup" aria-labelledby="providers-title" id="providers"></div>
+        </section>
+        <section class="pop-section" id="sec-hosts" hidden>
+          <h3 class="pop-title" id="hosts-title">Machine</h3>
+          <div class="opt-list" role="radiogroup" aria-labelledby="hosts-title" id="hosts"></div>
+        </section>
+        <section class="pop-section">
+          <label class="toggle"><input type="checkbox" id="cache" checked> Include cache tokens</label>
+        </section>
+        <footer class="pop-foot"><button class="link-btn" id="filters-reset">Reset filters</button><button class="link-btn" id="filters-done">Done</button></footer>
+      </div>
+    </div>
+    <div class="chips" id="chips" aria-label="Active filters"></div>
+    <button class="icon-btn" id="refresh" title="Rescan transcripts" aria-label="Rescan transcripts"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+  </nav>
+
+  <p id="status" class="status" role="status" hidden></p>
+  <p id="notice" class="notice" role="status" hidden></p>
+  <section id="sources" class="sources" aria-label="Sources" hidden></section>
+  <div id="skeleton" class="skeleton" aria-hidden="true">
+    <div class="sk-tiles"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <i class="sk-card tall"></i><i class="sk-card"></i>
+  </div>
+  <p id="live" class="sr-only" aria-live="polite"></p>
+
+  <section id="content" hidden>
+    <div class="tiles" id="tiles"></div>
+
+    <article class="card">
+      <div class="overview">
+        <div class="ov-left">
+          <div class="ov-total" id="ov-total">—</div>
+          <p class="muted" id="ov-sessions"></p>
+          <ul class="prov-list" id="ov-providers"></ul>
+          <ul class="prov-list host-list" id="ov-hosts" hidden></ul>
+          <div class="totals" id="totals"></div>
+        </div>
+        <div class="ov-right">
+          <header><h2 id="trend-title">Daily by provider</h2></header>
+          <div id="trend"></div>
+        </div>
+      </div>
+      <h2 class="sub-h">Tokens by type</h2>
+      <div id="typebar"></div>
+      <ul class="legend" id="type-legend"></ul>
+    </article>
+
+    <article class="card">
+      <header><h2>Daily usage</h2><p class="muted" id="daily-sub"></p></header>
+      <div id="daily"></div>
+      <ul class="legend" id="daily-legend"></ul>
+    </article>
+
+    <div class="grid-2">
+      <article class="card">
+        <header><h2>Activity</h2><span class="pill" id="peak"></span></header>
+        <p class="muted">Last 26 weeks, all providers in the filter.</p>
+        <div id="calendar" class="scroll-x"></div>
+        <div class="scale"><span class="muted">Less</span><i class="cell q0"></i><i class="cell q1"></i><i class="cell q2"></i><i class="cell q3"></i><i class="cell q4"></i><span class="muted">More</span></div>
+      </article>
+      <article class="card">
+        <header><h2>Rhythm</h2></header>
+        <p class="muted">When you work, by weekday and hour.</p>
+        <div id="punch" class="scroll-x"></div>
+      </article>
+    </div>
+
+    <article class="card">
+      <header><h2>Breakdown</h2>
+        <div class="seg" role="radiogroup" aria-label="Breakdown by" id="bd-mode"><button role="radio" data-mode="model" aria-checked="true">By model</button><button role="radio" data-mode="day" aria-checked="false" tabindex="-1">By day</button></div>
+      </header>
+      <div class="table-wrap"><table class="bd" id="breakdown"></table></div>
+    </article>
+
+    <div class="grid-2">
+      <article class="card">
+        <header><h2>Token mix</h2></header>
+        <div class="mix"><div id="donut"></div><ul class="legend legend-col" id="mix-legend"></ul></div>
+      </article>
+      <article class="card">
+        <header><h2>Projects</h2></header>
+        <div id="projects"></div>
+      </article>
+    </div>
+
+    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine and the folders and SSH hosts in Settings. No data is sent anywhere else. Cost is an estimate at list API prices.</p>
+  </section>
+  <div id="tip" class="tip" role="tooltip" hidden></div>
+</main>
+<script>/* PANEL_SCRIPT */</script>
+</body>
+</html>

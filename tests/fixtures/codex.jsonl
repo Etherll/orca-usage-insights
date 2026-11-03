@@ -1,0 +1,13 @@
+{"timestamp":"2026-10-01T09:00:00.000Z","type":"session_meta","payload":{"id":"cx-1","cwd":"/home/me/work/gamma","originator":"codex_cli","cli_version":"0.50.0"}}
+{"timestamp":"2026-10-01T09:00:01.000Z","type":"turn_context","payload":{"cwd":"/home/me/work/gamma","model":"gpt-5-codex"}}
+{"timestamp":"2026-10-01T09:00:02.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":3.0}}}}
+{"timestamp":"2026-10-01T09:01:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1200,"cached_input_tokens":1000,"output_tokens":80,"reasoning_output_tokens":20,"total_tokens":1280},"last_token_usage":{"input_tokens":1200,"cached_input_tokens":1000,"output_tokens":80,"reasoning_output_tokens":20,"total_tokens":1280}}}}
+{"timestamp":"2026-10-01T09:02:00.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Done."}]}}
+
+{"timestamp":"2026-10-01T09:05:00.000Z","type":"turn_context","payload":{"cwd":"/home/me/work/gamma","model":"gpt-5.1-codex-mini"}}
+{"timestamp":"2026-10-01T09:06:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":10}}}}
+{"timestamp":"2026-10-01T09:07:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":5,"cached_input_tokens":9,"output_tokens":1}}}}
+{"timestamp":"2026-10-01T09:08:00.000Z","type":"event_msg","payload":{"type":"token_count"
+{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":9,"cached_input_tokens":0,"output_tokens":9}}}}
+{"timestamp":"2026-10-01T09:09:00.000Z","type":"event_msg","payload":{"type":"agent_message","message":"token_count is shown in the status bar"}}
+{"timestamp":"2026-10-01T09:10:00.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5}}}}

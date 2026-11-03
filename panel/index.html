@@ -1,0 +1,1399 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; base-uri 'none'; form-action 'none'">
+<title>Usage Insights</title>
+<style>:root {
+  --bg: var(--orca-background, #111111);
+  --fg: var(--orca-foreground, #ececec);
+  --card: var(--orca-card, #181818);
+  --muted-fg: var(--orca-muted-foreground, #9a9a9a);
+  --muted: var(--orca-muted, #262626);
+  --border: var(--orca-border, #2a2a2a);
+  --accent: var(--orca-accent, #262626);
+  --primary: var(--orca-primary, #ececec);
+  --radius: var(--orca-radius, 10px);
+  /* categorical slots (validated: adjacent CVD ΔE ≥ 8.4) */
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  /* sequential blue, dark steps */
+  --q1: #184f95; --q2: #256abf; --q3: #3987e5; --q4: #86b6ef;
+  color-scheme: dark;
+}
+html.light {
+  --bg: var(--orca-background, #ffffff);
+  --fg: var(--orca-foreground, #141414);
+  --card: var(--orca-card, #fcfcfb);
+  --muted-fg: var(--orca-muted-foreground, #6b6b6b);
+  --muted: var(--orca-muted, #eeeeec);
+  --border: var(--orca-border, #e3e3e0);
+  --accent: var(--orca-accent, #f0f0ee);
+  --primary: var(--orca-primary, #141414);
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --q1: #b7d3f6; --q2: #6da7ec; --q3: #2a78d6; --q4: #184f95;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 13px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { padding: 16px; display: flex; flex-direction: column; gap: 16px; max-width: 1100px; margin: 0 auto; }
+h1, h2 { margin: 0; font-weight: 600; }
+h1 { font-size: 16px; }
+h2 { font-size: 13px; }
+.muted { color: var(--muted-fg); }
+p { margin: 0; }
+
+.hero { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border); min-height: 112px; }
+.banner-wrap, .banner-wrap svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+.hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.45), rgba(0,0,0,0) 45%, rgba(0,0,0,.55)); pointer-events: none; }
+.hero-text, .hero-stat { position: relative; z-index: 1; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+.hero-text { padding: 10px 12px 0; }
+.hero-text .muted, .hero-stat .muted { color: rgba(255,255,255,.82); }
+.hero-stat { position: absolute; left: 12px; bottom: 10px; display: flex; align-items: baseline; gap: 8px; }
+.hero-stat strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; padding: 2px; background: var(--card); }
+.seg:empty { display: none; }
+.seg button { border: 0; background: transparent; color: var(--muted-fg); font: inherit; padding: 3px 9px; border-radius: 6px; cursor: pointer; }
+.seg button[aria-checked="true"] { background: var(--accent); color: var(--fg); }
+.seg button:focus-visible, .icon-btn:focus-visible, .toggle input:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.toggle { display: inline-flex; gap: 6px; align-items: center; color: var(--muted-fg); cursor: pointer; }
+.icon-btn { margin-left: auto; border: 1px solid var(--border); background: var(--card); color: var(--fg); border-radius: 8px; width: 30px; height: 28px; font-size: 15px; cursor: pointer; }
+.icon-btn.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .icon-btn.spin { animation: none; opacity: .6; } }
+
+.status { padding: 10px 12px; border: 1px dashed var(--border); border-radius: var(--radius); color: var(--muted-fg); }
+.status.error { border-style: solid; border-color: var(--orca-destructive, #e34948); color: var(--fg); }
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.tile { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tile .label { color: var(--muted-fg); font-size: 12px; }
+.tile .value { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .sub { color: var(--muted-fg); font-size: 11px; }
+.tile .spark-wrap { margin-top: 2px; height: 26px; }
+
+.card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.card header { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.scroll-x { overflow-x: auto; }
+.pill { font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--muted-fg); }
+.pill:empty { display: none; }
+
+svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
+#calendar svg.chart, #punch svg.chart { min-width: 300px; }
+#donut svg.chart { width: 132px; }
+.chart text { font: 10px system-ui, sans-serif; fill: var(--muted-fg); }
+.chart .t-faint { fill: var(--muted-fg); opacity: .65; font-size: 9px; }
+.chart .t-strong { font-size: 16px; font-weight: 600; fill: var(--fg); }
+.chart .t-label { fill: var(--fg); font-size: 11px; }
+.chart .axis { stroke: var(--border); stroke-width: 1; }
+.chart .hit { fill: transparent; }
+.chart .track { stroke: var(--muted); }
+.chart .bar { fill: var(--s1); }
+.chart .dot { fill: var(--s1); }
+.chart .dot-empty { fill: var(--muted); }
+.chart .spark { stroke: var(--s1); }
+.chart .spark-dot { fill: var(--s1); }
+.chart .mark:hover .bar, .chart .mark:hover .dot, .chart .cell.mark:hover { filter: brightness(1.25); }
+.chart g.mark:hover > .hit { fill: var(--accent); fill-opacity: .5; }
+.cell.q0 { fill: var(--muted); background: var(--muted); }
+.cell.q1 { fill: var(--q1); background: var(--q1); }
+.cell.q2 { fill: var(--q2); background: var(--q2); }
+.cell.q3 { fill: var(--q3); background: var(--q3); }
+.cell.q4 { fill: var(--q4); background: var(--q4); }
+.scale { display: flex; gap: 3px; align-items: center; font-size: 11px; justify-content: flex-end; }
+.scale i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.scale .muted:first-child { margin-right: 3px; }
+.scale .muted:last-child { margin-left: 3px; }
+
+.legend { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; }
+.legend li { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.legend .sw { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.legend .v { color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.legend-col { flex-direction: column; gap: 6px; }
+.mix { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+
+.footnote { font-size: 11px; text-align: center; padding: 4px 0 8px; }
+.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--orca-popover, var(--card)); color: var(--orca-popover-foreground, var(--fg)); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.25); min-width: 120px; }
+.tip b { display: block; margin-bottom: 3px; }
+.tip .row { display: flex; justify-content: space-between; gap: 12px; }
+.tip .row span:last-child { font-variant-numeric: tabular-nums; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+.overview { display: grid; grid-template-columns: minmax(200px, 280px) 1fr; gap: 20px; }
+@media (max-width: 640px) { .overview { grid-template-columns: 1fr; } }
+.ov-total { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.prov-list { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.prov-list li { display: grid; grid-template-columns: auto 1fr auto; column-gap: 8px; align-items: baseline; }
+.prov-list .sw { width: 9px; height: 9px; border-radius: 50%; align-self: center; }
+.prov-list .name { font-weight: 600; }
+.prov-list .name small { font-weight: 400; color: var(--muted-fg); margin-left: 4px; font-size: 11px; }
+.prov-list .amt { font-weight: 600; font-variant-numeric: tabular-nums; }
+.prov-list .meta { grid-column: 2 / 4; color: var(--muted-fg); font-size: 12px; }
+.ov-right { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.sub-h { margin-top: 6px; }
+.totals { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.totals div { display: flex; flex-direction: column; gap: 2px; }
+.totals span { color: var(--muted-fg); font-size: 12px; }
+.totals strong { font-size: 16px; font-variant-numeric: tabular-nums; }
+#typebar svg.chart { max-width: 520px; }
+.chart .grid { stroke: var(--border); stroke-width: 1; stroke-dasharray: 2 3; }
+.chart .xline { stroke: var(--muted-fg); stroke-width: 1; opacity: 0; }
+.chart .xdot { opacity: 0; stroke: var(--card); stroke-width: 2; }
+.chart .xhair:hover .xline { opacity: .5; }
+.chart .xhair:hover .xdot { opacity: 1; }
+.chart .xhair:hover > .hit { fill: transparent; }
+.chart .track-fill { fill: var(--muted); }
+.table-wrap { overflow-x: auto; }
+table.bd { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.bd th { text-align: right; font-weight: 500; color: var(--muted-fg); font-size: 12px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.bd th:nth-child(-n+2) { text-align: left; }
+.bd td { text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.bd tr:last-child td { border-bottom: 0; }
+.bd td.rank { text-align: left; color: var(--muted-fg); width: 1%; }
+.bd td.name { text-align: left; width: 60%; white-space: normal; }
+.bd .nm { display: inline-flex; align-items: center; gap: 6px; }
+.bd .nm .sw { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.bd .share-line { display: block; height: 2px; border-radius: 2px; margin-top: 5px; min-width: 2px; }
+.bd td.muted { color: var(--muted-fg); }
+.bd tbody tr:hover td { background: var(--accent); }
+
+/* Space between every section; cards no longer touch. */
+#content:not([hidden]) { display: flex; flex-direction: column; gap: 16px; }
+.sub-h { margin-top: 10px; }
+@media (max-width: 480px) { main { padding: 12px; gap: 12px; } #content:not([hidden]) { gap: 12px; } .grid-2 { gap: 12px; } .card { padding: 14px; } }
+
+.tile-cache { cursor: help; }
+.tile-cache:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.tile .meter { margin: 4px 0 2px; }
+.tile .meter svg.chart { width: 100%; height: 6px; }
+.tip .row span:first-child:empty + span { color: var(--muted-fg); font-size: 11px; }
+
+/* Overview: totals live in the left column so it fills the height of the trend chart. */
+.ov-left { display: flex; flex-direction: column; }
+.ov-left .totals { grid-template-columns: 1fr 1fr; gap: 12px 16px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--border); }
+.ov-left .prov-list { margin-bottom: 16px; }
+@media (max-width: 640px) { .ov-left .totals { margin-top: 0; } }
+#typebar svg.chart { max-width: none; }
+
+/* Centre the donut in its card when the neighbouring card is taller. */
+.card > .mix { flex: 1; justify-content: center; }
+
+/* --- UX pass: controls, states, motion --- */
+.seg { padding: 3px; gap: 2px; }
+.seg button { min-height: 28px; padding: 4px 11px; transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
+.seg button:hover { color: var(--fg); background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.seg button[aria-checked="true"] { background: var(--accent); color: var(--fg); font-weight: 600; box-shadow: inset 0 0 0 1px var(--border); }
+.icon-btn { display: inline-grid; place-items: center; width: 32px; height: 32px; transition: background-color .15s ease, border-color .15s ease; }
+.icon-btn:hover { background: var(--accent); }
+.icon-btn:disabled { opacity: .6; cursor: progress; }
+.icon-btn.spin { animation: none; }
+.icon-btn.spin svg { animation: spin .9s linear infinite; }
+.toggle { min-height: 28px; padding: 0 4px; }
+.toggle input { accent-color: var(--s1); width: 15px; height: 15px; cursor: pointer; }
+.bd tbody tr td { transition: background-color .15s ease; }
+.tiles { align-items: stretch; }
+.tile { min-height: 96px; }
+
+/* Skeleton while the first scan runs (can take a few seconds on first install). */
+.skeleton { display: flex; flex-direction: column; gap: 16px; }
+.skeleton[hidden] { display: none; }
+.sk-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.skeleton i { display: block; border-radius: var(--radius); border: 1px solid var(--border); background: linear-gradient(90deg, var(--card) 0%, var(--accent) 50%, var(--card) 100%); background-size: 200% 100%; animation: shimmer 1.4s ease-in-out infinite; }
+.sk-tiles i { height: 96px; }
+.sk-card { height: 180px; }
+.sk-card.tall { height: 300px; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+  .icon-btn.spin svg { opacity: .6; }
+}
+
+/* --- Sources strip, notices, machines --- */
+.sources { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sources[hidden] { display: none; }
+.src { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); font-size: 12px; max-width: 100%; cursor: default; }
+.src .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.src .meta { color: var(--muted-fg); white-space: nowrap; }
+.src .state { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.src.ok .state { background: var(--s3); }
+.src.warning .state { background: var(--s4); }
+.src.error { border-color: color-mix(in srgb, var(--orca-destructive, #e34948) 55%, var(--border)); }
+.src.error .state { background: var(--orca-destructive, #e34948); }
+.src.loading .state { background: transparent; border: 2px solid var(--s1); border-right-color: transparent; animation: spin .9s linear infinite; width: 10px; height: 10px; }
+.src svg { flex: none; color: var(--muted-fg); }
+.sources .hint { color: var(--muted-fg); font-size: 12px; }
+.notice { padding: 8px 12px; border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--s4) 60%, var(--border)); background: color-mix(in srgb, var(--s4) 10%, var(--card)); font-size: 12px; }
+.notice[hidden] { display: none; }
+.host-list { margin-top: 0; padding-top: 12px; border-top: 1px dashed var(--border); }
+.host-list[hidden] { display: none; }
+
+/* --- Filters menu: Range and Tokens/Cost stay visible; everything else lives here --- */
+.filters-wrap { position: relative; }
+.filter-btn { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--fg); font: inherit; cursor: pointer; transition: background-color .15s ease, border-color .15s ease; }
+.filter-btn:hover, .filter-btn[aria-expanded="true"] { background: var(--accent); }
+.filter-btn:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.filter-btn .count { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--s1); color: #fff; font-size: 11px; font-weight: 700; display: inline-grid; place-items: center; }
+.popover { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: 300px; max-width: calc(100vw - 32px); padding: 6px; border: 1px solid var(--border); border-radius: 12px; background: var(--orca-popover, var(--card)); color: var(--orca-popover-foreground, var(--fg)); box-shadow: 0 12px 32px rgba(0,0,0,.35); }
+.popover[hidden] { display: none; }
+.pop-section { padding: 6px 4px; }
+.pop-section[hidden] { display: none; }
+.pop-section + .pop-section { border-top: 1px solid var(--border); }
+.pop-title { margin: 2px 8px 6px; font-size: 11px; font-weight: 600; color: var(--muted-fg); text-transform: uppercase; letter-spacing: .04em; }
+.opt-list { display: flex; flex-direction: column; gap: 2px; }
+.opt-list button { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; transition: background-color .15s ease; }
+.opt-list button:hover { background: var(--accent); }
+.opt-list button:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+.opt-list button b { display: block; font-weight: 500; }
+.opt-list button small { display: block; color: var(--muted-fg); font-size: 11px; margin-top: 1px; }
+.opt-list .dot { flex: none; width: 14px; height: 14px; margin-top: 2px; border-radius: 50%; border: 1.5px solid var(--muted-fg); display: grid; place-items: center; }
+.opt-list button[aria-checked="true"] .dot { border-color: var(--s1); }
+.opt-list button[aria-checked="true"] .dot::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--s1); }
+.popover .toggle { padding: 6px 8px; color: var(--fg); }
+.pop-foot { display: flex; justify-content: space-between; padding: 6px 8px 2px; border-top: 1px solid var(--border); }
+.link-btn { border: 0; background: none; color: var(--muted-fg); font: inherit; font-size: 12px; padding: 4px 2px; cursor: pointer; border-radius: 4px; }
+.link-btn:hover { color: var(--fg); }
+.link-btn:focus-visible { outline: 2px solid var(--s1); }
+#filters-done { color: var(--fg); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips:empty { display: none; }
+.chip { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 6px 0 10px; border: 1px solid color-mix(in srgb, var(--s1) 45%, var(--border)); border-radius: 999px; background: color-mix(in srgb, var(--s1) 12%, var(--card)); color: var(--fg); font: inherit; font-size: 12px; cursor: pointer; transition: background-color .15s ease; }
+.chip:hover { background: color-mix(in srgb, var(--s1) 22%, var(--card)); }
+.chip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.chip svg { opacity: .7; }
+
+.filter-btn .count[hidden] { display: none; }
+.tiles { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
+</style>
+</head>
+<body>
+<main id="app" aria-busy="true">
+  <section class="hero">
+    <div id="banner" class="banner-wrap"></div>
+    <div class="hero-text">
+      <h1>Usage Insights</h1>
+      <p id="updated" class="muted">Reading your Claude Code and Codex transcripts…</p>
+    </div>
+    <div class="hero-stat"><strong id="hero-total"></strong><span id="hero-sub" class="muted"></span></div>
+  </section>
+
+  <nav class="controls" aria-label="Filters">
+    <div class="seg" role="radiogroup" aria-label="Range" id="ranges">
+      <button role="radio" data-range="7d" aria-checked="true">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button>
+    </div>
+    <div class="seg" role="radiogroup" aria-label="Measure" id="metric">
+      <button role="radio" data-metric="tokens" aria-checked="true">Tokens</button><button role="radio" data-metric="cost" aria-checked="false" tabindex="-1">Cost</button>
+    </div>
+    <div class="filters-wrap">
+      <button class="filter-btn" id="filters-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="filters-pop">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+        Filters<span class="count" id="filters-count" hidden></span>
+      </button>
+      <div class="popover" id="filters-pop" role="dialog" aria-label="Filters" hidden>
+        <section class="pop-section">
+          <h3 class="pop-title" id="scope-title">Sessions</h3>
+          <div class="opt-list" role="radiogroup" aria-labelledby="scope-title" id="scope">
+            <button role="radio" data-scope="all" aria-checked="true"><span class="dot" aria-hidden="true"></span><span><b>All sessions</b><small>Everything on the sources below</small></span></button>
+            <button role="radio" data-scope="worktrees" aria-checked="false" tabindex="-1"><span class="dot" aria-hidden="true"></span><span><b>Orca worktrees only</b><small>Sessions that ran inside a worktree</small></span></button>
+          </div>
+        </section>
+        <section class="pop-section" id="sec-providers" hidden>
+          <h3 class="pop-title" id="providers-title">Provider</h3>
+          <div class="opt-list" role="radiogroup" aria-labelledby="providers-title" id="providers"></div>
+        </section>
+        <section class="pop-section" id="sec-hosts" hidden>
+          <h3 class="pop-title" id="hosts-title">Machine</h3>
+          <div class="opt-list" role="radiogroup" aria-labelledby="hosts-title" id="hosts"></div>
+        </section>
+        <section class="pop-section">
+          <label class="toggle"><input type="checkbox" id="cache" checked> Include cache tokens</label>
+        </section>
+        <footer class="pop-foot"><button class="link-btn" id="filters-reset">Reset filters</button><button class="link-btn" id="filters-done">Done</button></footer>
+      </div>
+    </div>
+    <div class="chips" id="chips" aria-label="Active filters"></div>
+    <button class="icon-btn" id="refresh" title="Rescan transcripts" aria-label="Rescan transcripts"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
+  </nav>
+
+  <p id="status" class="status" role="status" hidden></p>
+  <p id="notice" class="notice" role="status" hidden></p>
+  <section id="sources" class="sources" aria-label="Sources" hidden></section>
+  <div id="skeleton" class="skeleton" aria-hidden="true">
+    <div class="sk-tiles"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <i class="sk-card tall"></i><i class="sk-card"></i>
+  </div>
+  <p id="live" class="sr-only" aria-live="polite"></p>
+
+  <section id="content" hidden>
+    <div class="tiles" id="tiles"></div>
+
+    <article class="card">
+      <div class="overview">
+        <div class="ov-left">
+          <div class="ov-total" id="ov-total">—</div>
+          <p class="muted" id="ov-sessions"></p>
+          <ul class="prov-list" id="ov-providers"></ul>
+          <ul class="prov-list host-list" id="ov-hosts" hidden></ul>
+          <div class="totals" id="totals"></div>
+        </div>
+        <div class="ov-right">
+          <header><h2 id="trend-title">Daily by provider</h2></header>
+          <div id="trend"></div>
+        </div>
+      </div>
+      <h2 class="sub-h">Tokens by type</h2>
+      <div id="typebar"></div>
+      <ul class="legend" id="type-legend"></ul>
+    </article>
+
+    <article class="card">
+      <header><h2>Daily usage</h2><p class="muted" id="daily-sub"></p></header>
+      <div id="daily"></div>
+      <ul class="legend" id="daily-legend"></ul>
+    </article>
+
+    <div class="grid-2">
+      <article class="card">
+        <header><h2>Activity</h2><span class="pill" id="peak"></span></header>
+        <p class="muted">Last 26 weeks, all providers in the filter.</p>
+        <div id="calendar" class="scroll-x"></div>
+        <div class="scale"><span class="muted">Less</span><i class="cell q0"></i><i class="cell q1"></i><i class="cell q2"></i><i class="cell q3"></i><i class="cell q4"></i><span class="muted">More</span></div>
+      </article>
+      <article class="card">
+        <header><h2>Rhythm</h2></header>
+        <p class="muted">When you work, by weekday and hour.</p>
+        <div id="punch" class="scroll-x"></div>
+      </article>
+    </div>
+
+    <article class="card">
+      <header><h2>Breakdown</h2>
+        <div class="seg" role="radiogroup" aria-label="Breakdown by" id="bd-mode"><button role="radio" data-mode="model" aria-checked="true">By model</button><button role="radio" data-mode="day" aria-checked="false" tabindex="-1">By day</button></div>
+      </header>
+      <div class="table-wrap"><table class="bd" id="breakdown"></table></div>
+    </article>
+
+    <div class="grid-2">
+      <article class="card">
+        <header><h2>Token mix</h2></header>
+        <div class="mix"><div id="donut"></div><ul class="legend legend-col" id="mix-legend"></ul></div>
+      </article>
+      <article class="card">
+        <header><h2>Projects</h2></header>
+        <div id="projects"></div>
+      </article>
+    </div>
+
+    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine and the folders and SSH hosts in Settings. No data is sent anywhere else. Cost is an estimate at list API prices.</p>
+  </section>
+  <div id="tip" class="tip" role="tooltip" hidden></div>
+</main>
+<script>;(() => {
+'use strict'
+// src/core/format.mjs
+// Number formatting shared by the panel and the status bar. Pure: no Node built-in or Orca imports.
+// scripts/build.mjs bundles this file first, so the panel can use compact() without an import.
+
+// Compact magnitude: 950 -> '950', 114500 -> '114.5k', 999999 -> '1M', 999950000 -> '1B'.
+function compact(n) {
+  const v = Number(n) || 0;
+  const units = [[1e9, 'B'], [1e6, 'M'], [1e3, 'k']];
+  for (let i = 0; i < units.length; i++) {
+    const [size, suffix] = units[i];
+    if (Math.abs(v) >= size * 0.99995) {
+      const text = trim(v / size);
+      // 999.96k rounds to "1000k": promote to the next unit instead.
+      if (Math.abs(Number(text)) >= 1000 && i > 0) return trim(v / units[i - 1][0]) + units[i - 1][1];
+      return text + suffix;
+    }
+  }
+  return String(Math.round(v));
+}
+
+function trim(x) {
+  return x.toFixed(1).replace(/\.0$/, '');
+}
+
+// src/panel/charts.mjs
+// Pure SVG-string chart builders. Each takes a slice of the Report and returns markup.
+// Colors are CSS variables defined in panel.css, so light/dark switch without re-rendering.
+
+// panel.js reads compact from here. build.mjs drops this line, since format.mjs is bundled once.
+
+const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite']
+const TOKEN_LABELS = { input: 'Input', output: 'Output', cacheRead: 'Cache read', cacheWrite: 'Cache write' }
+const TOKEN_COLORS = { input: 'var(--s1)', output: 'var(--s2)', cacheRead: 'var(--s3)', cacheWrite: 'var(--s4)' }
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function esc(value) {
+  return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+}
+
+// Which day indices get an axis label: all of them when each has `minPx` of room, otherwise
+// every k-th, counted back from the latest day so today is always labelled.
+function dayTicks(n, slotPx, minPx = 46) {
+  const step = Math.max(1, Math.ceil(minPx / Math.max(1, slotPx)))
+  const out = []
+  for (let i = n - 1; i >= 0; i -= step) out.push(i)
+  return out.reverse()
+}
+
+// Axis label: "Oct 28", plus the weekday on a second line for short ranges.
+function dayLabel(day, x, y, anchor, withWeekday) {
+  const date = new Date(day + 'T00:00:00')
+  let out = `<text x="${x}" y="${y}" class="t-muted" text-anchor="${anchor}">${esc(shortDay(day))}</text>`
+  if (withWeekday) out += `<text x="${x}" y="${y + 12}" class="t-faint" text-anchor="${anchor}">${WEEKDAYS[date.getDay()]}</text>`
+  return out
+}
+
+function shortDay(day) {
+  const [, m, d] = day.split('-')
+  return `${MONTHS[Number(m) - 1]} ${Number(d)}`
+}
+
+function svg(w, h, body, label) {
+  return `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(label)}" xmlns="http://www.w3.org/2000/svg">${body}</svg>`
+}
+
+function empty(w, h, label) {
+  return svg(w, h, `<text x="${w / 2}" y="${h / 2}" class="t-muted" text-anchor="middle" dominant-baseline="middle">No usage yet</text>`, label)
+}
+
+// Daily stacked bars. Segments stack bottom-up in `keys` order with a 2px surface gap,
+// the bar's top is rounded via a clip path, and every bar carries a tooltip payload.
+function stackedBars(daily, { keys = TOKEN_KEYS, width = 360, height = 170, id = 'sb', colors = TOKEN_COLORS, labels = TOKEN_LABELS, fmt = null } = {}) {
+  const label = 'Daily usage'
+  if (!daily?.length) return empty(width, height, label)
+  const withWeekday = daily.length <= 14
+  const top = 18
+  const bottom = withWeekday ? 30 : 18
+  const plotH = height - top - bottom
+  const totals = daily.map((d) => keys.reduce((s, k) => s + (d[k] || 0), 0))
+  const max = Math.max(...totals)
+  if (max <= 0) return empty(width, height, label)
+  const slot = width / daily.length
+  // Bars take most of their slot so few-day ranges don't look sparse; capped so 1–2 days stay sane.
+  const barW = Math.max(2, Math.min(96, slot * (slot > 40 ? 0.62 : 0.72)))
+  const radius = Math.min(6, barW / 2)
+  let defs = ''
+  let body = `<line x1="0" x2="${width}" y1="${top + plotH + 0.5}" y2="${top + plotH + 0.5}" class="axis"/>`
+  body += `<text x="0" y="11" class="t-muted">${esc(fmt ? fmt(max) : compact(max))}</text>`
+  daily.forEach((d, i) => {
+    const x = i * slot + (slot - barW) / 2
+    const total = totals[i]
+    const h = (total / max) * plotH
+    const show = (v) => (fmt ? fmt(v) : v)
+    const tip = esc(JSON.stringify({ title: shortDay(d.day), rows: keys.map((k) => [labels[k] ?? k, show(d[k] || 0)]), total: keys.length > 1 ? show(total) : undefined }))
+    body += `<g class="mark" data-tip="${tip}">`
+    body += `<rect x="${x - (slot - barW) / 2}" y="${top}" width="${slot}" height="${plotH}" class="hit"/>`
+    if (h > 0) {
+      const cid = `${id}-c${i}`
+      defs += `<clipPath id="${cid}"><rect x="${x}" y="${top + plotH - h}" width="${barW}" height="${h + radius}" rx="${radius}"/></clipPath>`
+      body += `<g clip-path="url(#${cid})">`
+      let y = top + plotH
+      let drawn = 0
+      for (const k of keys) {
+        const v = d[k] || 0
+        if (v <= 0) continue
+        const sh = (v / max) * plotH
+        y -= sh
+        const gap = drawn++ > 0 ? Math.min(2, sh / 2) : 0 // 2px surface gap between stacked segments
+        body += `<rect x="${x}" y="${y}" width="${barW}" height="${Math.max(0, sh - gap)}" fill="${colors[k] ?? 'var(--s1)'}"/>`
+      }
+      body += `</g>`
+    }
+    body += `</g>`
+  })
+  // Every label sits centred under its own bar.
+  for (const i of dayTicks(daily.length, slot)) {
+    body += dayLabel(daily[i].day, (i * slot + slot / 2).toFixed(1), top + plotH + 14, 'middle', withWeekday)
+  }
+  return svg(width, height, `<defs>${defs}</defs>${body}`, label)
+}
+
+// Rank-quantile buckets 1..4 over non-zero values; 0 stays level 0.
+function levels(values) {
+  const nz = values.filter((v) => v > 0).sort((a, b) => a - b)
+  if (!nz.length) return values.map(() => 0)
+  const below = (v) => {
+    let lo = 0
+    let hi = nz.length
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (nz[mid] < v) lo = mid + 1
+      else hi = mid
+    }
+    return lo
+  }
+  return values.map((v) => (v <= 0 ? 0 : 1 + Math.min(3, Math.floor((below(v) / nz.length) * 4))))
+}
+
+// GitHub-style calendar: columns are weeks (Sun..Sat rows), oldest left.
+function calendarHeatmap(calendar, { cell = 11, gap = 2 } = {}) {
+  const label = 'Daily activity calendar'
+  if (!calendar?.length) return empty(300, 100, label)
+  const first = new Date(calendar[0].day + 'T00:00:00')
+  const offset = first.getDay()
+  const weeks = Math.ceil((calendar.length + offset) / 7)
+  const left = 26
+  const top = 14
+  const step = cell + gap
+  const w = left + weeks * step
+  const h = top + 7 * step
+  const lv = levels(calendar.map((d) => d.total))
+  let body = ''
+  let lastMonth = -1
+  calendar.forEach((d, i) => {
+    const pos = i + offset
+    const col = Math.floor(pos / 7)
+    const row = pos % 7
+    const x = left + col * step
+    const y = top + row * step
+    const month = Number(d.day.slice(5, 7)) - 1
+    if (row === 0 || i === 0) {
+      if (month !== lastMonth && col < weeks - 1) {
+        body += `<text x="${x}" y="10" class="t-muted">${MONTHS[month]}</text>`
+        lastMonth = month
+      }
+    }
+    const tip = esc(JSON.stringify({ title: shortDay(d.day), rows: [['Tokens', d.total]] }))
+    body += `<rect x="${x}" y="${y}" width="${cell}" height="${cell}" rx="2" class="mark cell q${lv[i]}" data-tip="${tip}"/>`
+  })
+  for (const r of [1, 3, 5]) body += `<text x="0" y="${top + r * step + cell - 2}" class="t-muted">${WEEKDAYS[r]}</text>`
+  return svg(w, h, body, label)
+}
+
+// Weekday x hour punch card; dot area follows the value.
+function punchCard(grid, { cell = 13 } = {}) {
+  const label = 'Activity by weekday and hour'
+  const values = Array.from({ length: 168 }, (_, i) => Number(grid?.[i]) || 0)
+  const max = Math.max(...values)
+  const left = 28
+  const w = left + 24 * cell
+  const h = 7 * cell + 16
+  if (max <= 0) return empty(w, h, label)
+  let body = ''
+  for (let d = 0; d < 7; d++) {
+    body += `<text x="0" y="${d * cell + cell / 2 + 4}" class="t-muted">${WEEKDAYS[d]}</text>`
+    for (let hr = 0; hr < 24; hr++) {
+      const v = values[d * 24 + hr]
+      const cx = left + hr * cell + cell / 2
+      const cy = d * cell + cell / 2
+      const r = v > 0 ? Math.max(1.5, Math.sqrt(v / max) * (cell / 2 - 1)) : 1
+      const tip = esc(JSON.stringify({ title: `${WEEKDAYS[d]} ${String(hr).padStart(2, '0')}:00`, rows: [['Tokens', v]] }))
+      body += `<g class="mark" data-tip="${tip}"><rect x="${cx - cell / 2}" y="${cy - cell / 2}" width="${cell}" height="${cell}" class="hit"/>`
+      body += `<circle cx="${cx}" cy="${cy}" r="${r}" class="${v > 0 ? 'dot' : 'dot-empty'}"/></g>`
+    }
+  }
+  for (const hr of [0, 6, 12, 18]) body += `<text x="${left + hr * cell + 2}" y="${h - 2}" class="t-muted">${hr}h</text>`
+  return svg(w, h, body, label)
+}
+
+// Ring chart with 2px gaps between segments. segments: [{ label, value, color }]
+function donut(segments, { size = 132, thickness = 16, centerLabel = 'tokens' } = {}) {
+  const label = 'Token mix'
+  const total = (segments || []).reduce((s, x) => s + (x.value > 0 ? x.value : 0), 0)
+  const r = (size - thickness) / 2
+  const c = size / 2
+  const circ = 2 * Math.PI * r
+  let body = `<circle cx="${c}" cy="${c}" r="${r}" fill="none" class="track" stroke-width="${thickness}"/>`
+  if (total > 0) {
+    const live = segments.filter((s) => s.value > 0)
+    const gap = live.length > 1 ? 2 : 0
+    let acc = 0
+    for (const s of live) {
+      const len = (s.value / total) * circ
+      const tip = esc(JSON.stringify({ title: s.label, rows: [['Tokens', s.value], ['Share', `${((s.value / total) * 100).toFixed(1)}%`]] }))
+      body += `<circle class="mark" data-tip="${tip}" cx="${c}" cy="${c}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${thickness}" stroke-dasharray="${Math.max(0.5, len - gap)} ${circ}" stroke-dashoffset="${-acc}" transform="rotate(-90 ${c} ${c})"/>`
+      acc += len
+    }
+  }
+  body += `<text x="${c}" y="${c - 2}" text-anchor="middle" class="t-strong">${esc(compact(total))}</text>`
+  body += `<text x="${c}" y="${c + 14}" text-anchor="middle" class="t-muted">${esc(centerLabel)}</text>`
+  return svg(size, size, body, label)
+}
+
+// Horizontal bar list. items: [{ label, value, note? }]
+function hBars(items, { width = 360, row = 24, labelW = Math.min(180, Math.max(110, width * 0.3)), valueW = 64 } = {}) {
+  const label = 'Ranking'
+  if (!items?.length) return empty(width, row * 2, label)
+  const max = Math.max(...items.map((i) => i.value), 0)
+  const barMax = width - labelW - valueW
+  let body = ''
+  items.forEach((it, i) => {
+    const y = i * row
+    const w = max > 0 ? Math.max(it.value > 0 ? 3 : 0, (it.value / max) * barMax) : 0
+    const maxChars = Math.floor(labelW / 6.6)
+    const name = it.label.length > maxChars ? it.label.slice(0, maxChars - 1) + '…' : it.label
+    const tip = esc(JSON.stringify({ title: it.label, rows: [['Tokens', it.value], ...(it.note ? [['', it.note]] : [])] }))
+    body += `<g class="mark" data-tip="${tip}"><rect x="0" y="${y}" width="${width}" height="${row}" class="hit"/>`
+    body += `<text x="0" y="${y + row / 2 + 4}" class="t-label">${esc(name)}</text>`
+    body += `<rect x="${labelW}" y="${y + 6}" width="${w}" height="${row - 12}" rx="3" class="bar"/>`
+    body += `<text x="${width}" y="${y + row / 2 + 4}" text-anchor="end" class="t-muted">${esc(it.note ?? compact(it.value))}</text></g>`
+  })
+  return svg(width, items.length * row, body, label)
+}
+
+function sparkline(values, { width = 96, height = 26 } = {}) {
+  const v = (values || []).map((x) => Number(x) || 0)
+  if (v.length < 2) return svg(width, height, '', 'Trend')
+  const max = Math.max(...v) || 1
+  const pts = v.map((x, i) => [(i / (v.length - 1)) * (width - 4) + 2, height - 3 - (x / max) * (height - 6)])
+  const d = pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' ')
+  const [lx, ly] = pts[pts.length - 1]
+  return svg(width, height, `<polyline points="${d}" fill="none" class="spark" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${lx}" cy="${ly}" r="2.5" class="spark-dot"/>`, 'Trend')
+}
+
+const PROVIDER_COLORS = { claude: 'var(--s2)', codex: 'var(--s1)' }
+const PROVIDER_LABELS = { claude: 'Claude Code', codex: 'Codex' }
+const providerColor = (p, i = 0) => PROVIDER_COLORS[p] ?? ['var(--s3)', 'var(--s4)'][i % 2]
+
+// Monotone cubic (Fritsch–Carlson) path through points, so smoothing never overshoots below 0.
+function smoothPath(pts) {
+  const n = pts.length
+  if (n === 0) return ''
+  if (n === 1) return `M${pts[0][0]},${pts[0][1]}`
+  const dx = []
+  const m = []
+  for (let i = 0; i < n - 1; i++) {
+    dx.push(pts[i + 1][0] - pts[i][0])
+    m.push((pts[i + 1][1] - pts[i][1]) / (dx[i] || 1))
+  }
+  const t = [m[0]]
+  for (let i = 1; i < n - 1; i++) t.push(m[i - 1] * m[i] <= 0 ? 0 : (m[i - 1] + m[i]) / 2)
+  t.push(m[n - 2])
+  for (let i = 0; i < n - 1; i++) {
+    if (m[i] === 0) { t[i] = 0; t[i + 1] = 0; continue }
+    const a = t[i] / m[i]
+    const b = t[i + 1] / m[i]
+    const h = a * a + b * b
+    if (h > 9) { const k = 3 / Math.sqrt(h); t[i] = k * a * m[i]; t[i + 1] = k * b * m[i] }
+  }
+  const f = (v) => v.toFixed(1)
+  let d = `M${f(pts[0][0])},${f(pts[0][1])}`
+  for (let i = 0; i < n - 1; i++) {
+    const h = dx[i] / 3
+    d += `C${f(pts[i][0] + h)},${f(pts[i][1] + t[i] * h)} ${f(pts[i + 1][0] - h)},${f(pts[i + 1][1] - t[i + 1] * h)} ${f(pts[i + 1][0])},${f(pts[i + 1][1])}`
+  }
+  return d
+}
+
+// Top of the axis: 4 gridline steps, each a round 1/2/2.5/5 × 10^n.
+function niceMax(v) {
+  if (v <= 0) return 1
+  const raw = v / 4
+  const p = 10 ** Math.floor(Math.log10(raw))
+  for (const k of [1, 2, 2.5, 5, 10]) if (k * p >= raw) return 4 * k * p
+  return 40 * p
+}
+
+// Smoothed area per provider over days. series: [{ provider, daily: [{ day, total, costUsd }] }]
+function areaTrend(series, { metric = 'total', width = 420, height = 200, fmt = compact, axisFmt = fmt, id = 'tr' } = {}) {
+  const label = 'Daily trend by provider'
+  const live = (series || []).filter((s) => s.daily?.length)
+  if (!live.length) return empty(width, height, label)
+  const days = live[0].daily.map((d) => d.day)
+  const withWeekday = days.length <= 14
+  const left = 40
+  const top = 8
+  const bottom = withWeekday ? 32 : 20
+  const plotW = width - left
+  const plotH = height - top - bottom
+  const rawMax = Math.max(0, ...live.flatMap((s) => s.daily.map((d) => Number(d[metric]) || 0)))
+  if (rawMax <= 0) return empty(width, height, label)
+  const max = niceMax(rawMax)
+  const x = (i) => left + (days.length === 1 ? plotW / 2 : (i / (days.length - 1)) * plotW)
+  const y = (v) => top + plotH - (v / max) * plotH
+  let defs = ''
+  let body = ''
+  for (let g = 0; g <= 4; g++) {
+    const v = (max / 4) * g
+    const gy = y(v)
+    body += `<line x1="${left}" x2="${width}" y1="${gy.toFixed(1)}" y2="${gy.toFixed(1)}" class="grid"/>`
+    body += `<text x="${left - 6}" y="${(gy + 3).toFixed(1)}" text-anchor="end" class="t-muted">${esc(axisFmt(v))}</text>`
+  }
+  // Draw the biggest series first so smaller ones stay visible on top.
+  live.forEach((s, i) => {
+    const color = providerColor(s.provider, i)
+    const pts = s.daily.map((d, j) => [x(j), y(Number(d[metric]) || 0)])
+    const line = smoothPath(pts)
+    const gid = `${id}-g${i}`
+    defs += `<linearGradient id="${gid}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient>`
+    body += `<path d="${line}L${x(pts.length - 1).toFixed(1)},${top + plotH}L${x(0).toFixed(1)},${top + plotH}Z" fill="url(#${gid})"/>`
+    body += `<path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`
+  })
+  // Hover columns: one per day, crosshair + every provider's value.
+  const col = days.length > 1 ? plotW / (days.length - 1) : plotW
+  days.forEach((day, j) => {
+    const rows = live.map((s) => [PROVIDER_LABELS[s.provider] ?? s.provider, fmt(Number(s.daily[j]?.[metric]) || 0)])
+    const tip = esc(JSON.stringify({ title: shortDay(day), rows }))
+    const cx = x(j)
+    body += `<g class="mark xhair" data-tip="${tip}"><rect x="${Math.max(left, cx - col / 2)}" y="${top}" width="${col}" height="${plotH}" class="hit"/><line x1="${cx}" x2="${cx}" y1="${top}" y2="${top + plotH}" class="xline"/>`
+    live.forEach((s, i) => { body += `<circle cx="${cx}" cy="${y(Number(s.daily[j]?.[metric]) || 0).toFixed(1)}" r="3.5" class="xdot" fill="${providerColor(s.provider, i)}"/>` })
+    body += `</g>`
+  })
+  // Points run edge to edge, so the first and last labels hug the edges; the rest are centred.
+  for (const j of dayTicks(days.length, days.length > 1 ? plotW / (days.length - 1) : plotW)) {
+    const anchor = days.length > 1 && j === 0 ? 'start' : days.length > 1 && j === days.length - 1 ? 'end' : 'middle'
+    body += dayLabel(days[j], x(j).toFixed(1), top + plotH + 14, anchor, withWeekday)
+  }
+  return svg(width, height, `<defs>${defs}</defs>${body}`, label)
+}
+
+// One thin rounded bar split into segments with 2px gaps. segments: [{ label, value, color }]
+function segmentBar(segments, { width = 360, height = 10, id = 'sbar' } = {}) {
+  const label = 'Tokens by type'
+  const live = (segments || []).filter((s) => s.value > 0)
+  const total = live.reduce((a, s) => a + s.value, 0)
+  let body = `<rect x="0" y="0" width="${width}" height="${height}" rx="${height / 2}" class="track-fill"/>`
+  if (total > 0) {
+    const gap = 2
+    const minW = 4
+    const avail = width - gap * (live.length - 1)
+    // Small segments get a visible minimum; the rest share what is left proportionally.
+    const small = live.filter((s) => (s.value / total) * avail < minW)
+    const bigTotal = total - small.reduce((a, s) => a + s.value, 0)
+    const bigAvail = avail - small.length * minW
+    let xpos = 0
+    body = `<clipPath id="${id}-clip"><rect x="0" y="0" width="${width}" height="${height}" rx="${height / 2}"/></clipPath><g clip-path="url(#${id}-clip)">`
+    for (const s of live) {
+      const w = small.includes(s) ? minW : (s.value / bigTotal) * bigAvail
+      const tip = esc(JSON.stringify({ title: s.label, rows: [['Tokens', s.value], ['Share', `${((s.value / total) * 100).toFixed(1)}%`]] }))
+      body += `<rect class="mark" data-tip="${tip}" x="${xpos.toFixed(1)}" y="0" width="${w.toFixed(1)}" height="${height}" fill="${s.color}"/>`
+      xpos += w + gap
+    }
+    body += `</g>`
+  }
+  return svg(width, height, body, label)
+}
+
+// src/panel/art.mjs
+// Generative pixel-art banner. The scene is deterministic for a given report:
+// the skyline follows the daily series, lit windows follow output share, stars count the
+// current streak, and the sky follows the local hour the report was generated.
+
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
+
+const SKIES = {
+  night: { top: '#0b1026', bottom: '#2a2f5c', far: '#1c2142', near: '#12152c', window: '#ffd27a', glow: '#f4f1de' },
+  dawn: { top: '#3b3a6e', bottom: '#f29e7d', far: '#5a4a78', near: '#2b2440', window: '#ffe3a3', glow: '#fff1c1' },
+  day: { top: '#4f9ee8', bottom: '#bfe3f7', far: '#7fa8c9', near: '#3c5a78', window: '#e8f4ff', glow: '#fff6c9' },
+  dusk: { top: '#2d2357', bottom: '#e0704f', far: '#4b2f5e', near: '#22183a', window: '#ffc46b', glow: '#ffd9a0' },
+}
+
+function skyFor(hour) {
+  if (hour >= 5 && hour < 8) return 'dawn'
+  if (hour >= 8 && hour < 17) return 'day'
+  if (hour >= 17 && hour < 20) return 'dusk'
+  return 'night'
+}
+
+// Small seeded PRNG (mulberry32).
+function rng(seed) {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = a
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function hashString(s) {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
+  return h >>> 0
+}
+
+function hexToRgb(h) {
+  const n = parseInt(h.slice(1), 16)
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+}
+function mix(a, b, t) {
+  const x = hexToRgb(a)
+  const y = hexToRgb(b)
+  return '#' + x.map((v, i) => Math.round(v + (y[i] - v) * t).toString(16).padStart(2, '0')).join('')
+}
+
+// Resample a series to n buckets by summing.
+function resample(values, n) {
+  if (!values.length) return Array(n).fill(0)
+  const out = Array(n).fill(0)
+  values.forEach((v, i) => {
+    out[Math.min(n - 1, Math.floor((i / values.length) * n))] += v
+  })
+  return out
+}
+
+// Builds the pixel grid (array of rows of hex colors). Exported for tests.
+function paintScene(report, { w = 120, h = 34 } = {}) {
+  const generated = report?.generatedAt ? new Date(report.generatedAt) : new Date()
+  const sky = SKIES[skyFor(generated.getHours())]
+  const daily = (report?.daily || []).map((d) => d.total || 0)
+  const seed = hashString(`${report?.range || ''}:${daily.length}:${report?.totals?.turns || 0}`)
+  const rand = rng(seed)
+  const grid = Array.from({ length: h }, () => Array(w).fill(null))
+
+  // Sky: 4-step ordered-dither gradient between top and bottom colors.
+  const bands = [sky.top, mix(sky.top, sky.bottom, 0.33), mix(sky.top, sky.bottom, 0.66), sky.bottom]
+  for (let y = 0; y < h; y++) {
+    const t = (y / (h - 1)) * (bands.length - 1)
+    const base = Math.floor(t)
+    const frac = t - base
+    for (let x = 0; x < w; x++) {
+      const threshold = BAYER[(y % 4) * 4 + (x % 4)] / 16
+      grid[y][x] = bands[Math.min(bands.length - 1, base + (frac > threshold ? 1 : 0))]
+    }
+  }
+
+  // Stars (night/dusk/dawn only): one per streak day, at least a few.
+  const streak = report?.streak?.current || 0
+  if (skyFor(generated.getHours()) !== 'day') {
+    const count = Math.min(40, 4 + streak * 2)
+    for (let i = 0; i < count; i++) {
+      const x = Math.floor(rand() * w)
+      const y = Math.floor(rand() * (h * 0.45))
+      grid[y][x] = i < streak ? sky.glow : mix(sky.glow, sky.top, 0.45)
+    }
+  }
+
+  // Sun or moon, its height following today's share of the peak day.
+  const peak = report?.peakDay?.total || 0
+  const todayShare = peak > 0 ? Math.min(1, (report?.today?.total || 0) / peak) : 0
+  const cx = Math.floor(w * 0.82)
+  const cy = Math.floor(3 + (1 - todayShare) * (h * 0.3))
+  for (let y = -3; y <= 3; y++) {
+    for (let x = -3; x <= 3; x++) {
+      if (x * x + y * y <= 9 && grid[cy + y]?.[cx + x] !== undefined) grid[cy + y][cx + x] = sky.glow
+    }
+  }
+
+  // Far ridge: smoothed random walk.
+  let ridge = h * 0.55
+  for (let x = 0; x < w; x++) {
+    ridge += (rand() - 0.5) * 2.2
+    ridge = Math.max(h * 0.42, Math.min(h * 0.7, ridge))
+    for (let y = Math.floor(ridge); y < h; y++) grid[y][x] = sky.far
+  }
+
+  // Skyline: one building per bucket, height from usage.
+  const count = Math.max(8, Math.min(24, daily.length || 12))
+  const buckets = resample(daily, count)
+  const max = Math.max(...buckets, 0)
+  const outShare = report?.totals?.total ? Math.min(1, (report.totals.output * 20) / report.totals.total + 0.2) : 0.3
+  const bw = Math.floor(w / count)
+  buckets.forEach((v, i) => {
+    const bh = Math.max(3, Math.round((max > 0 ? v / max : 0.1) * (h * 0.62)) + 2)
+    const x0 = i * bw + (i % 2)
+    const width = Math.max(2, bw - 1 - (i % 2))
+    for (let y = h - bh; y < h; y++) {
+      for (let x = x0; x < x0 + width && x < w; x++) grid[y][x] = sky.near
+    }
+    // antenna on the tallest
+    if (v === max && max > 0) for (let y = h - bh - 3; y < h - bh; y++) if (y >= 0) grid[y][x0 + (width >> 1)] = sky.near
+    // windows
+    for (let y = h - bh + 2; y < h - 1; y += 2) {
+      for (let x = x0 + 1; x < x0 + width - 1; x += 2) {
+        if (rand() < outShare) grid[y][x] = sky.window
+      }
+    }
+  })
+  return grid
+}
+
+// Grid -> SVG, merging horizontal runs so a 120x34 scene stays a few hundred rects.
+function pixelBanner(report, opts = {}) {
+  const grid = paintScene(report, opts)
+  const h = grid.length
+  const w = grid[0].length
+  let body = ''
+  for (let y = 0; y < h; y++) {
+    let x = 0
+    while (x < w) {
+      const c = grid[y][x]
+      let run = 1
+      while (x + run < w && grid[y][x + run] === c) run++
+      body += `<rect x="${x}" y="${y}" width="${run}" height="1" fill="${c}"/>`
+      x += run
+    }
+  }
+  return `<svg class="banner" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid slice" shape-rendering="crispEdges" role="img" aria-label="Pixel skyline drawn from your usage" xmlns="http://www.w3.org/2000/svg">${body}</svg>`
+}
+
+// src/panel/panel.js
+// Panel controller: asks the worker for a Report and renders it. Knows nothing about transcripts.
+
+const $ = (id) => document.getElementById(id)
+const host = globalThis.orca
+const state = { range: '7d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false }
+
+function money(n) {
+  const v = Number(n) || 0
+  return '$' + (v >= 1000 ? Math.round(v).toLocaleString('en-US') : v.toFixed(2))
+}
+// One decimal, never rounding up to 100.0% unless it is exactly 100%.
+function pct1(x) {
+  const v = (Number(x) || 0) * 100
+  const shown = v >= 100 ? 100 : Math.min(99.9, Math.round(v * 10) / 10)
+  return `${shown.toFixed(1)}%`
+}
+function pct(x) {
+  return `${Math.round((Number(x) || 0) * 100)}%`
+}
+function prettyDay(day) {
+  return new Date(day + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+async function request(name, input) {
+  if (host?.plugin?.request) return host.plugin.request(name, input, { timeoutMs: 120000 })
+  if (globalThis.__USAGE_PREVIEW__) return globalThis.__USAGE_PREVIEW__(name, input)
+  throw new Error('Orca host is not available.')
+}
+
+async function load(kind = 'usage.report') {
+  if (state.busy) {
+    // A change that lands mid-request triggers one more load when this one finishes.
+    state.again = kind === 'usage.refresh' ? state.again || 'usage.report' : 'usage.report'
+    return
+  }
+  state.busy = true
+  $('refresh').classList.add('spin')
+  $('refresh').disabled = true
+  $('app').setAttribute('aria-busy', 'true')
+  if (!state.report) {
+    $('status').hidden = true
+    $('skeleton').hidden = false
+  }
+  try {
+    const input = { range: state.range }
+    if (state.provider !== 'all') input.providers = [state.provider]
+    if (state.host !== 'all') input.hosts = [state.host]
+    if (state.scope !== 'all') input.scope = state.scope
+    state.report = await request(kind, input)
+    render()
+    $('live').textContent = kind === 'usage.refresh' ? `Refreshed. ${compact(state.report.totals.total)} tokens in range.` : ''
+  } catch (err) {
+    showStatus(`Couldn't load usage: ${err?.message || err}`, true)
+  } finally {
+    state.busy = false
+    $('refresh').classList.remove('spin')
+    $('refresh').disabled = false
+    if (state.again) {
+      const next = state.again
+      state.again = null
+      setTimeout(() => load(next), 0)
+    }
+    if ($('skeleton')) $('skeleton').hidden = true
+    $('app').setAttribute('aria-busy', 'false')
+  }
+}
+
+function showStatus(text, isError = false) {
+  const el = $('status')
+  el.textContent = text
+  el.classList.toggle('error', isError)
+  el.hidden = false
+  if (isError || !state.report) $('content').hidden = true
+}
+
+function tile(label, value, sub = '', extra = '') {
+  return `<div class="tile"><span class="label">${esc(label)}</span><span class="value" title="${esc(value)}">${esc(value)}</span>${sub ? `<span class="sub">${esc(sub)}</span>` : ''}${extra}</div>`
+}
+
+// One tile for both cache measures: hit rate as the headline (cache writes count as misses),
+// reuse underneath (Orca's built-in measure), and a bar of where input tokens came from.
+function cacheTile(t) {
+  const hit = t.cacheHitRate ?? t.cacheReuseRate
+  const parts = [
+    { label: 'Cache read', value: t.cacheRead || 0, color: TOKEN_COLORS.cacheRead },
+    { label: 'Cache write', value: t.cacheWrite || 0, color: TOKEN_COLORS.cacheWrite },
+    { label: 'Uncached input', value: t.input || 0, color: TOKEN_COLORS.input },
+  ]
+  const tip = esc(JSON.stringify({
+    title: 'Cache',
+    rows: [
+      ['Hit rate', pct1(hit)],
+      ['', 'read ÷ (read + write + uncached)'],
+      ['Reuse', pct1(t.cacheReuseRate)],
+      ['', 'read ÷ (read + uncached)'],
+      ...parts.map((p) => [p.label, p.value]),
+    ],
+  }))
+  return `<div class="tile tile-cache" data-tip="${tip}" tabindex="0" aria-label="Cache hit rate ${pct1(hit)}, reuse ${pct1(t.cacheReuseRate)}">
+    <span class="label">Cache hit rate</span>
+    <span class="value">${pct1(hit)}</span>
+    <div class="meter">${segmentBar(parts, { width: 200, height: 6, id: 'cache-meter' })}</div>
+    <span class="sub">${pct1(t.cacheReuseRate)} reuse · ${compact(t.cacheWrite)} written</span>
+  </div>`
+}
+
+// Non-default filters, shown as removable chips beside the Filters button and counted on it.
+function activeFilters() {
+  const out = []
+  if (state.scope !== 'all') out.push({ key: 'scope', label: 'Worktrees only' })
+  if (state.provider !== 'all') out.push({ key: 'provider', label: PROVIDER_LABELS[state.provider] || state.provider })
+  if (state.host !== 'all') out.push({ key: 'host', label: hostLabel(state.host) })
+  if (!state.cache) out.push({ key: 'cache', label: 'No cache tokens' })
+  return out
+}
+
+function renderChips() {
+  const list = activeFilters()
+  const x = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>'
+  $('chips').innerHTML = list.map((f) => `<button class="chip" data-clear="${f.key}" aria-label="Remove filter: ${esc(f.label)}">${esc(f.label)}${x}</button>`).join('')
+  $('filters-count').hidden = !list.length
+  $('filters-count').textContent = String(list.length)
+  $('filters-btn').setAttribute('aria-label', list.length ? `Filters, ${list.length} active` : 'Filters')
+}
+
+// Clears one filter (or all), reloading only when the request changes.
+function clearFilter(key) {
+  const before = `${state.scope}|${state.provider}|${state.host}`
+  if (key === 'scope' || key === 'all') state.scope = 'all'
+  if (key === 'provider' || key === 'all') state.provider = 'all'
+  if (key === 'host' || key === 'all') state.host = 'all'
+  if (key === 'cache' || key === 'all') state.cache = true
+  if (`${state.scope}|${state.provider}|${state.host}` !== before) load()
+  else render()
+}
+
+function setMenu(open) {
+  const pop = $('filters-pop')
+  const btn = $('filters-btn')
+  if (open === !pop.hidden) return
+  pop.hidden = !open
+  btn.setAttribute('aria-expanded', String(open))
+  if (open) (pop.querySelector('.opt-list [aria-checked="true"]') || pop.querySelector('button, input'))?.focus()
+  else btn.focus()
+}
+
+function hostLabel(h) {
+  return h === 'local' ? 'This machine' : String(h).replace(/^ssh:/, '')
+}
+
+function ago(iso) {
+  if (!iso) return 'never'
+  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.round(s / 60)} min ago`
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`
+  return `${Math.round(s / 86400)} d ago`
+}
+
+const SOURCE_ICONS = {
+  local: '<path d="M4 5h16v10H4z"/><path d="M8 19h8M12 15v4"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  ssh: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+}
+const STATE_WORDS = { ok: 'Up to date', warning: 'Warning', error: 'Error', loading: 'Loading…' }
+
+// One pill per source (this machine, each extra folder, each SSH host): state, size, freshness.
+// Errors and warnings show their message on hover and to screen readers.
+function renderSources(r) {
+  const list = r.sources || []
+  const el = $('sources')
+  const multi = list.length > 1 || list.some((s) => s.state !== 'ok')
+  el.hidden = !list.length
+  if (!list.length) return
+  const pills = list.map((s) => {
+    const state = STATE_WORDS[s.state] ? s.state : 'ok'
+    const meta = state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
+    const detail = [STATE_WORDS[state], s.message, s.files !== undefined ? `${s.files} files` : '', s.ms ? `scanned in ${s.ms} ms` : ''].filter(Boolean).join(' · ')
+    const icon = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SOURCE_ICONS[s.kind] || SOURCE_ICONS.local}</svg>`
+    return `<span class="src ${state}" title="${esc(detail)}" aria-label="${esc(`${s.label}: ${detail}`)}">${icon}<span class="state" aria-hidden="true"></span><span class="name">${esc(s.label)}</span><span class="meta">${esc(meta)}</span></span>`
+  })
+  const hint = multi ? '' : '<span class="hint">Add folders or SSH hosts in Settings → Plugins → Usage Insights.</span>'
+  el.innerHTML = pills.join('') + hint
+  const problems = list.filter((s) => s.state === 'error' || s.state === 'warning')
+  const notes = []
+  if (r.scopeError) notes.push(`${r.scopeError.replace(/\.?$/, '.')} Showing all usage instead.`)
+  for (const s of problems) notes.push(`${s.label}: ${s.message || STATE_WORDS[s.state]}`)
+  $('notice').hidden = !notes.length
+  $('notice').textContent = notes.join('  ·  ')
+}
+
+function legendItem(color, label, value) {
+  return `<li><span class="sw" style="background:${color}"></span>${esc(label)}${value !== undefined ? ` <span class="v">${esc(value)}</span>` : ''}</li>`
+}
+
+function render() {
+  const r = state.report
+  if (!r) return
+  const keys = state.cache ? TOKEN_KEYS : ['input', 'output']
+  const t = r.totals
+  const shownTotal = keys.reduce((s, k) => s + (t[k] || 0), 0)
+  const widthOf = (id, min = 280) => Math.max(min, Math.round($(id).clientWidth || 0))
+  const hero = $('banner')
+  const bw = hero.clientWidth || 360
+  const bh = hero.clientHeight || 112
+  // One art pixel ≈ 3.3 screen px, so the scene fills any panel width without cropping.
+  $('banner').innerHTML = pixelBanner(r, { h: 34, w: Math.max(80, Math.min(400, Math.round((34 * bw) / bh))) })
+  $('updated').textContent = `Updated ${new Date(r.generatedAt).toLocaleString()}`
+  $('hero-total').textContent = compact(shownTotal)
+  $('hero-sub').textContent = `tokens · ${money(t.costUsd)}${t.hasUnpriced ? '+' : ''} est.`
+
+  // Controls reflect state.
+  for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === state.range))
+  for (const b of $('metric').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.metric === state.metric))
+  for (const b of $('bd-mode').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.mode === state.breakdown))
+  const providers = r.providers || []
+  const hosts = r.hosts || []
+  // Filters menu: option rows keep focus across the re-render they trigger.
+  const focused = document.activeElement
+  const focusGroup = focused?.closest?.('.opt-list')?.id
+  const opt = (attr, value, label, checked) => `<button role="radio" data-${attr}="${esc(value)}" aria-checked="${checked}"><span class="dot" aria-hidden="true"></span><span><b>${esc(label)}</b></span></button>`
+  const showHosts = hosts.length > 1 || state.host !== 'all'
+  $('sec-hosts').hidden = !showHosts
+  $('hosts').innerHTML = showHosts ? ['all', ...hosts].map((h) => opt('host', h, h === 'all' ? 'All machines' : hostLabel(h), h === state.host)).join('') : ''
+  const showProviders = providers.length > 1 || state.provider !== 'all'
+  $('sec-providers').hidden = !showProviders
+  $('providers').innerHTML = showProviders ? ['all', ...providers].map((p) => opt('provider', p, p === 'all' ? 'All providers' : PROVIDER_LABELS[p] || p, p === state.provider)).join('') : ''
+  for (const b of $('scope').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.scope === state.scope))
+  $('cache').checked = state.cache
+  renderChips()
+  if (focusGroup && !$('filters-pop').hidden) $(focusGroup)?.querySelector('[aria-checked="true"]')?.focus()
+
+  const empty = t.turns === 0
+  $('status').hidden = !empty
+  if (empty) {
+    $('status').textContent = 'No usage in this range yet. Run Claude Code or Codex and it will appear here.'
+    $('status').classList.remove('error')
+  }
+  $('content').hidden = false
+
+  const daySpark = sparkline(r.daily.map((d) => keys.reduce((s, k) => s + (d[k] || 0), 0)))
+  $('tiles').innerHTML = [
+    tile('Tokens', compact(shownTotal), `${compact(t.input)} in · ${compact(t.output)} out`, `<div class="spark-wrap">${daySpark}</div>`),
+    tile('Est. cost', money(t.costUsd) + (t.hasUnpriced ? '+' : ''), t.hasUnpriced ? 'some models unpriced' : 'at API list prices'),
+    tile('Today', compact(r.today.total), money(r.today.costUsd)),
+    cacheTile(t),
+    tile('Sessions / turns', `${t.sessions.toLocaleString()} / ${t.turns.toLocaleString()}`),
+    tile('Streak', `${r.streak.current} day${r.streak.current === 1 ? '' : 's'}`, `longest ${r.streak.longest}`),
+  ].join('')
+
+  const isCost = state.metric === 'cost'
+  if (isCost) {
+    $('daily-sub').textContent = 'Estimated cost by day, at API list prices.'
+    $('daily').innerHTML = stackedBars(r.daily, { keys: ['costUsd'], colors: { costUsd: 'var(--s1)' }, labels: { costUsd: 'Cost' }, fmt: money, width: widthOf('daily'), height: 190 })
+    $('daily-legend').innerHTML = legendItem('var(--s1)', 'Cost', money(t.costUsd))
+  } else {
+    $('daily-sub').textContent = state.cache ? 'Input, output, cache read and cache write by day.' : 'Input and output by day (cache hidden).'
+    $('daily').innerHTML = stackedBars(r.daily, { keys, width: widthOf('daily'), height: 190 })
+    $('daily-legend').innerHTML = keys.map((k) => legendItem(TOKEN_COLORS[k], TOKEN_LABELS[k], compact(t[k]))).join('')
+  }
+  renderOverview(r, keys, widthOf)
+  renderBreakdown(r)
+  renderSources(r)
+  syncRadioTabs()
+
+  $('peak').textContent = r.peakDay ? `Best: ${prettyDay(r.peakDay.day)} · ${compact(r.peakDay.total)}` : ''
+  $('calendar').innerHTML = calendarHeatmap(r.calendar)
+  $('punch').innerHTML = punchCard(r.punchCard)
+
+  const segs = keys.map((k) => ({ label: TOKEN_LABELS[k], value: t[k] || 0, color: TOKEN_COLORS[k] }))
+  $('donut').innerHTML = donut(segs)
+  $('mix-legend').innerHTML = segs.map((s) => legendItem(s.color, s.label, `${compact(s.value)} · ${shownTotal ? ((s.value / shownTotal) * 100).toFixed(1) : '0.0'}%`)).join('')
+
+  $('projects').innerHTML = hBars(r.byProject.map((p) => ({ label: p.project, value: p.total })), { width: widthOf('projects') })
+}
+
+// Provider split, smoothed trend, totals strip and the one-line token-type bar.
+function renderOverview(r, keys, widthOf) {
+  const t = r.totals
+  const isCost = state.metric === 'cost'
+  const fmt = isCost ? money : compact
+  $('ov-total').textContent = isCost ? money(t.costUsd) + (t.hasUnpriced ? '+' : '') : compact(keys.reduce((a, k) => a + (t[k] || 0), 0))
+  $('ov-sessions').textContent = `${t.sessions.toLocaleString()} sessions · ${t.turns.toLocaleString()} turns`
+  $('ov-providers').innerHTML = (r.byProvider || []).map((p, i) => {
+    const sessions = p.sessions !== undefined ? `<small>${p.sessions.toLocaleString()} sessions</small>` : ''
+    const amount = isCost ? (p.costUsd == null ? 'unpriced' : money(p.costUsd)) : compact(p.total)
+    const other = isCost ? `${compact(p.total)} tokens` : p.costUsd == null ? 'cost unpriced' : money(p.costUsd)
+    return `<li><span class="sw" style="background:${providerColor(p.provider, i)}"></span><span class="name">${esc(PROVIDER_LABELS[p.provider] || p.provider)}${sessions}</span><span class="amt">${esc(amount)}</span><span class="meta">${pct(p.share)} of tokens · ${esc(other)}</span></li>`
+  }).join('')
+  const byHost = r.byHost || []
+  $('ov-hosts').hidden = byHost.length < 2
+  $('ov-hosts').innerHTML = byHost.length < 2 ? '' : byHost.map((h) => {
+    const amount = isCost ? (h.costUsd == null ? 'unpriced' : money(h.costUsd)) : compact(h.total)
+    return `<li><span class="sw" style="background:var(--muted-fg)"></span><span class="name">${esc(hostLabel(h.host))}<small>${(h.sessions ?? 0).toLocaleString()} sessions</small></span><span class="amt">${esc(amount)}</span><span class="meta">${pct(h.share)} of tokens</span></li>`
+  }).join('')
+  $('trend-title').textContent = isCost ? 'Daily cost by provider' : 'Daily tokens by provider'
+  const all = r.seriesByProvider || [{ provider: r.byProvider?.[0]?.provider || 'claude', daily: r.daily }]
+  const live = all.filter((s) => s.daily.some((d) => d.total > 0))
+  const series = live.length ? live : all
+  $('trend').innerHTML = areaTrend(series, { metric: isCost ? 'costUsd' : 'total', fmt, axisFmt: isCost ? (v) => '$' + compact(v) : compact, width: widthOf('trend'), height: 210 })
+  const cells = [
+    ['Processed tokens', compact(t.total)],
+    ['Cached input', compact(t.cacheRead)],
+    ['Uncached input', compact(t.input)],
+    ['Output', compact(t.output)],
+    ['Cache savings', t.cacheSavingsUsd === undefined ? '—' : money(t.cacheSavingsUsd)],
+  ]
+  $('totals').innerHTML = cells.map(([k, v]) => `<div><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join('')
+  const segs = TOKEN_KEYS.map((k) => ({ label: TOKEN_LABELS[k], value: t[k] || 0, color: TOKEN_COLORS[k] }))
+  $('typebar').innerHTML = segmentBar(segs, { width: widthOf('typebar'), id: 'typebar' })
+  $('type-legend').innerHTML = segs.map((s) => legendItem(s.color, s.label, compact(s.value))).join('')
+}
+
+// Ranked table by model or by day. The thin line under each name is its share of the largest row.
+function renderBreakdown(r) {
+  const isCost = state.metric === 'cost'
+  const byModel = state.breakdown === 'model'
+  const providers = r.byProvider || []
+  const colorOf = (p) => providerColor(p, Math.max(0, providers.findIndex((x) => x.provider === p)))
+  const total = r.totals.total || 0
+  let rows
+  if (byModel) {
+    rows = (r.byModel || []).map((m) => ({ name: m.model, provider: m.provider, cost: m.costUsd, tokens: m.total, share: m.share }))
+  } else {
+    rows = [...r.daily].reverse().filter((d) => d.total > 0).map((d) => ({ name: prettyDay(d.day), cost: d.costUsd, tokens: d.total, share: total ? d.total / total : 0 }))
+  }
+  if (isCost) rows.sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1))
+  const key = (x) => (isCost ? x.cost ?? 0 : x.tokens)
+  const top = Math.max(0, ...rows.map(key))
+  const head = `<thead><tr><th>#</th><th>${byModel ? 'Model' : 'Day'}</th><th>Cost</th><th>Share</th><th>Tokens</th></tr></thead>`
+  const body = rows.length
+    ? rows.map((x, i) => {
+        const color = byModel ? colorOf(x.provider) : 'var(--s1)'
+        const width = top > 0 ? Math.max(2, (key(x) / top) * 100) : 0
+        const dot = byModel && x.provider ? `<span class="sw" style="background:${color}"></span>` : ''
+        return `<tr><td class="rank">${i + 1}</td><td class="name"><span class="nm">${dot}${esc(x.name)}</span><span class="share-line" style="width:${width.toFixed(1)}%;background:${color}"></span></td><td${x.cost == null ? ' class="muted"' : ''}>${x.cost == null ? '—' : money(x.cost)}</td><td class="muted">${x.share < 0.001 && x.share > 0 ? '&lt;0.1%' : (x.share * 100).toFixed(1) + '%'}</td><td>${esc(compact(x.tokens))}</td></tr>`
+      }).join('')
+    : `<tr><td colspan="5" class="muted" style="text-align:center">No usage in this range.</td></tr>`
+  $('breakdown').innerHTML = head + `<tbody>${body}</tbody>`
+}
+
+function bindTooltip() {
+  const tip = $('tip')
+  document.addEventListener('pointermove', (e) => {
+    const el = e.target.closest?.('[data-tip]')
+    if (!el) { tip.hidden = true; return }
+    let data
+    try { data = JSON.parse(el.getAttribute('data-tip')) } catch { return }
+    const fmt = (v) => (typeof v === 'number' ? `${compact(v)}${v >= 1000 ? ` (${v.toLocaleString()})` : ''}` : v)
+    tip.innerHTML = `<b>${esc(data.title)}</b>` + data.rows.map(([k, v]) => `<div class="row"><span>${esc(k)}</span><span>${esc(fmt(v))}</span></div>`).join('') + (data.total !== undefined ? `<div class="row"><span>Total</span><span>${esc(fmt(data.total))}</span></div>` : '')
+    tip.hidden = false
+    const pad = 12
+    const { innerWidth: W, innerHeight: H } = window
+    const rect = tip.getBoundingClientRect()
+    tip.style.left = `${Math.min(W - rect.width - 4, e.clientX + pad)}px`
+    tip.style.top = `${e.clientY + pad + rect.height > H ? e.clientY - rect.height - pad : e.clientY + pad}px`
+  })
+  document.addEventListener('pointerleave', () => { tip.hidden = true })
+}
+
+// Radio groups: arrow keys move the choice (and focus), as the radiogroup pattern expects.
+function bindRadioKeys(group) {
+  group.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return
+    const items = [...group.querySelectorAll('button[role="radio"]')]
+    const at = items.indexOf(document.activeElement)
+    if (at < 0) return
+    e.preventDefault()
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : (at + (e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length
+    items[next].focus()
+    items[next].click()
+  })
+}
+
+// Only the selected option is in the tab order (roving tabindex).
+function syncRadioTabs() {
+  for (const id of ['ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) {
+    const items = [...$(id).querySelectorAll('button[role="radio"]')]
+    const checked = items.find((b) => b.getAttribute('aria-checked') === 'true') || items[0]
+    for (const b of items) b.tabIndex = b === checked ? 0 : -1
+  }
+}
+
+function bindControls() {
+  for (const id of ['ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) bindRadioKeys($(id))
+  $('scope').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-scope]')
+    if (!b || b.dataset.scope === state.scope) return
+    state.scope = b.dataset.scope
+    load()
+  })
+  $('hosts').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-host]')
+    if (!b || b.dataset.host === state.host) return
+    state.host = b.dataset.host
+    load()
+  })
+  $('ranges').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-range]')
+    if (!b || b.dataset.range === state.range) return
+    state.range = b.dataset.range
+    load()
+  })
+  $('providers').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-provider]')
+    if (!b || b.dataset.provider === state.provider) return
+    state.provider = b.dataset.provider
+    load()
+  })
+  $('metric').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-metric]')
+    if (!b || b.dataset.metric === state.metric) return
+    state.metric = b.dataset.metric
+    render()
+  })
+  $('bd-mode').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-mode]')
+    if (!b || b.dataset.mode === state.breakdown) return
+    state.breakdown = b.dataset.mode
+    render()
+  })
+  $('filters-btn').addEventListener('click', () => setMenu($('filters-pop').hidden))
+  $('filters-done').addEventListener('click', () => setMenu(false))
+  $('filters-reset').addEventListener('click', () => clearFilter('all'))
+  $('chips').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-clear]')
+    if (b) clearFilter(b.dataset.clear)
+  })
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !$('filters-pop').hidden) {
+      e.preventDefault()
+      setMenu(false)
+    }
+  })
+  document.addEventListener('pointerdown', (e) => {
+    if ($('filters-pop').hidden) return
+    if (!e.target.closest?.('.filters-wrap')) {
+      $('filters-pop').hidden = true
+      $('filters-btn').setAttribute('aria-expanded', 'false')
+    }
+  })
+  $('cache').addEventListener('change', (e) => {
+    state.cache = e.target.checked
+    render()
+  })
+  $('refresh').addEventListener('click', () => load('usage.refresh'))
+  host?.plugin?.on?.('usage.changed', () => load())
+  host?.on?.('theme', () => state.report && render())
+  // Charts are drawn at the container's pixel width, so redraw when the panel is resized.
+  let lastW = 0
+  let timer = 0
+  globalThis.addEventListener?.('resize', () => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      const w = document.body?.clientWidth || 0
+      if (state.report && Math.abs(w - lastW) > 8) { lastW = w; render() }
+    }, 120)
+  })
+}
+
+if (typeof document !== 'undefined' && document.getElementById('app')) {
+  bindControls()
+  bindTooltip()
+  load()
+}
+
+})()</script>
+</body>
+</html>

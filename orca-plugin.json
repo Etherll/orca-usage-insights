@@ -1,0 +1,107 @@
+{
+  "manifestVersion": 2,
+  "id": "usage-insights",
+  "publisher": "etherll",
+  "name": "Usage Insights",
+  "version": "1.0.0",
+  "execution": "trusted-worker",
+  "description": "Richer usage dashboard for Orca: daily stacked bars, a 26-week activity calendar, a weekday × hour rhythm chart, token mix, models, projects and a pixel-art skyline drawn from your Claude Code and Codex usage.",
+  "author": {
+    "name": "Etherll",
+    "url": "https://github.com/Etherll"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/Etherll/orca-usage-insights",
+  "icon": "images/icon.png",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "pluginApi": 1,
+  "main": "src/worker.mjs",
+  "contributes": {
+    "panels": [
+      {
+        "id": "insights",
+        "title": "Usage Insights",
+        "icon": "bar-chart-3",
+        "entry": "panel/index.html"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "today",
+        "text": "—",
+        "icon": "activity",
+        "tooltip": "Usage Insights"
+      }
+    ],
+    "settings": [
+      {
+        "key": "extraClaudeFolders",
+        "title": "Extra Claude Code folders",
+        "description": "One folder per line, read along with ~/.claude. Use a folder that holds a projects directory, or a folder of Claude Code .jsonl transcripts.",
+        "type": "string",
+        "multiline": true,
+        "default": "",
+        "placeholder": "~/backup/.claude"
+      },
+      {
+        "key": "extraCodexFolders",
+        "title": "Extra Codex folders",
+        "description": "One folder per line, read along with ~/.codex. Use a folder that holds a sessions directory, or a folder of Codex .jsonl transcripts.",
+        "type": "string",
+        "multiline": true,
+        "default": "",
+        "placeholder": "~/backup/.codex"
+      },
+      {
+        "key": "sshHosts",
+        "title": "SSH hosts",
+        "description": "One host per line: a name from ~/.ssh/config, or user@host. Key or ssh-agent login only; passwords are not supported. The remote must be Linux or macOS.",
+        "type": "string",
+        "multiline": true,
+        "default": "",
+        "placeholder": "user@example.com"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "settings:own"
+    }
+  ],
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "Usage Insights panel showing token totals, a daily trend by provider and a pixel-art skyline banner"
+  },
+  "screenshots": [
+    {
+      "path": "images/screenshot-overview.png",
+      "alt": "Overview with stat tiles, provider and machine split, totals and a smoothed daily trend per provider",
+      "caption": "Tokens, cost and cache at a glance, split by provider and machine"
+    },
+    {
+      "path": "images/screenshot-cost.png",
+      "alt": "Daily cost bars, a 26-week activity calendar, a weekday by hour rhythm chart and a model breakdown table",
+      "caption": "Daily cost, activity calendar, working rhythm and model breakdown"
+    },
+    {
+      "path": "images/screenshot-filters.png",
+      "alt": "Filters menu open with session scope, provider and machine options and a Worktrees only chip",
+      "caption": "One Filters menu: worktrees only, provider, machine, cache"
+    },
+    {
+      "path": "images/screenshot-activity.png",
+      "alt": "Light theme activity calendar, rhythm chart, breakdown, token mix donut and projects",
+      "caption": "Follows your Orca theme, light or dark"
+    },
+    {
+      "path": "images/screenshot-sidebar.png",
+      "alt": "The panel at sidebar width in dark and light themes",
+      "caption": "Fits the sidebar"
+    }
+  ]
+}
