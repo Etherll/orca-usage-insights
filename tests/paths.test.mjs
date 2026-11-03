@@ -113,8 +113,8 @@ test('cache dir follows each OS convention and falls back to tmpdir', () => {
     '/home/me/.cache/orca-usage-insights',
   );
   assert.equal(
-    cacheDir({ platform: 'linux', env: {}, home: '', tmpdir: os.tmpdir() }),
-    path.join(os.tmpdir(), 'orca-usage-insights'),
+    cacheDir({ platform: 'linux', env: {}, home: '', tmpdir: '/var/tmp' }),
+    '/var/tmp/orca-usage-insights',
   );
 });
 
