@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "usage-insights",
   "name": "Usage Insights",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "execution": "trusted-worker",
   "description": "Charts of your Claude Code and Codex token use and estimated API cost by day, project, model and machine, with a pixel-art skyline drawn from the numbers. Reads local transcripts and any SSH hosts you add.",
   "author": {
