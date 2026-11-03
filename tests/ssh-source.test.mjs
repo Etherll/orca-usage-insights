@@ -191,12 +191,14 @@ test('close() kills a running ssh and the source never writes its cache afterwar
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
   const cacheFile = path.join(dir, 'c.json');
   let killed = false;
+  let spawned = false;
   const source = createSshSource({
     host: 'box',
     cacheFile,
     command: () => ['sh', ['-c', 'sleep 30']],
     spawn: (cmd, args, opts) => {
       const child = spawn(cmd, args, opts);
+      spawned = true;
       const kill = child.kill.bind(child);
       child.kill = (...a) => {
         killed = true;
@@ -206,7 +208,9 @@ test('close() kills a running ssh and the source never writes its cache afterwar
     },
   });
   const running = source.scan();
-  await new Promise((r) => setTimeout(r, 50));
+  // Wait for the ssh stand-in to start; a slow machine may need longer than a fixed delay.
+  for (let i = 0; i < 200 && !spawned; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(spawned, 'ssh stand-in started');
   const t0 = Date.now();
   await source.close();
   assert.ok(killed, 'ssh child was killed');
