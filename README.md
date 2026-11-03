@@ -2,7 +2,7 @@
 
 A usage dashboard for [Orca](https://onorca.dev). It reads your Claude Code and Codex transcripts, from this machine and from any extra folders or SSH hosts you add, and shows how much you use them: tokens, estimated cost, activity over time, and where the tokens go.
 
-Requires Orca 1.4.248 or later.
+Requires Orca 1.4.246 or later.
 
 ## What it shows
 
@@ -16,7 +16,6 @@ The sidebar panel has range filters (7d, 30d, 90d, All), a Tokens/Cost measure, 
 - **Token mix**: a donut of the four token kinds.
 - **Models, Projects, Providers**: bars ranked by tokens. With two or more machines, a **Machines** list is added.
 
-The status bar item shows today's tokens, such as `3.4M today`. Its tooltip shows today's estimated cost. It refreshes every 60 seconds.
 
 A token total is input + output + cache read + cache write.
 
@@ -65,7 +64,7 @@ Each SSH host keeps its own `ssh-<host>.json` there. The cache holds parsed usag
 
 ## Settings
 
-Set these in **Settings → Plugins → Usage Insights**. Each takes one entry per line. Blank lines and lines starting with `#` are ignored. A change applies on the next panel load, the next status bar update (within a minute), or after Rescan.
+Set these in **Settings → Plugins → Usage Insights**. Each takes one entry per line. Blank lines and lines starting with `#` are ignored. A change applies on the next panel load or after Rescan.
 
 **Extra Claude Code folders** and **Extra Codex folders** add folders to the defaults above.
 

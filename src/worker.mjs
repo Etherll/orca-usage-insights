@@ -64,6 +64,9 @@ export function startWorker(orca, scanner, {
   sshCacheDir,
   makeSshSource = createSshSource,
   sshWaitMs = SSH_WAIT_MS,
+  // The status bar item needs Orca 1.4.248, which isn't released yet, so 1.0 ships without it.
+  // The status-bar branch turns it back on.
+  statusBar = false,
   build = buildReport,
 } = {}) {
   const paths = pathFor(platform);
@@ -344,6 +347,7 @@ export function startWorker(orca, scanner, {
     try {
       const gathered = await gather({ force: false, detach: true });
       if (gathered.localChanged) notify('usage.changed', { generatedAt: now().toISOString() });
+      if (!statusBar) return;
       const { today } = reportFor(gathered.records, { range: '7d' });
       await orca.host.call('statusBar.update', {
         id: STATUS_ID,
