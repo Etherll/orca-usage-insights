@@ -166,10 +166,9 @@ test('manifest is the trusted worker with exactly the declared keys', () => {
   assert.equal(manifest.execution, 'trusted-worker')
   assert.equal(manifest.main, 'src/worker.mjs')
   assert.equal(manifest.pluginApi, 1)
-  assert.deepEqual(manifest.engines, { orca: '>=1.4.248' })
-  assert.deepEqual(Object.keys(manifest.contributes).sort(), ['panels', 'settings', 'statusBarItems'])
+  assert.deepEqual(manifest.engines, { orca: '>=1.4.246' })
+  assert.deepEqual(Object.keys(manifest.contributes).sort(), ['panels', 'settings'])
   assert.deepEqual(manifest.contributes.panels, [{ id: 'insights', title: 'Usage Insights', icon: 'bar-chart-3', entry: 'panel/index.html' }])
-  assert.deepEqual(manifest.contributes.statusBarItems, [{ id: 'today', text: '—', icon: 'activity', tooltip: 'Usage Insights' }])
   assert.deepEqual(manifest.capabilities, [{ kind: 'workspace:read' }, { kind: 'settings:own' }])
   assert.ok(existsSync(path.join(root, manifest.main)), 'main exists')
   assert.ok(existsSync(path.join(root, manifest.contributes.panels[0].entry)), 'panel entry exists')
@@ -275,7 +274,7 @@ test('usage.refresh forces a rescan without dropping the file cache, for the req
 test('status bar shows today tokens and estimated cost on start', async () => {
   const mock = mockOrca();
   const records = [usageRecord({ input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 })];
-  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000 });
+  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { statusBar: true, now: NOON, pollMs: 60_000 });
   await worker.ready;
   assert.deepEqual(mock.statusUpdates(), [{ id: 'today', text: '1M today', tooltip: 'Tokens today · $3.00' }]);
   await worker.stop();
@@ -284,7 +283,7 @@ test('status bar shows today tokens and estimated cost on start', async () => {
 test('status bar shows $0.00 when today has only unpriced usage', async () => {
   const mock = mockOrca();
   const records = [usageRecord({ provider: 'codex', model: 'gpt-5-codex', output: 1200, input: 0 })];
-  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000 });
+  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { statusBar: true, now: NOON, pollMs: 60_000 });
   await worker.ready;
   assert.deepEqual(mock.statusUpdates(), [{ id: 'today', text: '1.2k today', tooltip: 'Tokens today · $0.00' }]);
   await worker.stop();
@@ -322,7 +321,7 @@ test('a failed scan is logged and the poll keeps running', async () => {
     if (n === 1) throw new Error('disk gone');
     return result([usageRecord()]);
   });
-  const worker = startWorker(mock.orca, scanner, { now: NOON, pollMs: 2 });
+  const worker = startWorker(mock.orca, scanner, { statusBar: true, now: NOON, pollMs: 2 });
   await waitFor(() => mock.statusUpdates().length >= 1);
   await worker.stop();
   assert.match(mock.logs[0], /disk gone/);
@@ -499,6 +498,7 @@ test('the status bar poll does not wait for an SSH host', async () => {
   let release;
   ssh.hold('slow', new Promise((resolve) => (release = resolve)));
   const worker = startWorker(mock.orca, fakeScanner(() => result([usageRecord()])), {
+    statusBar: true,
     now: NOON,
     pollMs: 60_000,
     makeSshSource: ssh.make,
@@ -746,4 +746,12 @@ test('activate scans the real roots and deactivate flushes the cache under the c
   const cache = JSON.parse(await fsp.readFile(path.join(cacheDir(), 'scan-cache-v1.json'), 'utf8'));
   assert.equal(cache.version, 2);
   assert.equal(Object.keys(cache.files).length, 1);
+});
+
+test('1.0 never calls statusBar.update (the item needs Orca 1.4.248)', async () => {
+  const mock = mockOrca();
+  const worker = startWorker(mock.orca, fakeScanner(() => result([usageRecord()])), { now: NOON, pollMs: 60_000 });
+  await worker.ready;
+  assert.deepEqual(mock.statusUpdates(), []);
+  await worker.stop();
 });
