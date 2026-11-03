@@ -104,7 +104,7 @@ function frame(name, panels, { width = 1600, height = 1000, title = '', subtitle
   const items = panels.map((p) => `<div class="win ${(p.theme ? p.theme === 'dark' : dark) ? 'wd' : 'wl'}" style="width:${p.w}px">
     <div class="bar"><span class="brand">${logo(13, !(p.theme ? p.theme === 'dark' : dark))}<b>Orca</b></span><span class="tab">Usage Insights</span><span class="dots"><i></i><i></i><i></i></span></div>
     <iframe src="file://${p.file}" width="${p.w}" height="${p.h - BAR}" scrolling="no"></iframe></div>`).join('')
-  const text = title ? `<div class="copy">${logo(46, !dark)}<div class="badge">Plugin for Orca</div><h1>${title}</h1><p>${subtitle}</p><ul><li>Daily and per-provider trends</li><li>Cost, cache hit rate and savings</li><li>Projects, models and machines</li><li>This machine, folders and SSH hosts</li></ul></div>` : ''
+  const text = title ? `<div class="copy">${logo(30, !dark)}<h1>${title}</h1><p>${subtitle}</p><small>Reads Claude Code and Codex transcripts on this machine and on SSH hosts you add. Nothing is uploaded.</small></div>` : ''
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
 html,body{margin:0;width:${width}px;height:${height}px;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
 body{display:flex;align-items:center;justify-content:center;gap:56px;background:${dark
@@ -120,11 +120,12 @@ body{display:flex;align-items:center;justify-content:center;gap:56px;background:
 .tab{color:${dark ? '#8d8d8d' : '#6d6d6d'};padding:3px 10px;border-radius:6px;background:${dark ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.04)'}}
 .dots{margin-left:auto;display:inline-flex;gap:6px}.dots i{width:9px;height:9px;border-radius:50%;background:${dark ? 'rgba(255,255,255,.14)' : 'rgba(0,0,0,.14)'}}
 iframe{border:0;display:block}
-.copy{width:430px;color:${dark ? '#f2f2f2' : '#111'};flex:none}
-.copy img{display:block;margin-bottom:26px}
+.copy{width:340px;color:${dark ? '#f2f2f2' : '#111'};flex:none;align-self:flex-end;margin-bottom:70px}
+.copy img{display:block;margin-bottom:22px;opacity:.9}
+small{display:block;font-size:14px;line-height:1.5;color:${dark ? '#7a7a7a' : '#777'};border-top:1px solid ${dark ? 'rgba(255,255,255,.1)' : 'rgba(0,0,0,.1)'};padding-top:14px}
 .badge{display:inline-block;font-size:13px;letter-spacing:.08em;text-transform:uppercase;padding:6px 12px;border-radius:999px;border:1px solid ${dark ? 'rgba(255,255,255,.16)' : 'rgba(0,0,0,.14)'};color:${dark ? '#bdbdbd' : '#555'}}
-h1{font-size:62px;line-height:1.02;margin:20px 0 16px;letter-spacing:-.025em;font-weight:700}
-p{font-size:21px;line-height:1.45;margin:0 0 26px;color:${dark ? '#a3a3a3' : '#555'}}
+h1{font-size:40px;line-height:1.1;margin:0 0 14px;letter-spacing:-.015em;font-weight:600}
+p{font-size:19px;line-height:1.5;margin:0 0 22px;color:${dark ? '#b4b4b4' : '#444'}}
 ul{margin:0;padding:0;list-style:none;display:grid;gap:12px;font-size:18px;color:${dark ? '#dcdcdc' : '#222'}}
 li{display:flex;gap:12px;align-items:center}li::before{content:"";width:6px;height:6px;border-radius:50%;background:${dark ? '#fff' : '#111'};flex:none}
 </style></head><body>${text}${items}</body></html>`
@@ -137,7 +138,7 @@ li{display:flex;gap:12px;align-items:center}li::before{content:"";width:6px;heig
 
 const shots = []
 // Cover: title + the overview.
-shots.push(frame('cover', [{ file: demoPanel('cover', {}), w: 980, h: 880 }], { title: 'Usage Insights', subtitle: 'Charts and pixel art for your Claude Code and Codex usage, right in Orca.' }))
+shots.push(frame('cover', [{ file: demoPanel('cover', { actions: click('[data-range="30d"]') }), w: 1080, h: 900 }], { title: 'Usage Insights', subtitle: 'Token use and estimated API cost for your Claude Code and Codex sessions, by day, project, model and machine.' }))
 // 1. Overview, wide.
 shots.push(frame('screenshot-overview', [{ file: demoPanel('overview', { actions: click('[data-range="30d"]') }), w: 1440, h: 880 }]))
 // 2. Cost view: daily cost and the breakdown.
