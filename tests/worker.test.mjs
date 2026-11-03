@@ -597,7 +597,7 @@ test('scope worktrees keeps only worktree workspaces, with case-insensitive matc
   const worker = startWorker(mock.orca, fakeScanner(() => result([usageRecord()])), { now: NOON, pollMs: 60_000, build });
   await worker.ready;
   const report = await mock.handlers.get('usage.report')({ scope: 'worktrees' });
-  assert.deepEqual(options.at(-1).scope, { roots: [wt], caseInsensitive: false });
+  assert.deepEqual(options.at(-1).scope, { roots: [wt], caseInsensitive: process.platform === 'win32' });
   assert.equal(report.scopeError, undefined);
 
   const win = startWorker(mock.orca, fakeScanner(() => result([usageRecord()])), { now: NOON, pollMs: 60_000, build, platform: 'win32' });
