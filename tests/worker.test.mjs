@@ -50,7 +50,15 @@ function mockOrca({ settings = {}, workspaces = () => ({ workspaces: [] }) } = {
       },
     },
     log: (message) => mock.logs.push(message),
+    events: {
+      on: (name, fn) => {
+        (mock.listeners[name] ||= []).push(fn);
+        return { dispose: () => (mock.disposed = (mock.disposed || 0) + 1) };
+      },
+    },
   };
+  mock.listeners = {};
+  mock.emit = (name, payload) => (mock.listeners[name] || []).forEach((fn) => fn(payload));
   mock.statusUpdates = () => mock.hostCalls.filter(([method]) => method === 'statusBar.update').map(([, args]) => args);
   mock.callsTo = (name) => mock.hostCalls.filter(([method]) => method === name);
   mock.changedPosts = () => mock.posts.filter(([name]) => name === 'usage.changed').length;
@@ -166,10 +174,13 @@ test('manifest is the trusted worker with exactly the declared keys', () => {
   assert.equal(manifest.execution, 'trusted-worker')
   assert.equal(manifest.main, 'src/worker.mjs')
   assert.equal(manifest.pluginApi, 1)
-  assert.deepEqual(manifest.engines, { orca: '>=1.4.246' })
-  assert.deepEqual(Object.keys(manifest.contributes).sort(), ['panels', 'settings'])
+  assert.deepEqual(manifest.engines, { orca: '>=1.4.248' })
+  assert.deepEqual(Object.keys(manifest.contributes).sort(), ['commands', 'events', 'panels', 'settings', 'statusBarItems'])
+  assert.deepEqual(manifest.contributes.statusBarItems, [{ id: 'today', text: '—', icon: 'bar-chart-3', tooltip: 'Usage Insights', command: 'toggleSidebar' }])
+  assert.deepEqual(manifest.contributes.commands, [{ id: 'toggleSidebar', title: 'Usage Insights: Show or hide the right sidebar', action: 'sidebar.right.toggle' }])
+  assert.deepEqual(manifest.contributes.events, [{ on: 'agent.status.changed' }])
   assert.deepEqual(manifest.contributes.panels, [{ id: 'insights', title: 'Usage Insights', icon: 'bar-chart-3', entry: 'panel/index.html' }])
-  assert.deepEqual(manifest.capabilities, [{ kind: 'workspace:read' }, { kind: 'settings:own' }])
+  assert.deepEqual(manifest.capabilities, [{ kind: 'workspace:read' }, { kind: 'settings:own' }, { kind: 'agent:read' }])
   assert.ok(existsSync(path.join(root, manifest.main)), 'main exists')
   assert.ok(existsSync(path.join(root, manifest.contributes.panels[0].entry)), 'panel entry exists')
 })
@@ -276,7 +287,10 @@ test('status bar shows today tokens and estimated cost on start', async () => {
   const records = [usageRecord({ input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0 })];
   const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { statusBar: true, now: NOON, pollMs: 60_000 });
   await worker.ready;
-  assert.deepEqual(mock.statusUpdates(), [{ id: 'today', text: '1M today', tooltip: 'Tokens today · $3.00' }]);
+  const [update] = mock.statusUpdates();
+  assert.equal(update.id, 'today');
+  assert.equal(update.text, '1M today');
+  assert.match(update.tooltip, /^Today: 1M tokens · \$3\.00 est\./);
   await worker.stop();
 });
 
@@ -285,7 +299,9 @@ test('status bar shows $0.00 when today has only unpriced usage', async () => {
   const records = [usageRecord({ provider: 'codex', model: 'gpt-5-codex', output: 1200, input: 0 })];
   const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { statusBar: true, now: NOON, pollMs: 60_000 });
   await worker.ready;
-  assert.deepEqual(mock.statusUpdates(), [{ id: 'today', text: '1.2k today', tooltip: 'Tokens today · $0.00' }]);
+  const [update] = mock.statusUpdates();
+  assert.equal(update.text, '1.2k today');
+  assert.match(update.tooltip, /^Today: 1\.2k tokens · \$0\.00 est\./);
   await worker.stop();
 });
 
@@ -748,10 +764,29 @@ test('activate scans the real roots and deactivate flushes the cache under the c
   assert.equal(Object.keys(cache.files).length, 1);
 });
 
-test('1.0 never calls statusBar.update (the item needs Orca 1.4.248)', async () => {
+test('an agent finishing a turn triggers one forced local rescan after it settles', async () => {
   const mock = mockOrca();
-  const worker = startWorker(mock.orca, fakeScanner(() => result([usageRecord()])), { now: NOON, pollMs: 60_000 });
+  const scanner = fakeScanner(() => result([usageRecord()]));
+  const worker = startWorker(mock.orca, scanner, { now: NOON, pollMs: 60_000, agentSettleMs: 20 });
   await worker.ready;
-  assert.deepEqual(mock.statusUpdates(), []);
+  const before = scanner.calls.order.length;
+  mock.emit('agent.status.changed', { state: 'working', paneKey: 'p', receivedAt: 1 });
+  mock.emit('agent.status.changed', { state: 'done', paneKey: 'p', receivedAt: 2 });
+  mock.emit('agent.status.changed', { state: 'done', paneKey: 'q', receivedAt: 3 });
+  await sleep(80);
+  assert.deepEqual(scanner.calls.order.slice(before), ['scan:force'], 'one forced scan for the burst');
+  assert.equal(mock.statusUpdates().length, 2, 'status bar updated again');
+  mock.emit('agent.status.changed', { state: 'working', paneKey: 'p', receivedAt: 4 });
+  await sleep(40);
+  assert.equal(scanner.calls.order.length, before + 1, 'working does not rescan');
   await worker.stop();
+  assert.equal(mock.disposed, 1, 'subscription disposed on stop');
+});
+
+test('statusText shows today tokens, cost and cache hit rate', async () => {
+  const { statusText } = await import('../src/worker.mjs');
+  const t = statusText({ today: { total: 4_200_000_000, costUsd: 271.9 }, daily: [{ input: 10, cacheRead: 990, cacheWrite: 0 }] });
+  assert.equal(t.text, '4.2B today');
+  assert.equal(t.tooltip, 'Today: 4.2B tokens · $271.90 est. · 99.0% cache hits. Click to show or hide the sidebar.');
+  assert.match(statusText({}).tooltip, /no cache use yet/);
 });

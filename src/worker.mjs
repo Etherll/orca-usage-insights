@@ -64,9 +64,9 @@ export function startWorker(orca, scanner, {
   sshCacheDir,
   makeSshSource = createSshSource,
   sshWaitMs = SSH_WAIT_MS,
-  // The status bar item needs Orca 1.4.248, which isn't released yet, so 1.0 ships without it.
-  // The status-bar branch turns it back on.
-  statusBar = false,
+  statusBar = true,
+  // After an agent finishes, wait this long (transcripts are written just after) and rescan.
+  agentSettleMs = 2_500,
   build = buildReport,
 } = {}) {
   const paths = pathFor(platform);
@@ -270,7 +270,7 @@ export function startWorker(orca, scanner, {
   // Reads the settings, syncs the folders and hosts, and scans every source. The local scan is
   // awaited. SSH hosts get at most sshWaitMs; a host still running then is reported as loading. The
   // status bar poll (detach) never waits for SSH.
-  async function gather({ force, detach }) {
+  async function gather({ force, detach, forceLocal = force }) {
     const config = await readConfig();
     scanner.setExtraRoots({ claude: config.claude, codex: config.codex });
     reconcile(config.hosts);
@@ -279,7 +279,7 @@ export function startWorker(orca, scanner, {
     const sshWait = detach ? Promise.resolve() : waitUpTo(runs.map((run) => run.done), sshWaitMs);
     let local;
     try {
-      local = await scanLocal(force);
+      local = await scanLocal(forceLocal);
       await sshWait;
     } finally {
       for (const run of runs) if (!run.finished) run.detached = true;
@@ -343,20 +343,50 @@ export function startWorker(orca, scanner, {
     }
   }
 
-  async function poll() {
+  async function poll({ forceLocal = false } = {}) {
     try {
-      const gathered = await gather({ force: false, detach: true });
+      const gathered = await gather({ force: false, detach: true, forceLocal });
       if (gathered.localChanged) notify('usage.changed', { generatedAt: now().toISOString() });
       if (!statusBar) return;
-      const { today } = reportFor(gathered.records, { range: '7d' });
-      await orca.host.call('statusBar.update', {
-        id: STATUS_ID,
-        text: `${compact(today.total)} today`,
-        tooltip: 'Tokens today · $' + (today.costUsd ?? 0).toFixed(2),
-      });
+      const report = reportFor(gathered.records, { range: '7d' });
+      await orca.host.call('statusBar.update', { id: STATUS_ID, ...statusText(report) });
     } catch (error) {
       orca.log(`Usage Insights: ${error?.message ?? error}`);
     }
+  }
+
+  // An agent finishing a turn has just written to its transcript, so rescan this machine a moment
+  // later. Bursts (several agents, or done followed by working) collapse into one rescan.
+  let agentTimer = null;
+  let agentRun = null;
+  let agentAgain = false;
+  function onAgentStatus(event) {
+    const done = event?.state === 'done' || event?.mainAgent?.state === 'done';
+    if (!done || stopped) return;
+    clearTimeout(agentTimer);
+    agentTimer = setTimeout(runAgentRescan, agentSettleMs);
+    agentTimer.unref?.();
+  }
+  async function runAgentRescan() {
+    agentTimer = null;
+    if (stopped) return;
+    if (agentRun) {
+      agentAgain = true;
+      return;
+    }
+    agentRun = poll({ forceLocal: true });
+    await agentRun;
+    agentRun = null;
+    if (agentAgain && !stopped) {
+      agentAgain = false;
+      runAgentRescan();
+    }
+  }
+  let agentSubscription = null;
+  try {
+    agentSubscription = orca.events?.on?.('agent.status.changed', onAgentStatus) ?? null;
+  } catch (error) {
+    orca.log(`Usage Insights: agent events unavailable: ${error?.message ?? error}`);
   }
 
   // The next poll is scheduled only after this one settles, so polls never overlap each other.
@@ -376,6 +406,9 @@ export function startWorker(orca, scanner, {
     // closes the SSH sources (each flushes its own cache). A failed flush is logged.
     async stop() {
       stopped = true;
+      clearTimeout(agentTimer);
+      agentSubscription?.dispose?.();
+      await agentRun;
       clearTimeout(timer);
       timer = null;
       while (pending || inFlight.size > 0) {
@@ -469,3 +502,16 @@ function shortMessage(error) {
 }
 
 export { compact };
+
+// Status bar text and tooltip from a 7-day report: today's tokens, cost and cache hit rate.
+export function statusText(report) {
+  const today = report?.today ?? { total: 0, costUsd: 0 };
+  const last = report?.daily?.[report.daily.length - 1];
+  const read = last?.cacheRead ?? 0;
+  const denom = read + (last?.input ?? 0) + (last?.cacheWrite ?? 0);
+  const hit = denom > 0 ? `${Math.min(99.9, Math.round((read / denom) * 1000) / 10).toFixed(1)}% cache hits` : 'no cache use yet';
+  return {
+    text: `${compact(today.total)} today`,
+    tooltip: `Today: ${compact(today.total)} tokens · $${(today.costUsd ?? 0).toFixed(2)} est. · ${hit}. Click to show or hide the sidebar.`,
+  };
+}

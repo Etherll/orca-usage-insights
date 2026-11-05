@@ -21,9 +21,9 @@
 
 Install it from the [plugin page](https://www.onorca.dev/plugins/Etherll/orca-usage-insights), or in Orca go to **Settings → Plugins → Add plugin → From a Git URL** and paste `https://github.com/Etherll/orca-usage-insights`. Orca asks you to approve it first, because it reads files on your machine (more on that [below](#privacy)).
 
-Then open it from the bar chart icon in the right sidebar.
+Then open it from the bar chart icon in the right sidebar. The status bar shows today's tokens too; hover it for the cost and cache hit rate, or click it to show or hide the sidebar.
 
-Needs Orca 1.4.246 or newer.
+Needs Orca 1.4.248 or newer.
 
 ## What you get
 
@@ -34,6 +34,8 @@ The panel reads your Claude Code and Codex transcripts and turns them into:
 * **A 26-week activity calendar** and a weekday by hour chart of when you work.
 * **Breakdowns** by model, project and machine.
 * **A pixel-art skyline** at the top, drawn from your daily usage. The stars are your streak.
+
+It updates a few seconds after an agent finishes a turn, so the numbers keep up while you work.
 
 One **Filters** menu narrows it down: only sessions that ran in an Orca worktree, one provider, one machine, or no cache tokens.
 
@@ -76,7 +78,7 @@ Using an Orca server? Install the plugin there too, or add the server as an SSH 
 
 Your transcripts stay on your machines. The plugin doesn't make network requests, apart from the SSH connections you set up yourself. It skips the message text in your transcripts and never stores it. It keeps a small cache of the numbers (tokens, times, models, project folders) in your cache folder, so later opens are fast.
 
-It needs Orca's "full access" because a panel can't read files on its own. The worker does the reading and sends the panel only the finished numbers. It also asks to read your workspace list (for the worktrees filter) and its own settings.
+It needs Orca's "full access" because a panel can't read files on its own. The worker does the reading and sends the panel only the finished numbers. It also asks to read your workspace list (for the worktrees filter), its own settings, and when agents finish (to refresh right after a turn).
 
 ## Development
 

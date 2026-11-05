@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "usage-insights",
   "name": "Usage Insights",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "execution": "trusted-worker",
   "description": "Charts of your Claude Code and Codex token use and estimated API cost by day, project, model and machine, with a pixel-art skyline drawn from the numbers. Reads local transcripts and any SSH hosts you add.",
   "author": {
@@ -13,7 +13,7 @@
   "repository": "https://github.com/Etherll/orca-usage-insights",
   "icon": "images/icon.png",
   "engines": {
-    "orca": ">=1.4.246"
+    "orca": ">=1.4.248"
   },
   "pluginApi": 1,
   "main": "src/worker.mjs",
@@ -24,6 +24,27 @@
         "title": "Usage Insights",
         "icon": "bar-chart-3",
         "entry": "panel/index.html"
+      }
+    ],
+    "commands": [
+      {
+        "id": "toggleSidebar",
+        "title": "Usage Insights: Show or hide the right sidebar",
+        "action": "sidebar.right.toggle"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "today",
+        "text": "—",
+        "icon": "bar-chart-3",
+        "tooltip": "Usage Insights",
+        "command": "toggleSidebar"
+      }
+    ],
+    "events": [
+      {
+        "on": "agent.status.changed"
       }
     ],
     "settings": [
@@ -62,6 +83,9 @@
     },
     {
       "kind": "settings:own"
+    },
+    {
+      "kind": "agent:read"
     }
   ],
   "cover": {
