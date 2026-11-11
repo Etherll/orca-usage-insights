@@ -10,7 +10,7 @@ import { cacheDir, homeDir, pathFor } from './node/paths.mjs';
 import { createScanner } from './node/scan.mjs';
 import { createSshSource } from './node/ssh-source.mjs';
 
-const RANGES = new Set(['7d', '30d', '90d', 'all']);
+const RANGES = new Set(['1d', '7d', '30d', '90d', 'all']);
 const SCOPES = new Set(['all', 'worktrees']);
 const CACHE_FILE = 'scan-cache-v1.json';
 const POLL_MS = 60_000;
@@ -70,7 +70,8 @@ export function startWorker(orca, scanner, {
   build = buildReport,
 } = {}) {
   const paths = pathFor(platform);
-  let cache = { records: null, reports: new Map() };
+  let cache = { records: null, day: null, reports: new Map() };
+  let lastPollDay = now().toDateString();
   let merged = { local: null, lists: [], records: [] };
   let workspaces = null; // { at, roots } from workspace.list
   let settingsFailing = false;
@@ -108,14 +109,16 @@ export function startWorker(orca, scanner, {
     return { ...report, sources: gathered.statuses, ...(scope.scopeError ? { scopeError: scope.scopeError } : {}) };
   }
 
-  // Reports are kept per request shape for as long as the records they came from are current. The
+  // Reports are kept per request shape until the records or local calendar day changes. The
   // merged records array is reused while its inputs are, so an unchanged request is a cache hit.
   function reportFor(records, { range, providers, hosts, scope }) {
-    if (cache.records !== records) cache = { records, reports: new Map() };
+    const at = now();
+    const day = at.toDateString();
+    if (cache.records !== records || cache.day !== day) cache = { records, day, reports: new Map() };
     const key = JSON.stringify([range, providers ?? null, hosts ?? null, scope ?? null]);
     let report = cache.reports.get(key);
     if (!report) {
-      const options = { range, now: now() };
+      const options = { range, now: at };
       if (providers !== undefined) options.providers = providers;
       if (hosts !== undefined) options.hosts = hosts;
       if (scope !== undefined) options.scope = scope;
@@ -346,7 +349,10 @@ export function startWorker(orca, scanner, {
   async function poll({ forceLocal = false } = {}) {
     try {
       const gathered = await gather({ force: false, detach: true, forceLocal });
-      if (gathered.localChanged) notify('usage.changed', { generatedAt: now().toISOString() });
+      const at = now();
+      const day = at.toDateString();
+      if (gathered.localChanged || day !== lastPollDay) notify('usage.changed', { generatedAt: at.toISOString() });
+      lastPollDay = day;
       if (!statusBar) return;
       const report = reportFor(gathered.records, { range: '7d' });
       await orca.host.call('statusBar.update', { id: STATUS_ID, ...statusText(report) });
@@ -470,7 +476,7 @@ function parseReportInput(input) {
     throw invalidParams('usage.report input must be an object');
   }
   const range = body.range === undefined ? '7d' : body.range;
-  if (!RANGES.has(range)) throw invalidParams('range must be one of 7d, 30d, 90d, all');
+  if (!RANGES.has(range)) throw invalidParams('range must be one of 1d, 7d, 30d, 90d, all');
   const scope = body.scope === undefined ? 'all' : body.scope;
   if (!SCOPES.has(scope)) throw invalidParams('scope must be one of all, worktrees');
   const out = { range, scope };

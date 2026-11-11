@@ -23,6 +23,19 @@ test('stackedBars renders one mark per day with tooltips and handles empty', () 
   assert.match(stackedBars([day('2026-10-28', 0)]), /No usage yet/)
 })
 
+test('Today charts center a single day and keep its tooltip and axis label', () => {
+  const daily = [day('2026-11-03', 100)];
+  const bars = stackedBars(daily, { width: 360 });
+  wellFormed(bars);
+  assert.match(bars, /x="132"[^>]*width="96"/);
+  assert.match(bars, /x="180.0"[^>]*text-anchor="middle">Nov 3/);
+  const trend = areaTrend([{ provider: 'claude', daily }]);
+  wellFormed(trend);
+  assert.match(trend, /<circle cx="230" cy="[0-9.]+" r="3.5" fill=/);
+  assert.match(trend, /text-anchor="middle">Nov 3/);
+  assert.match(trend, /data-tip=/);
+});
+
 test('calendarHeatmap places every day and uses quantile levels', () => {
   const cal = Array.from({ length: 182 }, (_, i) => ({ day: new Date(2026, 4, 5 + i).toLocaleDateString('en-CA'), total: i % 3 ? i : 0 }))
   const s = calendarHeatmap(cal)

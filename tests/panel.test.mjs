@@ -95,6 +95,10 @@ test('panel requests a report and renders every section', async () => {
   assert.match(get('sources').innerHTML, /src error/)
   assert.match(get('notice').textContent, /SSH login was refused/)
   assert.equal(get('ov-hosts').hidden, false)
+  assert.match(html, /data-range="1d" aria-checked="false" tabindex="-1">Today/)
+  get('ranges').listeners.click({ target: { closest: () => ({ dataset: { range: '1d' } }) } })
+  await new Promise((r) => setTimeout(r, 20))
+  assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify(['usage.report', { range: '1d' }]))
 })
 
 test('panel shows an error state when the worker fails', async () => {

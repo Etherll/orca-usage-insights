@@ -308,6 +308,8 @@ export function areaTrend(series, { metric = 'total', width = 420, height = 200,
     defs += `<linearGradient id="${gid}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="${color}" stop-opacity=".28"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient>`
     body += `<path d="${line}L${x(pts.length - 1).toFixed(1)},${top + plotH}L${x(0).toFixed(1)},${top + plotH}Z" fill="url(#${gid})"/>`
     body += `<path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`
+    // A one-day series has no line segment; keep its point visible without hovering.
+    if (pts.length === 1) body += `<circle cx="${pts[0][0]}" cy="${pts[0][1].toFixed(1)}" r="3.5" fill="${color}"/>`
   })
   // Hover columns: one per day, crosshair + every provider's value.
   const col = days.length > 1 ? plotW / (days.length - 1) : plotW

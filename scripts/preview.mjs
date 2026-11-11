@@ -31,7 +31,7 @@ const worker = startWorker(orca, scanner, { pollMs: 3_600_000, sshCacheDir: dir,
 await worker.ready
 
 const reports = {}
-for (const range of ['7d', '30d', '90d', 'all']) {
+for (const range of ['1d', '7d', '30d', '90d', 'all']) {
   for (const scope of ['all', 'worktrees']) {
     const input = { range, ...(scope === 'all' ? {} : { scope }) }
     reports[JSON.stringify(input)] = await handlers.get('usage.report')(input, {})

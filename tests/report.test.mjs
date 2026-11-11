@@ -68,6 +68,40 @@ test('7d daily is zero-filled, ascending and bounded by the window', () => {
   assert.equal(r.totals.turns, 1);
 });
 
+test('1d covers the local calendar day and preserves calendar and streak history', () => {
+  const records = [
+    rec(new Date(2026, 10, 2, 23, 59, 59, 999), { input: 100, sessionId: 'yesterday' }),
+    rec(new Date(2026, 10, 3, 0, 0, 0), { input: 10, project: 'today' }),
+    rec(NOW, { output: 5, project: 'today' }),
+    rec(new Date(2026, 10, 4, 0, 0, 0), { input: 1000, sessionId: 'tomorrow' }),
+  ];
+  const r = build(records, '1d');
+  assert.equal(r.range, '1d');
+  assert.deepEqual(r.daily.map((d) => d.day), [keyOf(NOW)]);
+  assert.equal(r.daily[0].total, 15);
+  assert.equal(r.totals.total, r.today.total);
+  assert.equal(r.totals.total, 15);
+  assert.equal(r.totals.turns, 2);
+  assert.equal(r.totals.sessions, 1);
+  assert.equal(r.byModel[0].total, 15);
+  assert.deepEqual(r.byProject, [{ project: 'today', total: 15, share: 1 }]);
+  assert.equal(r.seriesByProvider[0].daily.length, 1);
+  assert.equal(r.seriesByProvider[0].daily[0].total, 15);
+  assert.deepEqual(r.calendar, build(records).calendar);
+  assert.deepEqual(r.streak, { current: 2, longest: 2 });
+});
+
+test('1d with no usage today has one zero-filled day and no in-range breakdowns', () => {
+  const r = build([rec(ago(1), { input: 50 })], '1d');
+  assert.equal(r.daily.length, 1);
+  assert.equal(r.daily[0].day, keyOf(NOW));
+  assert.equal(r.daily[0].total, 0);
+  assert.equal(r.totals.turns, 0);
+  assert.equal(r.totals.total, 0);
+  assert.deepEqual(r.byModel, []);
+  assert.deepEqual(r.byProject, []);
+});
+
 test('30d and 90d windows span that many days', () => {
   assert.equal(build([], '30d').daily.length, 30);
   assert.equal(build([], '90d').daily.length, 90);

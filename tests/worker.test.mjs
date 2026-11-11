@@ -265,6 +265,50 @@ test('usage.report reuses its Report while the scan records are unchanged', asyn
   await worker.stop();
 });
 
+test('Today reports and refreshes expire at local midnight without new records', async () => {
+  const mock = mockOrca();
+  let at = new Date(2026, 10, 3, 23, 59, 59);
+  const current = result([usageRecord()]);
+  const { build, options } = recordingBuild();
+  const worker = startWorker(mock.orca, fakeScanner(() => current), { now: () => at, pollMs: 60_000, build });
+  try {
+    await worker.ready;
+    const handler = mock.handlers.get('usage.report');
+    const today = await handler({ range: '1d' });
+    assert.equal(today.range, '1d');
+    assert.equal(today.totals.total, 150);
+    const built = options.length;
+    await mock.handlers.get('usage.refresh')({ range: '1d' });
+    assert.equal(options.length, built, 'same local day and records reuse the report');
+    at = new Date(2026, 10, 4, 0, 0, 0);
+    const tomorrow = await handler({ range: '1d' });
+    assert.equal(options.length, built + 1);
+    assert.equal(tomorrow.totals.total, 0);
+    assert.equal(tomorrow.today.total, 0);
+    assert.equal(tomorrow.daily[0].day, '2026-11-04');
+  } finally {
+    await worker.stop();
+  }
+});
+
+test('poll notifies the panel when the local day changes without new usage', async () => {
+  const mock = mockOrca();
+  let at = new Date(2026, 10, 3, 23, 59, 59);
+  const current = result([usageRecord()]);
+  const worker = startWorker(mock.orca, fakeScanner(() => current), { now: () => at, pollMs: 2 });
+  try {
+    await worker.ready;
+    const before = mock.changedPosts();
+    at = new Date(2026, 10, 4, 0, 0, 0);
+    for (let i = 0; i < 100 && mock.changedPosts() === before; i++) await sleep(2);
+    assert.equal(mock.changedPosts(), before + 1);
+    await sleep(10);
+    assert.equal(mock.changedPosts(), before + 1, 'only notify once for the new day');
+  } finally {
+    await worker.stop();
+  }
+});
+
 test('usage.refresh forces a rescan without dropping the file cache, for the requested range', async () => {
   const mock = mockOrca();
   const scanner = fakeScanner(() => result([usageRecord()]));

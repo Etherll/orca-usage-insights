@@ -5,7 +5,7 @@
 import { estimateCostUsd, priceFor } from './pricing.mjs';
 
 const DAY_MS = 86_400_000;
-const RANGE_DAYS = new Map([['7d', 7], ['30d', 30], ['90d', 90]]);
+const RANGE_DAYS = new Map([['1d', 1], ['7d', 7], ['30d', 30], ['90d', 90]]);
 const CALENDAR_DAYS = 182;
 const TOP_PROJECTS = 8;
 
