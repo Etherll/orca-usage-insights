@@ -32,16 +32,18 @@ Needs Orca 1.4.248 or newer.
 
 The panel reads your Claude Code and Codex transcripts and turns them into:
 
-* **Totals** for 7 days, 30 days, 90 days or everything: tokens, estimated cost, today, cache hit rate, sessions and your streak.
+* **Totals** for today, 7 days, 30 days, 90 days, everything or dates you pick: tokens, estimated cost, today, cache hit rate, sessions and your streak.
 * **Daily charts** of tokens or cost, per token type and per provider.
 * **A 26-week activity calendar** and a weekday by hour chart of when you work.
-* **Rankings** by model, project and machine.
+* **Rankings** by model, project and machine, and a sortable **Date × model** table with exact input, output and cache token counts.
 * **A Breakdown view** that shows what your spend went on, down to the file or command ([more below](#breakdown)).
 * **A pixel-art skyline** at the top, drawn from your daily usage. The stars are your streak.
 
 It updates a few seconds after an agent finishes a turn, so the numbers keep up while you work.
 
-One **Filters** menu narrows it down: only sessions that ran in an Orca worktree, one provider, one machine, or no cache tokens.
+**Today** is the default range: the current local day from midnight, not the last 24 hours. **Custom** takes a start and end date (both included, in local time; pick the same date twice for one day). The calendar and streak keep their full history whatever the range.
+
+One **Filters** menu narrows it down: only sessions that ran in an Orca worktree, one provider, one or more models, one machine, or no cache tokens. Turning cache tokens off takes them out of every total, share and chart; the cache read and write counts and the cost stay as recorded. A model selection is a fixed list, so a model that shows up later is only included under **All models**.
 
 <table>
   <tr>
@@ -66,7 +68,7 @@ Switch the panel to **Breakdown** to see what the money went on. It splits the s
 
 Each pattern has an **Explain** button. It gives you a prompt to paste into Claude Code or Codex. The prompt holds the numbers and a few `node` commands that print short excerpts of the transcripts involved, so your agent can work out the cause and suggest a fix. Reading those excerpts costs your agent a few thousand tokens (the panel shows an estimate), and they go to its model provider like any other file it reads.
 
-`≈` marks a split that is estimated (several tool results in one turn are split by size). Spend that can't be split, such as usage on SSH hosts, is listed under **Not analysed** with the reason. The first Breakdown reads the transcripts changed within the range, which takes a few seconds on a big history; after that only new lines are read.
+`≈` marks a split that is estimated (several tool results in one turn are split by size). Spend that can't be split, such as usage on SSH hosts, is listed under **Not analysed** with the reason. Breakdown follows the range, custom dates included, but not the model or cache-token filters. The first Breakdown reads the transcripts changed within the range, which takes a few seconds on a big history; after that only new lines are read.
 
 ## Prices
 
@@ -99,7 +101,11 @@ The first entry changes one price of a known model, the second adds a new model,
 
 ## More machines and folders
 
-By default the plugin reads this machine's `~/.claude` and `~/.codex`. You can add more in **Settings → Plugins → Usage Insights**, one per line:
+By default the plugin reads this machine's `~/.claude`, `~/.config/claude` and `~/.codex`, plus `CLAUDE_CONFIG_DIR` and `CODEX_HOME` when they're set, and every Claude profile and Codex account home Orca manages. A new account shows up on the next scan.
+
+Histories from all of them are combined. A transcript several accounts share, a hard link and a copied Codex turn count once (Codex turns are matched by turn ID, so a resumed or copied session with a new session ID still counts once; older logs without turn IDs can't be matched across sessions). The transcripts don't say which subscription paid for a turn, so this is a combined view, not a bill per account. Each folder's status, files, turns and latest usage are in the source strip under the filters; folders that share transcripts each count them there.
+
+You can add more in **Settings → Plugins → Usage Insights**, one per line:
 
 **Extra folders**, for a WSL install, a second config folder or an old backup:
 
@@ -118,6 +124,8 @@ aws = ec2-1-2-3-4.compute.amazonaws.com
 It uses your own `ssh` with your keys or ssh-agent, and never asks for a password. The other machine needs to be Linux or macOS. The first pull takes a little while on a big history, then only new lines come over. Each source shows its status in the strip under the filters, with the reason if something fails.
 
 Using an Orca server? Install the plugin there too, or add the server as an SSH host to see it here.
+
+After this update, Codex transcripts are read once more so copied turns can be matched; Claude transcripts are not. An offline SSH host shows its Codex history again when it reconnects.
 
 ## Speed
 

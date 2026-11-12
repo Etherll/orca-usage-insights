@@ -373,3 +373,45 @@ dialog .icon-btn { margin-left: 0; }
 
 .seg[hidden] { display: none; }
 .node .nm .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Date and model filters stay usable in narrow sidebars. */
+.popover { max-height: min(80vh, 680px); overflow-y: auto; }
+.model-search, .custom-range input, .rank-sort select { border: 1px solid var(--border); border-radius: 6px; background: var(--card); color: var(--fg); font: inherit; padding: 6px 8px; min-width: 0; }
+.model-search { width: calc(100% - 16px); margin: 0 8px 4px; }
+#models-all { margin-left: 8px; color: var(--fg); }
+#models-all[aria-pressed="true"] { font-weight: 700; }
+.model-list { max-height: 190px; overflow-y: auto; }
+.model-option { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; cursor: pointer; border-radius: 6px; }
+.model-option:hover { background: var(--accent); }
+.model-option input { margin-top: 3px; accent-color: var(--s1); flex: none; }
+.model-option span { overflow-wrap: anywhere; }
+.model-empty { padding: 6px 8px; }
+.custom-range { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--card); }
+.custom-range[hidden] { display: none; }
+.custom-range label { display: flex; flex: 1 1 145px; flex-direction: column; gap: 4px; }
+.custom-range input { width: 100%; min-height: 34px; }
+.custom-range p { flex-basis: 100%; font-size: 12px; }
+.date-error { color: var(--orca-destructive, #e34948); }
+input:focus-visible, select:focus-visible, .table-wrap:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.rank-sort { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted-fg); font-size: 12px; }
+.rank-sort select { max-width: 100%; }
+.bd.detail { min-width: 820px; }
+.bd.detail th:nth-child(-n+3), .bd.detail td:nth-child(-n+3) { text-align: left; }
+.bd.detail td:nth-child(3) { max-width: 260px; white-space: normal; overflow-wrap: anywhere; }
+.chip { max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+.chip svg { flex: none; }
+@media (max-width: 480px) {
+  .seg { flex-wrap: wrap; }
+  .src .name { max-width: 140px; }
+  .src .meta { white-space: normal; }
+  .grid-2 { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Normal roots are inspectable without filling the sidebar; failures remain visible. */
+.src.empty .state { background: var(--muted-fg); opacity: .6; }
+.src.empty { color: var(--muted-fg); }
+.source-details { flex-basis: 100%; min-width: 0; }
+.source-details summary { color: var(--muted-fg); cursor: pointer; padding: 4px 0; font-size: 12px; }
+.source-details summary:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.source-roots { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
+.source-roots .src .name { max-width: none; white-space: normal; overflow-wrap: anywhere; }

@@ -23,7 +23,7 @@
       <button role="radio" data-view="usage" aria-checked="true">Usage</button><button role="radio" data-view="breakdown" aria-checked="false" tabindex="-1">Breakdown</button>
     </div>
     <div class="seg" role="radiogroup" aria-label="Range" id="ranges">
-      <button role="radio" data-range="7d" aria-checked="true">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button>
+      <button role="radio" data-range="1d" aria-checked="true">Today</button><button role="radio" data-range="7d" aria-checked="false" tabindex="-1">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button><button role="radio" data-range="custom" aria-checked="false" tabindex="-1" aria-controls="custom-range">Custom</button>
     </div>
     <div class="seg" role="radiogroup" aria-label="Measure" id="metric">
       <button role="radio" data-metric="tokens" aria-checked="true">Tokens</button><button role="radio" data-metric="cost" aria-checked="false" tabindex="-1">Cost</button>
@@ -45,6 +45,13 @@
           <h3 class="pop-title" id="providers-title">Provider</h3>
           <div class="opt-list" role="radiogroup" aria-labelledby="providers-title" id="providers"></div>
         </section>
+        <section class="pop-section" id="sec-models">
+          <h3 class="pop-title" id="models-title">Models</h3>
+          <label class="sr-only" for="model-search">Search models</label>
+          <input type="search" id="model-search" class="model-search" placeholder="Search models…" autocomplete="off">
+          <button class="link-btn" id="models-all">All models</button>
+          <div class="model-list" role="group" aria-labelledby="models-title" id="models"></div>
+        </section>
         <section class="pop-section" id="sec-hosts" hidden>
           <h3 class="pop-title" id="hosts-title">Machine</h3>
           <div class="opt-list" role="radiogroup" aria-labelledby="hosts-title" id="hosts"></div>
@@ -58,6 +65,15 @@
     <div class="chips" id="chips" aria-label="Active filters"></div>
     <button class="icon-btn" id="refresh" title="Rescan transcripts" aria-label="Rescan transcripts"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg></button>
   </nav>
+
+  <section id="custom-range" class="custom-range" aria-label="Custom date range" hidden>
+    <label>Start date<input type="date" id="start-date" aria-describedby="date-hint date-error"></label>
+    <label>End date<input type="date" id="end-date" aria-describedby="date-hint date-error"></label>
+    <button id="date-apply" class="filter-btn">Apply</button>
+    <p id="date-hint" class="muted">Inclusive dates in your local time zone. Use the same date for one day.</p>
+    <p id="date-error" class="date-error" role="alert" hidden></p>
+  </section>
+  <p id="selection-summary" class="muted" aria-live="polite"></p>
 
   <p id="status" class="status" role="status" hidden></p>
   <p id="notice" class="notice" role="status" hidden></p>
@@ -100,22 +116,26 @@
     <div class="grid-2">
       <article class="card">
         <header><h2>Activity</h2><span class="pill" id="peak"></span></header>
-        <p class="muted">Last 26 weeks, all providers in the filter.</p>
+        <p class="muted">Last 26 weeks with the selected filters, whatever the date range.</p>
         <div id="calendar" class="scroll-x"></div>
         <div class="scale"><span class="muted">Less</span><i class="cell q0"></i><i class="cell q1"></i><i class="cell q2"></i><i class="cell q3"></i><i class="cell q4"></i><span class="muted">More</span></div>
       </article>
       <article class="card">
         <header><h2>Rhythm</h2></header>
-        <p class="muted">When you work, by weekday and hour.</p>
+        <p class="muted">When you work in the date range, by weekday and hour.</p>
         <div id="punch" class="scroll-x"></div>
       </article>
     </div>
 
     <article class="card">
       <header><h2>Ranking</h2>
-        <div class="seg" role="radiogroup" aria-label="Rank by" id="bd-mode"><button role="radio" data-mode="model" aria-checked="true">By model</button><button role="radio" data-mode="day" aria-checked="false" tabindex="-1">By day</button></div>
+        <div class="seg" role="radiogroup" aria-label="Rank by" id="bd-mode"><button role="radio" data-mode="model" aria-checked="true">By model</button><button role="radio" data-mode="day" aria-checked="false" tabindex="-1">By day</button><button role="radio" data-mode="day-model" aria-checked="false" tabindex="-1">Date × model</button></div>
       </header>
-      <div class="table-wrap"><table class="bd" id="breakdown"></table></div>
+      <label class="rank-sort" for="rank-sort">Sort rows
+        <select id="rank-sort"><option value="default">Default</option><option value="date-desc">Date: newest first</option><option value="date-asc">Date: oldest first</option><option value="model-asc">Model: A–Z</option><option value="tokens-desc">Tokens: highest first</option><option value="tokens-asc">Tokens: lowest first</option></select>
+      </label>
+      <p id="rank-note" class="muted"></p>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Usage ranking, scroll sideways for more columns"><table class="bd" id="breakdown"></table></div>
     </article>
 
     <div class="grid-2">
@@ -129,7 +149,7 @@
       </article>
     </div>
 
-    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine and the folders and SSH hosts in Settings. No usage data is sent anywhere. Cost is an estimate at list API prices.</p>
+    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine, including Orca's account homes, and the folders and SSH hosts in Settings. Account histories are combined. No usage data is sent anywhere. Cost is an estimate at list API prices.</p>
   </section>
   <section id="bd" aria-label="Breakdown" hidden>
     <p id="bd-status" class="status" role="status" hidden></p>

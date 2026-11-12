@@ -8,8 +8,8 @@ const read = (path) => readFileSync(new URL(path, root), 'utf8')
 const flatten = (src) =>
   src.replace(/^import [^\n]*\n/gm, '').replace(/^export \{[^\n]*\n/gm, '').replace(/^export (?=(const|function|let|class) )/gm, '')
 
-// format.mjs goes first: charts.mjs and panel.js use its compact().
-const modules = ['src/core/format.mjs', 'src/panel/charts.mjs', 'src/panel/art.mjs', 'src/panel/breakdown.js', 'src/panel/panel.js']
+// query.mjs and format.mjs go first: panel.js validates dates with query.mjs, and charts.mjs and panel.js use compact().
+const modules = ['src/core/query.mjs', 'src/core/format.mjs', 'src/panel/charts.mjs', 'src/panel/art.mjs', 'src/panel/breakdown.js', 'src/panel/panel.js']
 const script = modules.map((p) => `// ${p}\n${flatten(read(p))}`).join('\n')
 const html = read('src/panel/panel.html')
   .replace('/* PANEL_STYLES */', () => read('src/panel/panel.css'))

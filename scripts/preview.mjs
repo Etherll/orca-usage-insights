@@ -32,7 +32,7 @@ const worker = startWorker(orca, scanner, { pollMs: 3_600_000, sshCacheDir: dir,
 await worker.ready
 
 const reports = {}
-for (const range of ['7d', '30d', '90d', 'all']) {
+for (const range of ['1d', '7d', '30d', '90d', 'all']) {
   for (const scope of ['all', 'worktrees']) {
     const input = { range, ...(scope === 'all' ? {} : { scope }) }
     reports[JSON.stringify(input)] = await handlers.get('usage.report')(input, {})
@@ -41,7 +41,7 @@ for (const range of ['7d', '30d', '90d', 'all']) {
 const views = {}
 const explains = {}
 const t0 = Date.now()
-for (const range of ['7d', '30d', '90d', 'all']) {
+for (const range of ['1d', '7d', '30d', '90d', 'all']) {
   const top = await handlers.get('usage.breakdown')({ range }, {})
   views[JSON.stringify([range, []])] = top
   for (const node of top.nodes || []) views[JSON.stringify([range, [node.key]])] = await handlers.get('usage.breakdown')({ range, path: [node.key] }, {})
@@ -57,7 +57,7 @@ const shim = `<script>window.__USAGE_PREVIEW__ = (() => { const R = ${JSON.strin
   if (name === 'usage.explain') return E[input.findingId] || { prompt: 'Not captured in this preview.', estTokens: 0 }
   if (name === 'usage.breakdown') return V[JSON.stringify([input.range, input.path || []])] || V[JSON.stringify([input.range, []])]
   if (name.startsWith('prices.')) throw new Error('Not available in the preview')
-  return R[JSON.stringify({ range: input.range, ...(input.scope ? { scope: input.scope } : {}) })] || R['{"range":"7d"}'] } })()</script>`
+  return R[JSON.stringify({ range: input.range, ...(input.scope ? { scope: input.scope } : {}) })] || R['{"range":"1d"}'] } })()</script>`
 const html = readFileSync(new URL('../panel/index.html', import.meta.url), 'utf8')
   .replace('<html lang="en">', `<html lang="en" class="${light ? 'light' : 'dark'}">`)
   .replace('<script>', `${shim}<script>`)
