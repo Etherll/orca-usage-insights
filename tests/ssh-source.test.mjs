@@ -73,7 +73,8 @@ test('remote script lists and reads Claude and Codex transcripts', { skip: isWin
     ].join('\n') + '\n',
   );
   const { source } = localSource(fx.home);
-  const { records, status } = await source.scan();
+  const { records: table, status } = await source.scan();
+  const records = table.toRecords();
   assert.equal(status.state, 'ok', status.message);
   assert.equal(status.files, 2);
   const claude = records.filter((r) => r.provider === 'claude');
@@ -128,6 +129,22 @@ test('the per-host cache survives a restart and avoids re-reading', { skip: isWi
   const r = await b.source.scan();
   assert.equal(r.records.length, 1);
   assert.equal(b.calls.length, 1, 'listing only, no read');
+});
+
+test('lines appended before the first scan after a restart are counted', { skip: isWin }, async (t) => {
+  const fx = await fixture(t);
+  const file = path.join(fx.proj, 's1.jsonl');
+  await fsp.writeFile(file, claudeLine('m1') + '\n');
+  const cacheFile = path.join(fx.home, 'cache', 'ssh-box.json');
+  const a = localSource(fx.home, { cacheFile });
+  await a.source.scan();
+  await a.source.flush();
+  // The restored entry is tailed from its offset; its parser must exist before the lines arrive.
+  await fsp.appendFile(file, claudeLine('m2') + '\n');
+  const b = localSource(fx.home, { cacheFile });
+  assert.equal((await b.source.scan()).records.length, 2);
+  await fsp.appendFile(file, claudeLine('m3') + '\n');
+  assert.equal((await b.source.scan({ force: true })).records.length, 3);
 });
 
 test('ssh failures become a readable error status and keep earlier records', async () => {
@@ -218,7 +235,7 @@ test('close() kills a running ssh and the source never writes its cache afterwar
   const r = await running;
   assert.equal(r.status.state, 'error');
   const after = (await source.scan()).records;
-  assert.deepEqual(after, []);
+  assert.equal(after.length, 0);
 });
 
 test('codex reads only keep codex marker lines', async () => {
@@ -237,4 +254,38 @@ test('a display name replaces the address in ids, labels and error messages', as
   assert.equal(r.status.label, 'aws');
   assert.ok(!r.status.message.includes(host), r.status.message);
   assert.match(r.status.message, /aws/);
+});
+
+test('a file rewritten in place at a larger size is read from the start, not tailed', { skip: isWin }, async (t) => {
+  const fx = await fixture(t);
+  const file = path.join(fx.proj, 's1.jsonl');
+  await fsp.writeFile(file, claudeLine('m1') + '\n');
+  const { source } = localSource(fx.home);
+  assert.equal((await source.scan()).records.length, 1);
+  // Different, longer content: the byte before the old offset is no longer an LF.
+  await fsp.writeFile(file, claudeLine('rewritten-1') + '\n' + claudeLine('rewritten-2') + '\n');
+  const later = new Date(Date.now() + 5000);
+  await fsp.utimes(file, later, later);
+  await source.scan({ force: true });
+  const keys = (await source.scan({ force: true })).records.toRecords().map((r) => r.key).sort();
+  assert.ok(keys.length === 2 && keys.every((k) => k.startsWith('rewritten')), keys.join(', '));
+});
+
+test('the shell fallback also reports a rewritten file instead of tailing it', { skip: isWin }, async (t) => {
+  const { readScript } = await import('../src/node/ssh-script.mjs');
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ssh-rewrite-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'r.jsonl');
+  await fsp.writeFile(file, 'abcdefgh\nmore\n');
+  const script = readScript([{ path: file, kind: 'claude', offset: 5, size: 14 }, { path: file, kind: 'claude', offset: 9, size: 14 }]).replace('if command -v python3 >/dev/null 2>&1; then', 'if false; then');
+  const out = await new Promise((resolve, reject) => {
+    const child = spawn('sh', ['-s']);
+    let text = '';
+    child.stdout.on('data', (d) => (text += d));
+    child.on('error', reject);
+    child.on('close', () => resolve(text));
+    child.stdin.end(script);
+  });
+  const done = out.split('\n').filter((l) => l.startsWith('\u001eN'));
+  assert.deepEqual(done, ['\u001eN\t-1', '\u001eN\t5']);
 });

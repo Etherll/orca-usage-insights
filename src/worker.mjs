@@ -3,21 +3,36 @@
 // Every hook is best-effort: failures go to orca.log and never take the worker down.
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import v8 from 'node:v8';
+import vm from 'node:vm';
 import { compact } from './core/format.mjs';
-import { mergeRecords } from './core/merge.mjs';
 import { buildReport } from './core/report.mjs';
+import { createRecordStore } from './core/record-store.mjs';
+import { asTable, distinctNames } from './core/table.mjs';
+import { analyzeBreakdown } from './core/breakdown/analyze.mjs';
+import { buildExplainPrompt } from './core/breakdown/explain.mjs';
+import { createDigestScanner } from './node/digest-scan.mjs';
+import { zstdAvailable } from './node/zstd.mjs';
 import { cacheDir, homeDir, pathFor } from './node/paths.mjs';
+import { createPriceBook } from './node/price-book.mjs';
 import { createScanner } from './node/scan.mjs';
 import { createSshSource } from './node/ssh-source.mjs';
 
 const RANGES = new Set(['7d', '30d', '90d', 'all']);
 const SCOPES = new Set(['all', 'worktrees']);
-const CACHE_FILE = 'scan-cache-v1.json';
+const CACHE_FILE = 'scan-cache-v5.json';
+const LEGACY_CACHE_FILE = 'scan-cache-v4.json';
 const POLL_MS = 60_000;
 // The panel waits this long at most for SSH hosts. A host still running then is reported as loading.
 const SSH_WAIT_MS = 1_500;
 const WORKSPACE_TTL_MS = 30_000;
 const STATUS_ID = 'today';
+// Breakdown waits this long for the digest scan, then answers { loading } and posts usage.changed later.
+const BREAKDOWN_WAIT_MS = 10_000;
+// A full GC follows SETTLE_MS after a pass this long.
+const HEAVY_MS = 1_000;
+const SETTLE_MS = 3_000;
+const VIEWS_KEPT = 8;
 
 // activate, replaceWorker and deactivate run one at a time, so a new worker always starts after
 // the previous one has stopped.
@@ -27,7 +42,12 @@ let queue = Promise.resolve();
 export default function activate(orca) {
   const home = homeDir();
   const dir = cacheDir({ home });
-  return replaceWorker(orca, () => createScanner({ home, cacheFile: join(dir, CACHE_FILE) }), { home, sshCacheDir: dir });
+  orca.log(`Usage Insights: Node ${process.version}, zstd ${zstdAvailable() ? 'available' : 'unavailable'}, cache ${dir}`);
+  return replaceWorker(orca, () => createScanner({ home, cacheFile: join(dir, CACHE_FILE), legacyCacheFile: join(dir, LEGACY_CACHE_FILE) }), {
+    home,
+    sshCacheDir: dir,
+    priceDir: dir,
+  });
 }
 
 // Stops the running worker, then starts one over makeScanner(options). Exported for tests.
@@ -68,10 +88,18 @@ export function startWorker(orca, scanner, {
   // After an agent finishes, wait this long (transcripts are written just after) and rescan.
   agentSettleMs = 2_500,
   build = buildReport,
+  priceDir,
+  priceBook = createPriceBook({
+    dir: priceDir,
+    fetch: globalThis.fetch,
+    log: (message) => orca.log(`Usage Insights: ${message}`),
+  }),
+  makeDigestScanner = () => createDigestScanner({ cacheDir: sshCacheDir ? join(sshCacheDir, 'digests-v1') : null, home, platform, sharedPool: scanner.pool?.() ?? null }),
+  breakdownWaitMs = BREAKDOWN_WAIT_MS,
 } = {}) {
   const paths = pathFor(platform);
   let cache = { records: null, reports: new Map() };
-  let merged = { local: null, lists: [], records: [] };
+  let store = null; // local files and SSH files together, once an SSH host has records
   let workspaces = null; // { at, roots } from workspace.list
   let settingsFailing = false;
   let lastSettings = {};
@@ -82,6 +110,14 @@ export function startWorker(orca, scanner, {
   let timer = null;
   let pending = null;
   const inFlight = new Set();
+
+  let lastExtra = { claude: [], codex: [] };
+  let digestScanner = null;
+  let digestJob = null;
+  let lastDigests = null;
+  let digestWaiting = false;
+  const views = new Map(); // filter key -> latest BreakdownView, for Explain
+  let gcTimer = null;
 
   // Handler scans are tracked so stop() can wait for them before it flushes the cache.
   function track(run) {
@@ -95,14 +131,160 @@ export function startWorker(orca, scanner, {
   // Refresh rescans every source now. Each keeps its per-file cache, so only changed files are read.
   orca.panels.handle('usage.refresh', (input) => track(async () => answer(parseReportInput(input), { force: true })));
 
+  // Sync is not tracked: it may wait on the network, and stop() must not. Its own scan is tracked.
+  orca.panels.handle('usage.breakdown', (input) => track(async () => breakdown(parseBreakdownInput(input))));
+  orca.panels.handle('usage.explain', (input) => track(async () => explain(parseExplainInput(input))));
+
+  // The digest scan runs only from here, never from the poll or the agent rescan.
+  async function breakdown(options, { waitMs = breakdownWaitMs } = {}) {
+    const [gathered, scope, catalog, prices] = await Promise.all([
+      gather({ force: false, detach: false }),
+      scopeFor(options.scope),
+      priceBook.catalog(),
+      priceBook.status(),
+    ]);
+    const since = sinceFor(options.range);
+    const scan = await digestsWithin(waitMs, since, sessionsSince(gathered.records, since));
+    if (!scan) return { loading: digestScanner.progress() };
+    const view = analyzeBreakdown({
+      records: gathered.records,
+      digests: scan.digests,
+      files: scan.files,
+      catalog,
+      range: options.range,
+      now: now(),
+      providers: options.providers,
+      hosts: options.hosts,
+      scope: scope.scope,
+      path: options.path,
+      prices: { version: prices.version, asOf: prices.asOf, overlay: Boolean(prices.overlay) },
+    });
+    const key = viewKey(options);
+    views.delete(key);
+    views.set(key, view);
+    if (views.size > VIEWS_KEPT) views.delete(views.keys().next().value);
+    return scope.scopeError ? { ...view, scopeError: scope.scopeError } : view;
+  }
+
+  async function explain(options) {
+    const catalog = await priceBook.catalog();
+    let view = views.get(viewKey(options));
+    if (!view || view.prices?.version !== catalog.version) view = await breakdown(options, { waitMs: 600_000 });
+    const finding = view?.findings?.find((f) => f.id === options.findingId);
+    if (!finding) throw invalidParams('unknown findingId');
+    return { ...buildExplainPrompt(finding, { harnessLabel: finding.harness === 'codex' ? 'Codex' : 'Claude Code', platform }), estUsd: null };
+  }
+
+  // The range's first local day less a day of margin for time zones and clock skew. 0 for 'all'.
+  function sinceFor(range) {
+    const days = { '7d': 7, '30d': 30, '90d': 90 }[range];
+    return days ? now().getTime() - (days + 1) * 86_400_000 : 0;
+  }
+
+  // Sessions with a turn at or after `since`: their files are digested even when their mtime is older
+  // (a restored transcript), so Breakdown covers what Usage counts. Kept per records and cutoff.
+  let sessionsMemo = { records: null, since: -1, ids: null };
+  function sessionsSince(records, since) {
+    if (since <= 0) return null;
+    if (sessionsMemo.records === records && sessionsMemo.since === since) return sessionsMemo.ids;
+    const table = asTable(records);
+    const hit = new Uint8Array(table.names.length);
+    for (let i = 0; i < table.length; i++) if (table.ms[i] >= since) hit[table.sessionId[i]] = 1;
+    const ids = new Set();
+    for (let n = 0; n < hit.length; n++) if (hit[n]) ids.add(table.names[n]);
+    sessionsMemo = { records, since, ids };
+    return ids;
+  }
+
+  function viewKey(options) {
+    return JSON.stringify([options.range, options.providers ?? null, options.hosts ?? null, options.scope ?? null]);
+  }
+
+  // null means still running: the caller answers { loading } and usage.changed follows.
+  function digestsWithin(waitMs, since = 0, sessions = null) {
+    digestScanner ??= makeDigestScanner();
+    const folders = JSON.stringify([lastExtra.claude ?? [], lastExtra.codex ?? []]);
+    if (!digestJob || digestJob.since > since || digestJob.folders !== folders) {
+      const job = digestScanner
+        .scan({ extra: lastExtra, since, sessions })
+        .then(
+          (result) => (lastDigests = result),
+          (error) => {
+            orca.log(`Usage Insights: breakdown scan failed: ${shortMessage(error)}`);
+            return lastDigests ?? { digests: [], files: [] };
+          },
+        )
+        .finally(() => {
+          if (digestJob === job) digestJob = null;
+          if (digestWaiting) {
+            digestWaiting = false;
+            notify('usage.changed', { generatedAt: now().toISOString() });
+          }
+        });
+      const started = Date.now();
+      job.then(() => {
+        if (Date.now() - started >= HEAVY_MS) settleSoon();
+      });
+      job.since = since;
+      job.folders = folders;
+      digestJob = job;
+    }
+    const job = digestJob;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        digestWaiting = true;
+        resolve(null);
+      }, waitMs);
+      timer.unref?.();
+      job.then((result) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+  }
+
+  orca.panels.handle('prices.status', () => track(async () => priceBook.status()));
+  orca.panels.handle('prices.sync', () => syncPrices());
+  orca.panels.handle('prices.apply', (input) => track(async () => {
+    const { diffId, keys } = parsePricesInput(input);
+    return changePrices(() => priceBook.apply(diffId, keys));
+  }));
+  orca.panels.handle('prices.undo', () => track(async () => changePrices(() => priceBook.undo())));
+  orca.panels.handle('prices.reset', () => track(async () => changePrices(() => priceBook.reset())));
+
+  // `impact` is the 30-day cost now and with the pre-ticked rows applied.
+  async function syncPrices() {
+    const gathered = await track(() => gather({ force: false, detach: false }));
+    const inUse = distinctNames(gathered.records, 'model');
+    const result = await priceBook.sync(inUse);
+    const preTicked = result.rows.filter((row) => row.ticked).map((row) => row.key);
+    const before = await priceBook.catalog();
+    const after = await priceBook.preview(result.diffId, preTicked);
+    const beforeUsd = build(gathered.records, { range: '30d', now: now(), catalog: before }).totals.costUsd;
+    const afterUsd = build(gathered.records, { range: '30d', now: now(), catalog: after }).totals.costUsd;
+    return { ...result, impact: { beforeUsd, afterUsd } };
+  }
+
+  async function changePrices(change) {
+    const result = await change();
+    notify('usage.changed', { generatedAt: now().toISOString() });
+    await poll();
+    return result;
+  }
+
   // One panel request: settings and every source first, then the report for the request's options.
   async function answer(options, { force }) {
-    const [gathered, scope] = await Promise.all([gather({ force, detach: false }), scopeFor(options.scope)]);
+    const [gathered, scope, catalog] = await Promise.all([
+      gather({ force, detach: false }),
+      scopeFor(options.scope),
+      priceBook.catalog(),
+    ]);
     const report = reportFor(gathered.records, {
       range: options.range,
       providers: options.providers,
       hosts: options.hosts,
       scope: scope.scope,
+      catalog,
     });
     // Sources are attached per request, not cached with the report, because their state changes.
     return { ...report, sources: gathered.statuses, ...(scope.scopeError ? { scopeError: scope.scopeError } : {}) };
@@ -110,12 +292,15 @@ export function startWorker(orca, scanner, {
 
   // Reports are kept per request shape for as long as the records they came from are current. The
   // merged records array is reused while its inputs are, so an unchanged request is a cache hit.
-  function reportFor(records, { range, providers, hosts, scope }) {
+  function reportFor(records, { range, providers, hosts, scope, catalog }) {
     if (cache.records !== records) cache = { records, reports: new Map() };
-    const key = JSON.stringify([range, providers ?? null, hosts ?? null, scope ?? null]);
+    // The local day is in the key: ranges, the calendar and today's total move at midnight.
+    const at = now();
+    const day = `${at.getFullYear()}-${at.getMonth()}-${at.getDate()}`;
+    const key = JSON.stringify([range, providers ?? null, hosts ?? null, scope ?? null, catalog.version, day]);
     let report = cache.reports.get(key);
     if (!report) {
-      const options = { range, now: now() };
+      const options = { range, now: at, catalog };
       if (providers !== undefined) options.providers = providers;
       if (hosts !== undefined) options.hosts = hosts;
       if (scope !== undefined) options.scope = scope;
@@ -217,8 +402,8 @@ export function startWorker(orca, scanner, {
       try {
         // Readable prefix plus a hash, so 'a@b' and 'a_b' never share a cache file.
         const hash = createHash('sha256').update(host).digest('hex').slice(0, 10);
-        const cacheFile = sshCacheDir ? join(sshCacheDir, `ssh-${host.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 40)}-${hash}.json`) : undefined;
-        sources.set(key, { name, source: makeSshSource({ host, name, cacheFile }), records: [], run: null });
+        const cacheFile = sshCacheDir ? join(sshCacheDir, `ssh-v3-${host.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 40)}-${hash}.json`) : undefined;
+        sources.set(key, { name, source: makeSshSource({ host, name, cacheFile }), records: [], files: [], run: null });
       } catch (error) {
         warnOnce(`SSH host "${name}" was skipped: ${shortMessage(error)}`);
       }
@@ -249,6 +434,7 @@ export function startWorker(orca, scanner, {
           // A reused result keeps its records array, so only a new array counts as new data.
           const fresh = result.records !== entry.records;
           entry.records = result.records;
+          entry.files = filesOf(result);
           return fresh && result.changed === true;
         },
         (error) => {
@@ -272,7 +458,8 @@ export function startWorker(orca, scanner, {
   // status bar poll (detach) never waits for SSH.
   async function gather({ force, detach, forceLocal = force }) {
     const config = await readConfig();
-    scanner.setExtraRoots({ claude: config.claude, codex: config.codex });
+    lastExtra = { claude: config.claude, codex: config.codex };
+    scanner.setExtraRoots(lastExtra);
     reconcile(config.hosts);
     const hosts = [...sources];
     const runs = hosts.map(([host, entry]) => startSsh(host, entry, { force, detached: detach }));
@@ -285,7 +472,7 @@ export function startWorker(orca, scanner, {
       for (const run of runs) if (!run.finished) run.detached = true;
     }
     return {
-      records: mergedRecords(local.records, hosts.map(([, entry]) => entry.records)),
+      records: mergedRecords(local, hosts),
       statuses: [...local.statuses, ...hosts.map(([, entry]) => entry.source.status())],
       localChanged: local.changed,
     };
@@ -296,6 +483,7 @@ export function startWorker(orca, scanner, {
     const started = now();
     const result = await scanner.scan({ force });
     const finished = now();
+    if (finished - started >= HEAVY_MS) settleSoon();
     const stamp = { lastScanAt: finished.toISOString(), ms: finished - started };
     const local = {
       id: 'local',
@@ -306,10 +494,15 @@ export function startWorker(orca, scanner, {
       records: result.records.length,
       ...stamp,
     };
+    const notes = [];
     if (result.errors > 0) {
-      const count = result.errors === 1 ? '1 transcript file' : `${result.errors} transcript files`;
-      Object.assign(local, { state: 'warning', message: `${count} could not be read` });
+      notes.push(`${result.errors === 1 ? '1 transcript file' : `${result.errors} transcript files`} could not be read`);
     }
+    const zstd = result.skipped?.zstd ?? 0;
+    const tooLarge = result.skipped?.tooLarge ?? 0;
+    if (zstd > 0) notes.push(`${zstd} compressed Codex ${zstd === 1 ? 'file' : 'files'} skipped: zstd unavailable`);
+    if (tooLarge > 0) notes.push(`${tooLarge} compressed Codex ${tooLarge === 1 ? 'file' : 'files'} skipped: too large`);
+    if (notes.length > 0) Object.assign(local, { state: 'warning', message: notes.join('; ') });
     const folders = (result.folders ?? []).map((folder) => ({
       id: `folder:${folder.path}`,
       kind: 'folder',
@@ -320,15 +513,20 @@ export function startWorker(orca, scanner, {
       ...stamp,
       ...(folder.message ? { message: folder.message } : {}),
     }));
-    return { records: result.records, changed: result.changed === true, statuses: [local, ...folders] };
+    return { records: result.records, files: filesOf(result), names: result.names, changed: result.changed === true, statuses: [local, ...folders] };
   }
 
-  // The merged list is reused while its inputs are the same arrays, so repeat requests keep their Report.
-  function mergedRecords(local, lists) {
-    const same =
-      merged.local === local && merged.lists.length === lists.length && lists.every((list, i) => list === merged.lists[i]);
-    if (!same) merged = { local, lists, records: mergeRecords([local, ...lists]) };
-    return merged.records;
+  // Every local and SSH file goes to one store, which merges only what changed and returns the same table
+  // when nothing did, so repeat requests keep their Report.
+  function mergedRecords(local, hosts) {
+    if (!hosts.some(([, entry]) => entry.records.length > 0)) {
+      store = null; // no SSH usage any more: drop the merged copy and the remote tables it holds
+      return asTable(local.records);
+    }
+    if (!store || (local.names && store.names !== local.names)) store = createRecordStore(local.names ? { names: local.names } : {});
+    const list = [...local.files];
+    for (const [host, entry] of hosts) for (const { id, table } of entry.files) list.push({ id: `${host}\u0000${id}`, table });
+    return store.update(list);
   }
 
   // A failing panel post is logged and never blocks the status bar update that follows it.
@@ -348,7 +546,7 @@ export function startWorker(orca, scanner, {
       const gathered = await gather({ force: false, detach: true, forceLocal });
       if (gathered.localChanged) notify('usage.changed', { generatedAt: now().toISOString() });
       if (!statusBar) return;
-      const report = reportFor(gathered.records, { range: '7d' });
+      const report = reportFor(gathered.records, { range: '7d', catalog: await priceBook.catalog() });
       await orca.host.call('statusBar.update', { id: STATUS_ID, ...statusText(report) });
     } catch (error) {
       orca.log(`Usage Insights: ${error?.message ?? error}`);
@@ -400,6 +598,16 @@ export function startWorker(orca, scanner, {
     }
   }
 
+  // An idle worker never collects a big scan's garbage; one full GC hands it back to the OS.
+  function settleSoon() {
+    if (stopped || gcTimer) return;
+    gcTimer = setTimeout(() => {
+      gcTimer = null;
+      fullGc()?.();
+    }, SETTLE_MS);
+    gcTimer.unref?.();
+  }
+
   return {
     ready: tick(),
     // Never rejects. Waits for the running poll and handler scans, flushes the local cache, then
@@ -407,6 +615,7 @@ export function startWorker(orca, scanner, {
     async stop() {
       stopped = true;
       clearTimeout(agentTimer);
+      clearTimeout(gcTimer);
       agentSubscription?.dispose?.();
       await agentRun;
       clearTimeout(timer);
@@ -422,9 +631,31 @@ export function startWorker(orca, scanner, {
       for (const [host, entry] of [...sources]) closeSource(host, entry.source);
       sources.clear();
       await Promise.allSettled([...closing]);
+      // The digest scanner may share the records scanner's threads, so it finishes first.
+      await digestJob;
+      await Promise.resolve(digestScanner?.close?.()).catch(() => {});
       await Promise.resolve(scanner.close?.()).catch(() => {});
     },
   };
+}
+
+// Node exposes gc only behind --expose-gc; setting the flag at runtime makes a new context carry it.
+let gcFn;
+function fullGc() {
+  if (gcFn !== undefined) return gcFn;
+  gcFn = null;
+  try {
+    if (typeof globalThis.gc === 'function') gcFn = globalThis.gc;
+    else {
+      v8.setFlagsFromString('--expose-gc');
+      const gc = vm.runInNewContext('gc');
+      v8.setFlagsFromString('--no-expose-gc');
+      if (typeof gc === 'function') gcFn = gc;
+    }
+  } catch {
+    gcFn = null;
+  }
+  return gcFn;
 }
 
 // Resolves when every promise has settled, or after ms, whichever comes first.
@@ -489,6 +720,33 @@ function parseReportInput(input) {
   return out;
 }
 
+function parsePricesInput(input) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw invalidParams('prices.apply input must be an object');
+  }
+  if (typeof input.diffId !== 'string' || input.diffId === '') throw invalidParams('diffId must be a non-empty string');
+  if (!Array.isArray(input.keys) || !input.keys.every((key) => typeof key === 'string')) {
+    throw invalidParams('keys must be an array of strings');
+  }
+  return { diffId: input.diffId, keys: input.keys };
+}
+
+function parseBreakdownInput(input) {
+  const { path, ...rest } = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  const out = parseReportInput(input === undefined ? undefined : rest);
+  if (path === undefined) return { ...out, path: [] };
+  if (!Array.isArray(path) || path.length > 8 || !path.every((key) => typeof key === 'string' && key.length <= 500)) {
+    throw invalidParams('path must be an array of at most 8 strings of at most 500 characters');
+  }
+  return { ...out, path };
+}
+
+function parseExplainInput(input) {
+  const { findingId, ...rest } = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+  if (typeof findingId !== 'string' || findingId === '' || findingId.length > 200) throw invalidParams('findingId must be a non-empty string');
+  return { ...parseReportInput(rest), findingId };
+}
+
 function invalidParams(message) {
   const error = new Error(message);
   error.code = 'invalid_params';
@@ -514,4 +772,8 @@ export function statusText(report) {
     text: `${compact(today.total)} today`,
     tooltip: `Today: ${compact(today.total)} tokens · $${(today.costUsd ?? 0).toFixed(2)} est. · ${hit}. Click to show or hide the sidebar.`,
   };
+}
+
+function filesOf(result) {
+  return result.sources ?? [{ id: '', table: asTable(result.records) }];
 }

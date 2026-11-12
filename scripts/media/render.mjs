@@ -30,8 +30,16 @@ const CHROME = chrome()
 
 execFileSync(process.execPath, [join(root, 'scripts', 'build.mjs')], { stdio: 'ignore' })
 const panel = readFileSync(join(root, 'panel', 'index.html'), 'utf8')
-const flatten = (src) => src.replace(/^import [^\n]*\n/gm, '').replace(/^export \{[^}]*\};?\n/gm, '').replace(/^export (?=(const|function|let|class) )/gm, '')
-const core = ['src/core/pricing.mjs', 'src/core/report.mjs'].map((p) => flatten(readFileSync(join(root, p), 'utf8'))).join('\n')
+const flatten = (src) => src.replace(/^import [^\n]*\n/gm, '').replace(/^export \{[^\n]*\n/gm, '').replace(/^export (?=(const|function|let|class) )/gm, '')
+// Each module runs in its own scope so same-named helpers don't clash; imports read earlier modules. Order matters.
+const CORE = ['bands', 'price-sources', 'catalog-data', 'catalog', 'pricing', 'filters', 'report']
+const core = CORE.map((name) => {
+  const src = readFileSync(join(root, 'src', 'core', `${name}.mjs`), 'utf8')
+  const imports = [...src.matchAll(/^import \{([^}]*)\} from '\.\/([\w-]+)\.mjs';?$/gm)].map(([, names, from]) => `const {${names}} = __m[${JSON.stringify(from)}];`)
+  const exported = [...src.matchAll(/^export (?:async )?(?:const|function|let|class) (\w+)/gm)].map((m) => m[1])
+  for (const m of src.matchAll(/^export \{([^}]*)\}/gm)) exported.push(...m[1].split(',').map((x) => x.trim()).filter(Boolean))
+  return `__m[${JSON.stringify(name)}] = (() => {\n${imports.join('\n')}\n${flatten(src)}\nreturn { ${[...new Set(exported)].join(', ')} };\n})();`
+}).join('\n') + '\nconst { buildReport } = __m.report;'
 
 const NOW = new Date(2026, 10, 3, 17, 40)
 const records = demoRecords(NOW)
@@ -39,12 +47,15 @@ const records = demoRecords(NOW)
 // The panel page, with a stand-in for the worker that runs the real buildReport over demo data.
 function demoPanel(name, { theme = 'dark', actions = '' } = {}) {
   const shim = `<script>(() => {
+const __m = {};
 ${core}
 const RECORDS = ${JSON.stringify(records)};
 const NOW = new Date(${NOW.getTime()});
 const ROOTS = ${JSON.stringify(DEMO_WORKTREE_ROOTS)};
 const SOURCES = ${JSON.stringify(DEMO_SOURCES(NOW.getTime()))};
-window.__USAGE_PREVIEW__ = async (method, input) => {
+try { localStorage.setItem('usage-insights.prices-note.1.2.0', '1') } catch {}
+window.__USAGE_PREVIEW__ = async (method, input = {}) => {
+  if (method === 'prices.status') return { version: 'demo', asOf: '2026-11-11', overlay: null, canUndo: false, overrides: null };
   const opts = { range: input.range || '7d', now: NOW, providers: input.providers, hosts: input.hosts };
   if (input.scope === 'worktrees') opts.scope = { roots: ROOTS };
   const report = buildReport(RECORDS, opts);

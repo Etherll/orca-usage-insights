@@ -201,11 +201,21 @@ test('manifest declares the three source settings as multiline strings', () => {
   assert.match(manifest.contributes.settings[2].description, /Linux or macOS/)
 })
 
-test('startWorker registers the usage.report and usage.refresh handlers', async () => {
+test('startWorker registers the usage.report, usage.refresh and price handlers', async () => {
   const mock = mockOrca();
   const worker = startWorker(mock.orca, fakeScanner(), { now: NOON, pollMs: 60_000 });
   await worker.ready;
-  assert.deepEqual([...mock.handlers.keys()].sort(), ['usage.refresh', 'usage.report']);
+  assert.deepEqual([...mock.handlers.keys()].sort(), [
+    'prices.apply',
+    'prices.reset',
+    'prices.status',
+    'prices.sync',
+    'prices.undo',
+    'usage.breakdown',
+    'usage.explain',
+    'usage.refresh',
+    'usage.report',
+  ]);
   await worker.stop();
 });
 
@@ -409,8 +419,8 @@ test('SSH hosts are trimmed and de-duplicated, and each gets a cache file under 
   const worker = startWorker(mock.orca, fakeScanner(), { now: NOON, pollMs: 60_000, sshCacheDir: dir, makeSshSource: ssh.make });
   await worker.ready;
   assert.deepEqual([...ssh.info.keys()].sort(), ['box', 'user@example.com']);
-  assert.match(ssh.info.get('box').cacheFile, /ssh-box-[0-9a-f]{10}\.json$/);
-  assert.match(ssh.info.get('user@example.com').cacheFile, /ssh-user_example\.com-[0-9a-f]{10}\.json$/);
+  assert.match(ssh.info.get('box').cacheFile, /ssh-v3-box-[0-9a-f]{10}\.json$/);
+  assert.match(ssh.info.get('user@example.com').cacheFile, /ssh-v3-user_example\.com-[0-9a-f]{10}\.json$/);
   assert.equal(path.dirname(ssh.info.get('box').cacheFile), dir);
   assert.notEqual(ssh.info.get('user@example.com').cacheFile.replace('user@', 'user_'), ssh.info.get('box').cacheFile);
   await worker.stop();
@@ -598,6 +608,17 @@ test('status and folder entries from the scan show on report.sources, with local
   await worker.stop();
 });
 
+test('skipped compressed files show on the This machine status', async () => {
+  const mock = mockOrca();
+  const scanner = fakeScanner(() => result([usageRecord()], false, { errors: 1, skipped: { zstd: 3, tooLarge: 1 } }));
+  const worker = startWorker(mock.orca, scanner, { now: NOON, pollMs: 60_000 });
+  await worker.ready;
+  const [local] = (await mock.handlers.get('usage.report')({})).sources;
+  assert.equal(local.state, 'warning');
+  assert.equal(local.message, '1 transcript file could not be read; 3 compressed Codex files skipped: zstd unavailable; 1 compressed Codex file skipped: too large');
+  await worker.stop();
+});
+
 test('scope worktrees keeps only worktree workspaces, with case-insensitive matching on win32', async () => {
   const wt = path.join(os.tmpdir(), 'wt-a');
   const mock = mockOrca({
@@ -759,8 +780,8 @@ test('activate scans the real roots and deactivate flushes the cache under the c
     await deactivate();
   }
 
-  const cache = JSON.parse(await fsp.readFile(path.join(cacheDir(), 'scan-cache-v1.json'), 'utf8'));
-  assert.equal(cache.version, 2);
+  const cache = JSON.parse(await fsp.readFile(path.join(cacheDir(), 'scan-cache-v5.json'), 'utf8'));
+  assert.equal(cache.version, 5);
   assert.equal(Object.keys(cache.files).length, 1);
 });
 
@@ -789,4 +810,138 @@ test('statusText shows today tokens, cost and cache hit rate', async () => {
   assert.equal(t.text, '4.2B today');
   assert.equal(t.tooltip, 'Today: 4.2B tokens · $271.90 est. · 99.0% cache hits. Click to show or hide the sidebar.');
   assert.match(statusText({}).tooltip, /no cache use yet/);
+});
+
+
+import { createFold } from '../src/core/breakdown/fold.mjs';
+
+function breakdownWorld() {
+  const fold = createFold({ harness: 'claude', host: 'local' });
+  fold.add({ t: 'meta', cwd: '/w/proj', sessionId: 's1' });
+  const records = [];
+  const turns = [
+    { input: 10, cacheRead: 0, cacheWrite: 20_000, output: 300 },
+    { input: 10, cacheRead: 20_000, cacheWrite: 600_300, output: 300 },
+  ];
+  turns.forEach((u, i) => {
+    const ts = new Date(2026, 10, 3, 9, i).toISOString();
+    if (i === 1) fold.add({ t: 'arrival', ts, bucket: 'tools', target: { key: 'src/big.mjs', label: 'big.mjs', kind: 'file' }, chars: 9000, images: 0, offset: 77, bytes: 9000 });
+    fold.add({ t: 'request', key: `k${i}`, ts, model: 'claude-opus-5-5', usage: { ...u, cacheWrite1h: 0 } });
+    records.push(usageRecord({ ts, model: 'claude-opus-5-5', cwd: '/w/proj', key: `k${i}`, ...u }));
+  });
+  const scan = { digests: [{ path: '/t/s1.jsonl', compressed: false, sessionId: 's1', digest: fold.digest() }], files: [{ path: '/t/s1.jsonl', provider: 'claude', host: 'local', sessionId: 's1', state: 'ok' }], done: 1, total: 1 };
+  return { records, scan };
+}
+
+function fakeDigests(scan, delayMs = 0) {
+  const calls = { scan: 0, extra: [] };
+  return {
+    calls,
+    scanner: {
+      async scan({ extra }) {
+        calls.scan++;
+        calls.extra.push(extra);
+        if (delayMs) await sleep(delayMs);
+        return scan;
+      },
+      progress: () => ({ done: 0, total: 1 }),
+      async close() {},
+    },
+  };
+}
+
+test('usage.breakdown matches the usage.report total and finds the large result', async () => {
+  const mock = mockOrca({ settings: { extraClaudeFolders: '/extra/claude' } });
+  const { records, scan } = breakdownWorld();
+  const digests = fakeDigests(scan);
+  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000, makeDigestScanner: () => digests.scanner });
+  await worker.ready;
+  assert.equal(digests.calls.scan, 0, 'the poll never runs the digest scan');
+  const report = await mock.handlers.get('usage.report')({});
+  const view = await mock.handlers.get('usage.breakdown')({});
+  assert.ok(Math.abs(view.totals.usageUsd - report.totals.costUsd) < 1e-9);
+  assert.ok(Math.abs(view.totals.analysedUsd - view.totals.usageUsd) < 1e-9);
+  assert.deepEqual(digests.calls.extra[0].claude, ['/extra/claude']);
+  const finding = view.findings.find((f) => f.kind === 'large-results');
+  assert.ok(finding);
+  const explained = await mock.handlers.get('usage.explain')({ findingId: finding.id });
+  assert.ok(explained.prompt.startsWith('<!-- usage-insights explain v1 -->'));
+  assert.ok(explained.prompt.includes('/t/s1.jsonl'));
+  assert.ok(explained.estTokens > 0);
+  await assert.rejects(mock.handlers.get('usage.explain')({ findingId: 'nope' }), { code: 'invalid_params' });
+  const drilled = await mock.handlers.get('usage.breakdown')({ path: ['/w/proj'] });
+  assert.deepEqual(drilled.path, ['/w/proj']);
+  await worker.stop();
+});
+
+test('a slow digest scan answers loading, then posts usage.changed', async () => {
+  const mock = mockOrca();
+  const { records, scan } = breakdownWorld();
+  const digests = fakeDigests(scan, 60);
+  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000, makeDigestScanner: () => digests.scanner, breakdownWaitMs: 5 });
+  await worker.ready;
+  const before = mock.changedPosts();
+  const first = await mock.handlers.get('usage.breakdown')({});
+  assert.deepEqual(first, { loading: { done: 0, total: 1 } });
+  await sleep(120);
+  assert.equal(mock.changedPosts(), before + 1);
+  await worker.stop();
+});
+
+test('a breakdown after an extra folder is added does not reuse the scan that started without it', async () => {
+  const mock = mockOrca();
+  const { records, scan } = breakdownWorld();
+  const digests = fakeDigests(scan, 60);
+  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000, makeDigestScanner: () => digests.scanner, breakdownWaitMs: 5 });
+  await worker.ready;
+  await mock.handlers.get('usage.breakdown')({ range: 'all' });
+  mock.settings = { extraClaudeFolders: '/extra/claude' };
+  await mock.handlers.get('usage.breakdown')({ range: '7d' });
+  await sleep(150);
+  assert.equal(digests.calls.scan, 2);
+  assert.deepEqual(digests.calls.extra[1].claude, ['/extra/claude']);
+  await worker.stop();
+});
+
+test('usage.breakdown and usage.explain reject bad input', async () => {
+  const mock = mockOrca();
+  const worker = startWorker(mock.orca, fakeScanner(), { now: NOON, pollMs: 60_000, makeDigestScanner: () => fakeDigests({ digests: [], files: [] }).scanner });
+  await worker.ready;
+  await assert.rejects(mock.handlers.get('usage.breakdown')({ path: 'x' }), { code: 'invalid_params' });
+  await assert.rejects(mock.handlers.get('usage.breakdown')({ path: Array(9).fill('a') }), { code: 'invalid_params' });
+  await assert.rejects(mock.handlers.get('usage.breakdown')({ range: 'year' }), { code: 'invalid_params' });
+  await assert.rejects(mock.handlers.get('usage.explain')({}), { code: 'invalid_params' });
+  await worker.stop();
+});
+
+test('usage.report builds a new Report after local midnight even when the records are unchanged', async () => {
+  const mock = mockOrca();
+  const { build, options } = recordingBuild();
+  let clock = new Date(2026, 10, 3, 23, 59, 0);
+  const same = result([usageRecord()]);
+  const worker = startWorker(mock.orca, fakeScanner(() => same), { now: () => clock, pollMs: 60_000, build });
+  await worker.ready;
+  const handler = mock.handlers.get('usage.report');
+  await handler({ range: '7d' });
+  const built = options.length;
+  clock = new Date(2026, 10, 3, 23, 59, 30);
+  await handler({ range: '7d' });
+  assert.equal(options.length, built, 'same day: reused');
+  clock = new Date(2026, 10, 4, 0, 0, 30);
+  await handler({ range: '7d' });
+  assert.equal(options.length, built + 1, 'a new day: rebuilt');
+  assert.equal(options.at(-1).now.getDate(), 4);
+  await worker.stop();
+});
+
+test('usage.breakdown asks the digest scan for the sessions Usage has turns of in the range', async () => {
+  const mock = mockOrca();
+  const calls = [];
+  const digestScanner = { scan: async (opts) => (calls.push(opts), { digests: [], files: [] }), progress: () => ({ done: 0, total: 0 }), close: async () => {} };
+  const records = [usageRecord({ sessionId: 'recent' }), usageRecord({ sessionId: 'ancient', ts: '2020-01-01T12:00:00.000Z' })];
+  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000, makeDigestScanner: () => digestScanner });
+  await worker.ready;
+  await mock.handlers.get('usage.breakdown')({ range: '30d' });
+  assert.deepEqual([...calls[0].sessions], ['recent']);
+  await worker.stop();
 });

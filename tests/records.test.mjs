@@ -18,25 +18,26 @@ const codexCtx = { sessionId: 'rollout-1', project: 'fallback' };
 
 const claudeExpected = [
   // msg_2 streams two lines with the same key; the final one wins.
-  { key: 'msg_1:req_1', provider: 'claude', ts: '2026-10-01T10:00:05.000Z', model: 'claude-sonnet-4-5', project: 'alpha', sessionId: 'sess-a', input: 10, output: 50, cacheRead: 1000, cacheWrite: 100, cwd: '/home/me/work/alpha', host: 'local' },
-  { key: 'msg_2:req_2', provider: 'claude', ts: '2026-10-01T10:01:02.000Z', model: 'claude-sonnet-4-5', project: 'alpha', sessionId: 'sess-a', input: 12, output: 40, cacheRead: 1100, cacheWrite: 0, cwd: '/home/me/work/alpha', host: 'local' },
+  { key: 'msg_1:req_1', provider: 'claude', ts: '2026-10-01T10:00:05.000Z', model: 'claude-sonnet-4-5', project: 'alpha', sessionId: 'sess-a', input: 10, output: 50, cacheRead: 1000, cacheWrite: 100, cacheWrite1h: 0, cwd: '/home/me/work/alpha', host: 'local' },
+  { key: 'msg_2:req_2', provider: 'claude', ts: '2026-10-01T10:01:02.000Z', model: 'claude-sonnet-4-5', project: 'alpha', sessionId: 'sess-a', input: 12, output: 40, cacheRead: 1100, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/alpha', host: 'local' },
   // Missing cwd, sessionId and cache fields fall back to context or zero; no requestId keys with an empty request id.
-  { key: 'msg_m:', provider: 'claude', ts: '2026-10-01T11:00:00.000Z', model: 'claude-haiku-4-5', project: 'ctx-project', sessionId: 'ctx-session', input: 7, output: 0, cacheRead: 0, cacheWrite: 0, cwd: '', host: 'local' },
+  { key: 'msg_m:', provider: 'claude', ts: '2026-10-01T11:00:00.000Z', model: 'claude-haiku-4-5', project: 'ctx-project', sessionId: 'ctx-session', input: 7, output: 0, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: '', host: 'local' },
   // Missing model becomes 'unknown'; Windows cwd gives the last segment for project and is kept whole in cwd.
-  { key: 'msg_w:req_w', provider: 'claude', ts: '2026-10-01T11:05:00.000Z', model: 'unknown', project: 'proj-win', sessionId: 'sess-b', input: 3, output: 4, cacheRead: 0, cacheWrite: 0, cwd: 'C:\\Users\\me\\proj-win', host: 'local' },
+  { key: 'msg_w:req_w', provider: 'claude', ts: '2026-10-01T11:05:00.000Z', model: 'unknown', project: 'proj-win', sessionId: 'sess-b', input: 3, output: 4, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: 'C:\\Users\\me\\proj-win', host: 'local' },
   // Trailing slash on cwd is ignored for project and kept in cwd; multibyte text does not shift the parse.
-  { key: 'msg_3:req_3', provider: 'claude', ts: '2026-10-02T08:30:00.000Z', model: 'claude-opus-4-1', project: 'beta', sessionId: 'sess-c', input: 20, output: 300, cacheRead: 4000, cacheWrite: 200, cwd: '/home/me/work/beta/', host: 'local' },
+  { key: 'msg_3:req_3', provider: 'claude', ts: '2026-10-02T08:30:00.000Z', model: 'claude-opus-4-1', project: 'beta', sessionId: 'sess-c', input: 20, output: 300, cacheRead: 4000, cacheWrite: 200, cacheWrite1h: 0, cwd: '/home/me/work/beta/', host: 'local' },
   // Same message id with a different request id is a separate record.
-  { key: 'msg_2:req_9', provider: 'claude', ts: '2026-10-01T10:03:00.000Z', model: 'claude-sonnet-4-5', project: 'alpha', sessionId: 'sess-a', input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cwd: '/home/me/work/alpha', host: 'local' },
+  { key: 'msg_2:req_9', provider: 'claude', ts: '2026-10-01T10:03:00.000Z', model: 'claude-sonnet-4-5', project: 'alpha', sessionId: 'sess-a', input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/alpha', host: 'local' },
   // No message id, so no dedupe key and the record is kept.
-  { provider: 'claude', ts: '2026-10-02T09:00:00.000Z', model: 'claude-sonnet-5', project: 'delta', sessionId: 'sess-d', input: 4, output: 6, cacheRead: 0, cacheWrite: 0, cwd: '/home/me/work/delta', host: 'local' },
+  { provider: 'claude', ts: '2026-10-02T09:00:00.000Z', model: 'claude-sonnet-5', project: 'delta', sessionId: 'sess-d', input: 4, output: 6, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/delta', host: 'local' },
+  { key: 'msg_c:req_c', provider: 'claude', ts: '2026-10-02T08:40:00.000Z', model: 'claude-opus-4-1', project: 'beta', sessionId: 'sess-c', input: 5, output: 6, cacheRead: 0, cacheWrite: 300, cacheWrite1h: 200, cwd: '/home/me/work/beta', host: 'local' },
 ];
 
 const codexExpected = [
-  { provider: 'codex', ts: '2026-10-01T09:01:00.000Z', model: 'gpt-5-codex', project: 'gamma', sessionId: 'rollout-1', input: 200, output: 80, cacheRead: 1000, cacheWrite: 0, cwd: '/home/me/work/gamma', host: 'local' },
-  { provider: 'codex', ts: '2026-10-01T09:06:00.000Z', model: 'gpt-5.1-codex-mini', project: 'gamma', sessionId: 'rollout-1', input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cwd: '/home/me/work/gamma', host: 'local' },
+  { key: 'codex:rollout-1:2026-10-01T09:01:00.000Z:1280', provider: 'codex', ts: '2026-10-01T09:01:00.000Z', model: 'gpt-5-codex', project: 'gamma', sessionId: 'rollout-1', input: 200, output: 80, cacheRead: 1000, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
+  { provider: 'codex', ts: '2026-10-01T09:06:00.000Z', model: 'gpt-5.1-codex-mini', project: 'gamma', sessionId: 'rollout-1', input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
   // Cached tokens above input clamp the uncached input to zero.
-  { provider: 'codex', ts: '2026-10-01T09:07:00.000Z', model: 'gpt-5.1-codex-mini', project: 'gamma', sessionId: 'rollout-1', input: 0, output: 1, cacheRead: 9, cacheWrite: 0, cwd: '/home/me/work/gamma', host: 'local' },
+  { provider: 'codex', ts: '2026-10-01T09:07:00.000Z', model: 'gpt-5.1-codex-mini', project: 'gamma', sessionId: 'rollout-1', input: 0, output: 1, cacheRead: 9, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
 ];
 
 test('claude fixture yields deduped records and skips synthetic, malformed and untimed lines', () => {
@@ -168,4 +169,64 @@ test('records outside the plausible year range are dropped', () => {
 
   const codex = tokenLine(`${year + 2}-01-01T00:00:00.000Z`, tokenUsage(1, 1), tokenUsage(1, 1));
   assert.deepEqual(parseCodexTranscript(codex, codexCtx), []);
+});
+
+test('codex records carry a key only when the token event has a running total', () => {
+  const records = parseCodexTranscript(codexText, codexCtx);
+  assert.deepEqual(records.filter((r) => 'key' in r).map((r) => r.key), ['codex:rollout-1:2026-10-01T09:01:00.000Z:1280']);
+});
+
+test('codex cache writes come from cache_write_input_tokens', () => {
+  const last = { ...tokenUsage(100, 10), cache_write_input_tokens: 40 };
+  const [record] = parseCodexTranscript(`${tokenLine('2026-10-01T09:00:00.000Z', tokenUsage(100, 10), last)}\n`, codexCtx);
+  assert.equal(record.cacheWrite, 40);
+  assert.equal(record.cacheWrite1h, 0);
+});
+
+test('claude 1-hour cache writes are capped at the cache write total', () => {
+  const line = JSON.stringify({ type: 'assistant', timestamp: '2026-10-02T09:00:00.000Z', requestId: 'r', message: { id: 'capped', model: 'claude-sonnet-4-5', usage: { input_tokens: 1, cache_creation_input_tokens: 50, cache_creation: { ephemeral_1h_input_tokens: 80 } } } });
+  const [record] = parseClaudeTranscript(`${line}\n`, claudeCtx);
+  assert.equal(record.cacheWrite, 50);
+  assert.equal(record.cacheWrite1h, 50);
+});
+
+test('packed parser state restores the same records, keyless and anonymous ones included', async () => {
+  const { unpackRecords } = await import('../src/core/records.mjs');
+  const { packRecords } = await import('./legacy-records.mjs');
+  const list = [
+    { key: 'k1', provider: 'claude', ts: '2026-11-03T10:00:00.000Z', model: 'm', project: 'p', sessionId: 's', input: 1, output: 2, cacheRead: 3, cacheWrite: 4, cacheWrite1h: 0, cwd: '/w', host: 'local' },
+    { provider: 'codex', ts: '2026-11-03T10:00:01.000Z', model: 'm', project: 'p', sessionId: 's', input: 5, output: 6, cacheRead: 7, cacheWrite: 0, cacheWrite1h: 0, cwd: '', host: 'local' },
+  ];
+  const packed = JSON.parse(JSON.stringify(packRecords(list)));
+  const back = unpackRecords(packed);
+  assert.deepEqual(back, list);
+  assert.equal('key' in back[1], false, 'a record without a key stays without one');
+  assert.equal(back[0].model, back[1].model);
+  assert.ok(packed.s.filter((s) => s === 'm').length === 1, 'each distinct string is stored once');
+
+  const first = createClaudeParser({ sessionId: 's', project: 'p' });
+  first.push(claudeText);
+  const anonymous = JSON.stringify({ type: 'assistant', timestamp: '2026-11-03T10:00:00.000Z', sessionId: 's', message: { model: 'claude-x', usage: { input_tokens: 1, output_tokens: 1 } } });
+  first.push(`${anonymous}\n${anonymous}\n`);
+  const saved = JSON.parse(JSON.stringify(first.state()));
+  const restored = createClaudeParser({ sessionId: 's', project: 'p' }, saved);
+  assert.deepEqual(restored.records(), first.records());
+  restored.push(`${anonymous}\n`);
+  first.push(`${anonymous}\n`);
+  assert.deepEqual(restored.records(), first.records(), 'anonymous numbering continues after a restore');
+});
+
+test('a parser restored from a previous version state keeps its records and still dedupes', async () => {
+  const { packRecords } = await import('./legacy-records.mjs');
+  const line = (id, output, ts = '2026-10-01T10:00:00.000Z') =>
+    JSON.stringify({ type: 'assistant', timestamp: ts, requestId: 'r', message: { id, model: 'claude-x', usage: { input_tokens: 1, output_tokens: output } } });
+  const fresh = createClaudeParser({ sessionId: 's', project: 'p' });
+  fresh.push(`${line('a', 1)}\n${line('b', 2)}\n`);
+  const legacy = { packed: packRecords(fresh.records()), keys: [], anonymous: 0 };
+  const restored = createClaudeParser({ sessionId: 's', project: 'p' }, JSON.parse(JSON.stringify(legacy)));
+  assert.deepEqual(restored.records(), fresh.records());
+  restored.push(`${line('a', 5)}\n${line('c', 3)}\n`);
+  assert.deepEqual(restored.records().map((r) => [r.key, r.output]), [['a:r', 5], ['b:r', 2], ['c:r', 3]]);
+  const again = createClaudeParser({}, JSON.parse(JSON.stringify(restored.state())));
+  assert.deepEqual(again.records(), restored.records());
 });

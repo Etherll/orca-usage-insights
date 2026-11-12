@@ -19,6 +19,9 @@
   </section>
 
   <nav class="controls" aria-label="Filters">
+    <div class="seg" role="radiogroup" aria-label="View" id="view">
+      <button role="radio" data-view="usage" aria-checked="true">Usage</button><button role="radio" data-view="breakdown" aria-checked="false" tabindex="-1">Breakdown</button>
+    </div>
     <div class="seg" role="radiogroup" aria-label="Range" id="ranges">
       <button role="radio" data-range="7d" aria-checked="true">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button>
     </div>
@@ -46,7 +49,7 @@
           <h3 class="pop-title" id="hosts-title">Machine</h3>
           <div class="opt-list" role="radiogroup" aria-labelledby="hosts-title" id="hosts"></div>
         </section>
-        <section class="pop-section">
+        <section class="pop-section" id="sec-cache">
           <label class="toggle"><input type="checkbox" id="cache" checked> Include cache tokens</label>
         </section>
         <footer class="pop-foot"><button class="link-btn" id="filters-reset">Reset filters</button><button class="link-btn" id="filters-done">Done</button></footer>
@@ -58,6 +61,7 @@
 
   <p id="status" class="status" role="status" hidden></p>
   <p id="notice" class="notice" role="status" hidden></p>
+  <p id="note" class="notice note" hidden></p>
   <section id="sources" class="sources" aria-label="Sources" hidden></section>
   <div id="skeleton" class="skeleton" aria-hidden="true">
     <div class="sk-tiles"><i></i><i></i><i></i><i></i><i></i><i></i></div>
@@ -108,8 +112,8 @@
     </div>
 
     <article class="card">
-      <header><h2>Breakdown</h2>
-        <div class="seg" role="radiogroup" aria-label="Breakdown by" id="bd-mode"><button role="radio" data-mode="model" aria-checked="true">By model</button><button role="radio" data-mode="day" aria-checked="false" tabindex="-1">By day</button></div>
+      <header><h2>Ranking</h2>
+        <div class="seg" role="radiogroup" aria-label="Rank by" id="bd-mode"><button role="radio" data-mode="model" aria-checked="true">By model</button><button role="radio" data-mode="day" aria-checked="false" tabindex="-1">By day</button></div>
       </header>
       <div class="table-wrap"><table class="bd" id="breakdown"></table></div>
     </article>
@@ -125,8 +129,43 @@
       </article>
     </div>
 
-    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine and the folders and SSH hosts in Settings. No data is sent anywhere else. Cost is an estimate at list API prices.</p>
+    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine and the folders and SSH hosts in Settings. No usage data is sent anywhere. Cost is an estimate at list API prices.</p>
   </section>
+  <section id="bd" aria-label="Breakdown" hidden>
+    <p id="bd-status" class="status" role="status" hidden></p>
+    <button id="bd-stale" class="stale" hidden>New usage since this view · Update</button>
+    <div id="bd-body" hidden>
+      <article class="card" id="bd-head"></article>
+      <article class="card">
+        <header><h2>Where it went</h2><span class="muted small">Projects › folders › files, commands and tools</span></header>
+        <nav class="crumbs" id="bd-crumbs" aria-label="Location"></nav>
+        <div id="bd-tree"></div>
+      </article>
+      <section aria-labelledby="bd-find-title" class="findings-wrap">
+        <h2 id="bd-find-title">Patterns worth a look</h2>
+        <p class="muted small">Each card is one pattern and what it cost. They overlap, so they don't add up. Explain gives you a prompt for your own agent to find the cause.</p>
+        <div class="findings" id="bd-findings"></div>
+      </section>
+      <article class="card" id="bd-not" hidden></article>
+      <p class="footnote muted" id="bd-foot"></p>
+    </div>
+  </section>
+
+  <section id="prices" class="prices" aria-label="Prices" hidden></section>
+
+  <dialog id="sync-dlg" aria-labelledby="sync-title">
+    <header><h2 id="sync-title">Sync prices</h2><button class="icon-btn" data-close aria-label="Close">✕</button></header>
+    <p class="muted small">Fetches public price lists from LiteLLM and models.dev. Nothing about your usage is sent. Only the rows you tick are applied, and Undo puts the previous prices back.</p>
+    <div id="sync-body" class="dlg-body"></div>
+    <footer><button class="btn" data-close>Cancel</button><button class="btn primary" id="sync-apply" disabled>Apply ticked</button></footer>
+  </dialog>
+
+  <dialog id="explain-dlg" aria-labelledby="explain-title">
+    <header><h2 id="explain-title">Explain this pattern</h2><button class="icon-btn" data-close aria-label="Close">✕</button></header>
+    <p class="muted small">Paste this into Claude Code or Codex in any folder. The agent reads the transcript excerpts listed in the prompt and sends them to its model provider, like any other file it reads.</p>
+    <textarea id="explain-text" readonly rows="12" spellcheck="false" aria-label="Prompt"></textarea>
+    <footer><span class="muted small" id="explain-size"></span><button class="btn" data-close>Close</button><button class="btn primary" id="explain-copy">Copy prompt</button></footer>
+  </dialog>
   <div id="tip" class="tip" role="tooltip" hidden></div>
 </main>
 <script>/* PANEL_SCRIPT */</script>

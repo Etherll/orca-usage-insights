@@ -2,6 +2,10 @@
 // Parsers only consume complete lines. An unterminated trailing segment is ignored and the
 // caller sends it again with the next chunk, so the scanner cuts chunks at the last LF byte.
 
+import { decodeTable, encodeTable } from './table-codec.mjs';
+import { NameDict, tableFromRecords } from './table.mjs';
+import { timestampParser } from './time.mjs';
+
 // Line markers. providers.mjs builds LINE_MARKERS from these, so records.mjs cannot import it.
 const CLAUDE_MARKER = '"usage"';
 export const CLAUDE_MARKERS = [CLAUDE_MARKER];
@@ -22,109 +26,189 @@ export function parseCodexTranscript(text, ctx) {
 }
 
 // `state` is a value returned by an earlier parser's state(). A restored parser keeps every
-// record it has seen, so records() always returns the full deduped set for the file.
-export function createClaudeParser(ctx, state) {
+// record it has seen, so table() always holds the full deduped set for the file. States from older
+// versions are converted when the parser is restored, so an old cache carries over unread.
+// state() gives JSON-safe columns; state({ binary: true }) gives typed arrays for a thread message.
+export function createClaudeParser(ctx, state, { names } = {}) {
   const { sessionId = '', project = '' } = ctx ?? {};
   const host = ctx?.host ?? 'local';
-  const seen = new Map(state?.seen ?? []);
-  let anonymous = state?.anonymous ?? 0;
+  const table = restoreTable(state, names);
+  const parse = timestampParser();
+  const inRange = yearCheck();
+  let rowOf = null; // key -> row, built on the first keyed record
+  const add = (obj) => {
+    if (obj?.type !== 'assistant') return;
+    const message = obj.message;
+    const usage = message?.usage;
+    if (!isObject(usage) || message.model === '<synthetic>') return;
+    const ms = typeof obj.timestamp === 'string' ? parse(obj.timestamp) : NaN;
+    if (!inRange(ms)) return;
+    const key = claudeKey(obj);
+    const model = nonEmptyString(message.model) ?? 'unknown';
+    const recordProject = lastSegment(obj.cwd) || project;
+    const recordSession = nonEmptyString(obj.sessionId) ?? sessionId;
+    const cwd = rawCwd(obj.cwd);
+    const cacheWrite = count(usage.cache_creation_input_tokens);
+    const input = count(usage.input_tokens);
+    const output = count(usage.output_tokens);
+    const cacheRead = count(usage.cache_read_input_tokens);
+    const cacheWrite1h = Math.min(cacheWrite, count(usage.cache_creation?.ephemeral_1h_input_tokens));
+    if (key === null) {
+      table.push(undefined, ms, 'claude', model, recordProject, recordSession, cwd, host, input, output, cacheRead, cacheWrite, cacheWrite1h);
+      return;
+    }
+    // A message written again (Claude Code writes one line per content block) replaces its row.
+    if (rowOf === null) rowOf = keyRows(table);
+    const at = rowOf.get(key);
+    if (at === undefined) rowOf.set(key, table.push(key, ms, 'claude', model, recordProject, recordSession, cwd, host, input, output, cacheRead, cacheWrite, cacheWrite1h));
+    else table.replace(at, ms, 'claude', model, recordProject, recordSession, cwd, host, input, output, cacheRead, cacheWrite, cacheWrite1h);
+  };
   return {
     push(text) {
       for (const line of completeLines(text)) {
-        const record = claudeRecord(line, { sessionId, project, host });
-        if (!record) continue;
-        seen.set(record.key ?? `anonymous:${anonymous++}`, record);
+        if (line.includes(CLAUDE_MARKER)) add(parseClaudeLine(line));
       }
     },
-    records() {
-      return [...seen.values()];
-    },
-    state() {
-      return { seen: [...seen], anonymous };
-    },
+    pushObject: add,
+    table: () => table,
+    records: () => table.toRecords(),
+    state: ({ binary = false } = {}) => ({ table: encodeTable(table, { binary }) }),
   };
 }
 
-export function createCodexParser(ctx, state) {
+export function createCodexParser(ctx, state, { names } = {}) {
   const { sessionId = '', project = '' } = ctx ?? {};
   const host = ctx?.host ?? 'local';
   let model = state?.model ?? 'codex';
   let currentProject = state?.project ?? project;
   let currentCwd = state?.cwd ?? '';
   let lastTotal = totalOf(state?.lastTotal);
-  const records = [...(state?.records ?? [])];
+  const table = restoreTable(state, names);
+  const parse = timestampParser();
+  const inRange = yearCheck();
+  const add = (obj) => {
+    const payload = isObject(obj.payload) ? obj.payload : {};
+    if (obj.type === 'turn_context') {
+      model = nonEmptyString(payload.model) ?? model;
+    } else if (obj.type === 'session_meta') {
+      currentProject = lastSegment(payload.cwd) || project;
+      currentCwd = rawCwd(payload.cwd);
+    } else if (obj.type === 'event_msg' && payload.type === 'token_count') {
+      // Codex repeats a token_count whose running total has not moved. A repeat adds no usage.
+      const total = totalOf(payload.info?.total_token_usage);
+      if (total) {
+        if (lastTotal && sameTotal(lastTotal, total)) return;
+        lastTotal = total;
+      }
+      const usage = payload.info?.last_token_usage;
+      if (!isObject(usage)) return;
+      const ms = typeof obj.timestamp === 'string' ? parse(obj.timestamp) : NaN;
+      if (!inRange(ms)) return;
+      const cacheRead = count(usage.cached_input_tokens);
+      table.push(
+        total ? `codex:${sessionId}:${obj.timestamp}:${total.total_tokens}` : undefined,
+        ms, 'codex', model, currentProject, sessionId, currentCwd, host,
+        Math.max(0, count(usage.input_tokens) - cacheRead),
+        count(usage.output_tokens),
+        cacheRead,
+        count(usage.cache_write_input_tokens),
+        0,
+      );
+    }
+  };
   return {
     push(text) {
       for (const line of completeLines(text)) {
         if (!CODEX_MARKERS.some((marker) => line.includes(marker))) continue;
         const obj = parseJson(line);
-        if (!obj) continue;
-        const payload = isObject(obj.payload) ? obj.payload : {};
-        if (obj.type === 'turn_context') {
-          model = nonEmptyString(payload.model) ?? model;
-        } else if (obj.type === 'session_meta') {
-          currentProject = lastSegment(payload.cwd) || project;
-          currentCwd = rawCwd(payload.cwd);
-        } else if (obj.type === 'event_msg' && payload.type === 'token_count') {
-          // Codex repeats a token_count whose running total has not moved. A repeat adds no usage.
-          const total = totalOf(payload.info?.total_token_usage);
-          if (total) {
-            if (lastTotal && sameTotal(lastTotal, total)) continue;
-            lastTotal = total;
-          }
-          const usage = payload.info?.last_token_usage;
-          if (!isObject(usage) || !isTimestamp(obj.timestamp)) continue;
-          const cacheRead = count(usage.cached_input_tokens);
-          records.push({
-            provider: 'codex',
-            ts: obj.timestamp,
-            model,
-            project: currentProject,
-            sessionId,
-            input: Math.max(0, count(usage.input_tokens) - cacheRead),
-            output: count(usage.output_tokens),
-            cacheRead,
-            cacheWrite: 0,
-            cwd: currentCwd,
-            host,
-          });
-        }
+        if (obj) add(obj);
       }
     },
-    records() {
-      return [...records];
-    },
-    state() {
-      return { model, project: currentProject, cwd: currentCwd, lastTotal, records: [...records] };
-    },
+    pushObject: add,
+    table: () => table,
+    records: () => table.toRecords(),
+    state: ({ binary = false } = {}) => ({ model, project: currentProject, cwd: currentCwd, lastTotal, table: encodeTable(table, { binary }) }),
   };
 }
 
-// `key` (message id + request id) is set only when the line has a message id. The scanner uses
-// it to count a message copied into a resumed session once.
-function claudeRecord(line, ctx) {
-  if (!line.includes(CLAUDE_MARKER)) return null;
-  const obj = parseClaudeLine(line);
-  if (obj?.type !== 'assistant') return null;
-  const message = obj.message;
-  const usage = message?.usage;
-  if (!isObject(usage) || message.model === '<synthetic>') return null;
-  if (!isTimestamp(obj.timestamp)) return null;
-  const id = nonEmptyString(message.id);
-  const requestId = nonEmptyString(obj.requestId) ?? '';
+function restoreTable(state, names = new NameDict()) {
+  if (state?.table) return decodeTable(state.table, names);
+  const table = tableFromRecords(state?.packed ? unpackRecords(state.packed) : Array.isArray(state?.records) ? state.records : [], names);
+  table.frozen = false;
+  return table;
+}
+
+function keyRows(table) {
+  const rows = new Map();
+  for (let i = 0; i < table.length; i++) if (table.keys[i] !== undefined) rows.set(table.keys[i], i);
+  return rows;
+}
+
+// Years before MIN_YEAR or past next year are bad data. The upper bound follows the clock (rechecked hourly).
+function yearCheck() {
+  const floor = Date.UTC(MIN_YEAR, 0, 1);
+  let ceiling = -Infinity;
+  let recheckAt = -Infinity;
+  return (ms) => {
+    if (Number.isNaN(ms)) return false;
+    const now = Date.now();
+    if (now >= recheckAt) {
+      ceiling = Date.UTC(new Date(now).getUTCFullYear() + 2, 0, 1);
+      recheckAt = now + 3_600_000;
+    }
+    return ms >= floor && ms < ceiling;
+  };
+}
+
+const RECORD_FIELDS = ['key', 'provider', 'ts', 'model', 'project', 'sessionId', 'input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h', 'cwd', 'host'];
+const STRING_FIELD = RECORD_FIELDS.map((field) => !['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h'].includes(field));
+const WIDTH = RECORD_FIELDS.length;
+
+// Older caches' records: { s: [strings], r: [WIDTH numbers per record] }, a string field its index in s or -1.
+export function unpackRecords(packed) {
+  const strings = Array.isArray(packed?.s) ? packed.s : [];
+  const rows = Array.isArray(packed?.r) ? packed.r : [];
+  const out = [];
+  for (let at = 0; at + WIDTH <= rows.length; at += WIDTH) {
+    const record = {};
+    for (let f = 0; f < WIDTH; f++) {
+      const value = rows[at + f];
+      if (!STRING_FIELD[f]) record[RECORD_FIELDS[f]] = value;
+      else if (value >= 0 && value < strings.length) record[RECORD_FIELDS[f]] = strings[value];
+    }
+    out.push(record);
+  }
+  return out;
+}
+
+// Message id + request id, null without a message id, so a message copied into a resumed session counts once.
+export function claudeKey(obj) {
+  const id = nonEmptyString(obj?.message?.id);
+  if (!id) return null;
+  return `${id}:${nonEmptyString(obj.requestId) ?? ''}`;
+}
+
+// cacheWrite1h is the part of cacheWrite with the 1-hour TTL; 0 when usage has no cache_creation split.
+export function claudeUsage(usage) {
+  const cacheWrite = count(usage.cache_creation_input_tokens);
   return {
-    ...(id ? { key: `${id}:${requestId}` } : {}),
-    provider: 'claude',
-    ts: obj.timestamp,
-    model: nonEmptyString(message.model) ?? 'unknown',
-    project: lastSegment(obj.cwd) || ctx.project,
-    sessionId: nonEmptyString(obj.sessionId) ?? ctx.sessionId,
     input: count(usage.input_tokens),
     output: count(usage.output_tokens),
     cacheRead: count(usage.cache_read_input_tokens),
-    cacheWrite: count(usage.cache_creation_input_tokens),
-    cwd: rawCwd(obj.cwd),
-    host: ctx.host,
+    cacheWrite,
+    cacheWrite1h: Math.min(cacheWrite, count(usage.cache_creation?.ephemeral_1h_input_tokens)),
+  };
+}
+
+// Codex counts cached input inside input_tokens, so input is the uncached part. No 1-hour write split.
+export function codexUsage(last) {
+  const cacheRead = count(last.cached_input_tokens);
+  return {
+    input: Math.max(0, count(last.input_tokens) - cacheRead),
+    output: count(last.output_tokens),
+    cacheRead,
+    cacheWrite: count(last.cache_write_input_tokens),
+    cacheWrite1h: 0,
   };
 }
 
@@ -134,7 +218,7 @@ function claudeRecord(line, ctx) {
 // everything from the first `"content":[` to the `"stop_reason":` just before the last
 // `"usage":{`. Any line that doesn't fit that shape, or doesn't parse after the cut, falls back
 // to parsing the whole line, so the result is always the same as a full JSON.parse.
-const SLIM_MIN = 1024;
+export const SLIM_MIN = 1024;
 function parseClaudeLine(line) {
   if (line.length >= SLIM_MIN) {
     const content = line.indexOf('"content":[');
@@ -164,7 +248,7 @@ function completeLines(text) {
   return lines;
 }
 
-function parseJson(line) {
+export function parseJson(line) {
   try {
     const value = JSON.parse(line);
     return isObject(value) ? value : null;
@@ -175,15 +259,6 @@ function parseJson(line) {
 
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-// A parseable timestamp in a plausible year. Years before MIN_YEAR or past next year are bad data.
-function isTimestamp(value) {
-  if (typeof value !== 'string') return false;
-  const ms = Date.parse(value);
-  if (Number.isNaN(ms)) return false;
-  const year = new Date(ms).getUTCFullYear();
-  return year >= MIN_YEAR && year <= new Date().getUTCFullYear() + 1;
 }
 
 function nonEmptyString(value) {

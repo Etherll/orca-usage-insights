@@ -1,0 +1,33 @@
+{"timestamp":"2026-11-01T10:00:00.000Z","type":"session_meta","payload":{"id":"codex-sess-1","cwd":"/home/dev/app","instructions":"ZQMARK_CX_01 system guidance"}}
+{"timestamp":"2026-11-01T10:00:00.100Z","type":"session_meta","payload":{"id":"codex-sess-2","cwd":"/home/dev/other","instructions":"ZQMARK_CX_02 second session header"}}
+{"timestamp":"2026-11-01T10:00:00.200Z","type":"turn_context","payload":{"cwd":"/home/dev/app","model":"gpt-codex-5","instructions":"ZQMARK_CX_03 turn rules"}}
+{"timestamp":"2026-11-01T10:00:00.300Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"ZQMARK_CX_04 developer policy"}]}}
+{"timestamp":"2026-11-01T10:00:00.400Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ZQMARK_CX_05 fix the failing test"}]}}
+{"timestamp":"2026-11-01T10:00:00.500Z","type":"response_item","payload":{"type":"message","role":"system","content":"ZQMARK_CX_06 system note"}}
+{"timestamp":"2026-11-01T10:00:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":1050},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":1050,"cache_write_input_tokens":120}}}}
+{"timestamp":"2026-11-01T10:00:01.100Z","type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"ZQMARK_CX_07 thinking"}],"encrypted_content":"ZQMARK_CX_08"}}
+{"timestamp":"2026-11-01T10:00:01.200Z","type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":\"git status --short ZQMARK_CX_09\",\"workdir\":\"/home/dev/app\"}","call_id":"call_1"}}
+{"timestamp":"2026-11-01T10:00:01.300Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"ZQMARK_CX_10 M src/app.mjs"}}
+{"timestamp":"2026-11-01T10:00:02.000Z","type":"response_item","payload":{"type":"function_call","name":"shell_command","arguments":"{\"command\":[\"bash\",\"-lc\",\"npm test -- ZQMARK_CX_11\"]}","call_id":"call_2"}}
+{"timestamp":"2026-11-01T10:00:02.100Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_2","output":"ZQMARK_CX_12 1 failing"}}
+{"timestamp":"2026-11-01T10:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls -la ZQMARK_CX_13\"}","call_id":"call_3"}}
+{"timestamp":"2026-11-01T10:00:03.100Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_3","output":"ZQMARK_CX_14 listing"}}
+{"timestamp":"2026-11-01T10:00:04.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Update File: src/app.mjs\n@@\n-ZQMARK_CX_15\n+ZQMARK_CX_16\n*** End Patch","status":"completed","call_id":"call_4"}}
+{"timestamp":"2026-11-01T10:00:04.100Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_4","output":"Success. ZQMARK_CX_17 updated src/app.mjs"}}
+{"timestamp":"2026-11-01T10:00:05.000Z","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","arguments":"{\"agent_type\":\"explorer\",\"message\":\"ZQMARK_CX_18 find the config\"}","call_id":"call_5"}}
+{"timestamp":"2026-11-01T10:00:05.100Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_5","output":{"agent_id":"agent-7","nickname":"ZQMARK_CX_19"}}}
+{"timestamp":"2026-11-01T10:00:06.000Z","type":"response_item","payload":{"type":"function_call","name":"wait_agent","arguments":"{\"agent_ids\":[\"agent-7\"],\"timeout_ms\":1000}","call_id":"call_6"}}
+{"timestamp":"2026-11-01T10:00:06.100Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_6","output":"ZQMARK_CX_20 agent finished"}}
+{"timestamp":"2026-11-01T10:00:07.000Z","type":"response_item","payload":{"type":"function_call","name":"web_search","arguments":"{\"query\":\"ZQMARK_CX_21","call_id":"call_7"}}
+{"timestamp":"2026-11-01T10:00:07.100Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_7","output":"ZQMARK_CX_22 search failed"}}
+{"timestamp":"2026-11-01T10:00:08.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"node -e \"console.log('ZQMARK_CX_23')\"\nsecond line ZQMARK_CX_24","call_id":"call_8"}}
+{"timestamp":"2026-11-01T10:00:08.100Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_8","output":"ZQMARK_CX_25 printed"}}
+{"timestamp":"2026-11-01T10:00:09.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_unknown","output":"ZQMARK_CX_26 orphan result"}}
+{"timestamp":"2026-11-01T10:00:10.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ZQMARK_CX_27 patched and tested"}]}}
+{"timestamp":"2026-11-01T10:00:11.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":1050},"last_token_usage":{"input_tokens":1000,"cached_input_tokens":300,"output_tokens":50,"reasoning_output_tokens":0,"total_tokens":1050,"cache_write_input_tokens":120}}}}
+{"timestamp":"2026-11-01T10:00:12.000Z","type":"event_msg","payload":{"type":"agent_message","message":"ZQMARK_CX_28 the token_count is fine"}}
+{"timestamp":"2026-11-01T10:00:13.000Z","type":"event_msg","payload":{"type":"token_count","info":null,"rate_limits":{"primary":{"used_percent":12.5}}}}
+{"timestamp":"2026-11-01T10:00:20.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":2100,"cached_input_tokens":900,"output_tokens":170,"reasoning_output_tokens":40,"total_tokens":2220},"last_token_usage":{"input_tokens":1200,"cached_input_tokens":500,"output_tokens":120,"reasoning_output_tokens":20,"total_tokens":1170}}}}
+{"timestamp":"2026-11-01T10:00:25.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":5}}}}
+{"timestamp":"2026-11-01T10:00:30.000Z","type":"compacted","payload":{"message":"ZQMARK_CX_29 earlier turns compacted"}}
+{"timestamp":"2026-11-01T10:00:40.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"ZQMARK_CX_30 cut o

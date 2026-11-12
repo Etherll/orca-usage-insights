@@ -23,7 +23,7 @@ try {
   // Clock offset moves past the scanner's 5 s reuse window without sleeping.
   let offset = 0;
   const now = () => Date.now() + offset;
-  const cacheFile = path.join(dir, 'scan-cache-v1.json');
+  const cacheFile = path.join(dir, 'scan-cache-v4.json');
 
   const counts = { opens: 0 };
   const fs = counting(counts);
