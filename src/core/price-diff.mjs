@@ -3,9 +3,10 @@
 import { normalizeModelId, resolveModel } from './catalog.mjs';
 
 // The priced fields, in the order rows list them. Cache writes are split by TTL as in the catalog.
-// Tier rates are not diffed.
+// A long-prompt tier's rates follow as `tier.<above>.<field>`, one set per tier a source lists.
 const FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite.5m', 'cacheWrite.1h', 'cacheWrite.default'];
 const WRITE = 'cacheWrite.';
+const TIER = /^tier\.(\d+)\.(.+)$/;
 const RATE_KEYS = ['input', 'output', 'cacheRead'];
 const AGREE_EPSILON = 1e-9;
 const CHANGE_RATIO = 10;
@@ -36,7 +37,7 @@ export function diffCatalog(catalog, { litellm = null, modelsdev = null } = {}, 
       continue;
     }
     const entry = inCatalog.get(model) ?? resolveModel(model, catalog);
-    for (const field of FIELDS) {
+    for (const field of fieldsOf(fromLitellm.get(model), fromModelsDev.get(model))) {
       const litellmValue = valueOf(fromLitellm.get(model), field);
       const modelsdevValue = valueOf(fromModelsDev.get(model), field);
       if (litellmValue === undefined && modelsdevValue === undefined) continue;
@@ -71,6 +72,13 @@ export function overriddenKeysOf(overrides) {
     }
     if (isObject(patch.cacheWrite)) {
       for (const kind of Object.keys(patch.cacheWrite)) keys.add(`${model}.${WRITE}${kind}`);
+    }
+    // An overrides file that sets tiers replaces them all.
+    if (Array.isArray(patch.tiers)) {
+      for (const tier of patch.tiers) {
+        if (!isObject(tier)) continue;
+        for (const field of FIELDS) keys.add(`${model}.tier.${tier.above}.${field}`);
+      }
     }
   }
   return keys;
@@ -107,8 +115,17 @@ function suspicious(values, currentValue) {
     : value >= currentValue * CHANGE_RATIO || value <= currentValue / CHANGE_RATIO));
 }
 
+// The base fields, then each tier's fields, for the tiers either source lists (by size).
+function fieldsOf(...entries) {
+  const sizes = new Set();
+  for (const entry of entries) for (const tier of entry?.tiers ?? []) if (Number.isFinite(tier?.above)) sizes.add(tier.above);
+  return [...FIELDS, ...[...sizes].sort((a, b) => a - b).flatMap((above) => FIELDS.map((field) => `tier.${above}.${field}`))];
+}
+
 function valueOf(entry, field) {
   if (!entry) return undefined;
+  const tier = TIER.exec(field);
+  if (tier) return valueOf(entry.tiers?.find((t) => t?.above === Number(tier[1])), tier[2]);
   const value = field.startsWith(WRITE) ? entry.cacheWrite?.[field.slice(WRITE.length)] : entry[field];
   return typeof value === 'number' ? value : undefined;
 }

@@ -328,9 +328,10 @@ function overlayWith(base, rows, catalog, at) {
   const sources = new Set(base?.sources ?? []);
   for (const row of rows) {
     const { model, field, value, source } = proposalOf(row);
-    const id = resolveModel(model, catalog)?.id ?? model;
+    const current = resolveModel(model, catalog);
+    const id = current?.id ?? model;
     const patch = entries[id] ?? {};
-    setRate(patch, field, value);
+    setRate(patch, field, value, current);
     patch.source = source === 'litellm' || patch.source === 'litellm' ? 'litellm' : 'manual';
     patch.asOf = today(at);
     entries[id] = patch;
@@ -339,8 +340,23 @@ function overlayWith(base, rows, catalog, at) {
   return { v: 1, appliedAt: at.toISOString(), sources: [...sources].sort(), entries };
 }
 
-function setRate(patch, field, value) {
-  if (field.startsWith(WRITE)) patch.cacheWrite = { ...patch.cacheWrite, [field.slice(WRITE.length)]: value };
+// A tier field rewrites the patch's whole tier list (an overlay's tiers replace the entry's), starting
+// from the catalog's tiers. A tier the catalog lacks starts from the base rates, so it is complete
+// even when only some of its rows are applied.
+function setRate(patch, field, value, current = null) {
+  const tier = /^tier\.(\d+)\.(.+)$/.exec(field);
+  if (tier) {
+    const above = Number(tier[1]);
+    const tiers = structuredClone(patch.tiers ?? current?.tiers ?? []);
+    let target = tiers.find((t) => t.above === above);
+    if (!target) {
+      target = { above, input: current?.input, output: current?.output, cacheRead: current?.cacheRead, cacheWrite: current?.cacheWrite ? { ...current.cacheWrite } : null };
+      tiers.push(target);
+      tiers.sort((a, b) => a.above - b.above);
+    }
+    setRate(target, tier[2], value);
+    patch.tiers = tiers;
+  } else if (field.startsWith(WRITE)) patch.cacheWrite = { ...patch.cacheWrite, [field.slice(WRITE.length)]: value };
   else patch[field] = value;
 }
 

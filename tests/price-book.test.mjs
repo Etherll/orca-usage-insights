@@ -375,6 +375,28 @@ test('overlapping applies both land: each starts from the overlay the one before
   assert.equal(Object.keys(JSON.parse(fs.files.get(OVERLAY).text).entries).length, 1);
 });
 
+test('a sync applies a changed long-prompt tier rate, and a tier the catalog lacks starts complete', async () => {
+  const tierBody = (above, input) => ({
+    [OPUS]: {
+      ...litellmBody({ [OPUS]: RATES })[OPUS],
+      [`input_cost_per_token_above_${above / 1000}k_tokens`]: input / 1e6,
+      [`output_cost_per_token_above_${above / 1000}k_tokens`]: (RATES.output * 1.5) / 1e6,
+      [`cache_read_input_token_cost_above_${above / 1000}k_tokens`]: (RATES.cacheRead * 2) / 1e6,
+      [`cache_creation_input_token_cost_above_${above / 1000}k_tokens`]: (RATES.write * 2) / 1e6,
+    },
+  });
+  const { priceBook } = book({ replies: sources({ litellm: ok(tierBody(200000, 9)), modelsdev: ok(modelsDevBody({ [OPUS]: RATES })) }) });
+  const sync = await priceBook.sync([OPUS]);
+  const row = rowOf(sync.rows, `${OPUS}.tier.200000.input`);
+  assert.ok(row, sync.rows.map((r) => r.key).join(', '));
+  assert.equal(row.litellm, 9);
+  await priceBook.apply(sync.diffId, [row.key]);
+  const entry = (await priceBook.catalog()).entries.get(OPUS);
+  const tier = entry.tiers.find((t) => t.above === 200000);
+  assert.deepEqual([tier.input, tier.output, tier.cacheRead], [9, RATES.output, RATES.cacheRead]);
+  assert.deepEqual(await priceBook.catalog().then((c) => c.problems), []);
+});
+
 test('applying rows the overlay already holds writes nothing and keeps the earlier undo step', async () => {
   const { priceBook, fs } = book({ replies: live({ [OPUS]: { ...RATES, output: 22 } }) });
   const sync = await priceBook.sync([OPUS]);

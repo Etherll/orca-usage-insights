@@ -2,6 +2,7 @@
 // built-in or Orca imports. Days and hours bucket in local time. Records with a bad timestamp or
 // a day after `now` belong to no window, so they are skipped. Each record is visited twice, once
 // to normalize and once to aggregate.
+import { ratesFor } from './catalog.mjs';
 import { DEFAULT_CATALOG, tableCosts } from './pricing.mjs';
 import { dayKey, selectRecords } from './filters.mjs';
 
@@ -57,8 +58,10 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
       unpriced.turns += 1;
       unpriced.tokens += tokens;
     }
-    // USD the cache reads saved against paying full input price. Unpriced records save nothing.
-    const price = entries[model + 1];
+    // USD the cache reads saved against paying full input price, at the rates the request paid
+    // (its long-prompt tier, if any). Unpriced records save nothing.
+    const entry = entries[model + 1];
+    const price = entry && cacheRead > 0 ? ratesFor(entry, input, cacheRead, cacheWrite) : null;
     totals.savingsUsd += price ? (cacheRead * (price.input - price.cacheRead)) / 1e6 : 0;
     getOrSet(sessionsByProvider, provider, newSet).add(sessionId);
     getOrSet(getOrSet(sessionsByModel, model, newMap), provider, newSet).add(sessionId);

@@ -232,3 +232,16 @@ test('overriddenKeysOf is empty without an overrides file', () => {
 function readJson(name) {
   return JSON.parse(readFileSync(new URL(`./fixtures/prices/${name}`, import.meta.url), 'utf8'));
 }
+
+test('long-prompt tier rates get rows of their own', () => {
+  const tiered = (input) => [{ id: 'claude-opus-5-5', input: 4, output: 20, cacheRead: 0.2, cacheWrite: { '5m': 5 }, tiers: [{ above: 200000, input, output: 30, cacheRead: 0.4, cacheWrite: { '5m': 10 } }] }];
+  const withTier = buildCatalog([{ ...BUNDLED[0], tiers: [{ above: 200000, input: 8, output: 30, cacheRead: 0.4, cacheWrite: { '5m': 10 } }] }]);
+  const { rows } = diffCatalog(withTier, { litellm: source(tiered(9)), modelsdev: source(tiered(9)) }, ['claude-opus-5-5']);
+  const input = rowOf(rows, 'claude-opus-5-5.tier.200000.input');
+  assert.deepEqual([input.current, input.litellm, input.modelsdev, input.status], [8, 9, 9, 'agree']);
+  assert.equal(rowOf(rows, 'claude-opus-5-5.tier.200000.output').current, 30);
+  assert.ok(rows.findIndex((r) => r.field.startsWith('tier.')) > rows.findIndex((r) => r.field === 'cacheWrite.5m'), 'tiers follow the base fields');
+  // An overrides file that sets tiers owns them.
+  const keys = overriddenKeysOf({ models: { 'claude-opus-5-5': { tiers: [{ above: 200000, input: 1, output: 1, cacheRead: 1 }] } } });
+  assert.ok(keys.has('claude-opus-5-5.tier.200000.input'));
+});

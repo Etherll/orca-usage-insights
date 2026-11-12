@@ -2,6 +2,7 @@
 // sizes, offsets and targets, never transcript text. Usage is read by records.mjs, and a repeated
 // token_count is skipped the way records.mjs skips it.
 import { codexUsage } from '../records.mjs';
+import { EXPLAIN_MARKER } from './claude-events.mjs';
 import { agentTarget, commandTarget, injectedTarget, messagesTarget, pathTarget, toolTarget } from './targets.mjs';
 
 const CALLS_MAX = 2000;
@@ -20,6 +21,9 @@ export function createCodexEvents(ctx = {}, state = null) {
   let model = state?.model ?? 'codex';
   let lastTotal = totalOf(state?.lastTotal);
   const calls = new Map(state?.calls ?? []);
+  // The user's first prompt has been seen. Codex puts AGENTS.md and tagged context (environment,
+  // instructions) in user messages before it, so those don't count.
+  let prompted = state?.prompted === true;
 
   // A token_count whose running total has not moved repeats the one before, so it adds no usage.
   // The running total is tracked even when the line has no last_token_usage, as records.mjs does.
@@ -67,7 +71,19 @@ export function createCodexEvents(ctx = {}, state = null) {
   function message(payload, where, out) {
     const stats = contentStats(payload.content);
     if (payload.role === 'assistant') out.push({ t: 'reply', chars: stats.chars });
-    else if (payload.role === 'user') out.push(arrival('messages', messagesTarget(), stats, where));
+    else if (payload.role === 'user') {
+      // A session started from an Explain prompt is marked, so analyze keeps it out of findings.
+      if (!prompted) {
+        const text = firstText(payload.content).trimStart();
+        if (text.startsWith(EXPLAIN_MARKER)) {
+          prompted = true;
+          out.push({ t: 'explain' });
+        } else if (text !== '' && !text.startsWith('<') && !text.startsWith('# AGENTS.md')) {
+          prompted = true;
+        }
+      }
+      out.push(arrival('messages', messagesTarget(), stats, where));
+    }
     else if (payload.role === 'developer' || payload.role === 'system') {
       out.push(arrival('injected', injectedTarget(), stats, where));
     }
@@ -137,7 +153,7 @@ export function createCodexEvents(ctx = {}, state = null) {
       return out;
     },
     state() {
-      return { cwd, model, lastTotal, calls: [...calls] };
+      return { cwd, model, lastTotal, calls: [...calls], prompted };
     },
   };
 }
@@ -190,6 +206,12 @@ function arrival(bucket, target, stats, where, callId) {
 }
 
 // Text length and image count of a content value: a string, or an array of content blocks.
+function firstText(content) {
+  if (typeof content === 'string') return content;
+  const block = Array.isArray(content) ? content.find((b) => typeof b?.text === 'string') : null;
+  return block?.text ?? '';
+}
+
 function contentStats(content) {
   if (typeof content === 'string') return { chars: content.length, images: 0 };
   const stats = { chars: 0, images: 0 };

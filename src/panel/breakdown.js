@@ -45,6 +45,12 @@ const FIELD_LABELS = {
   'cacheWrite.1h': 'Cache write (1 h)',
   'cacheWrite.default': 'Cache write',
 }
+// 'tier.272000.input' reads 'Input, prompts over 272k'.
+function fieldLabel(field) {
+  const tier = /^tier\.(\d+)\.(.+)$/.exec(field)
+  if (!tier) return FIELD_LABELS[field] || field
+  return `${FIELD_LABELS[tier[2]] || tier[2]}, prompts over ${Number(tier[1]) / 1000}k`
+}
 
 // Dollars: ≈ when estimated, + when some usage is unpriced, — when the value can't be measured.
 export function usd(n, { est = false, plus = false } = {}) {
@@ -231,7 +237,7 @@ export function syncBody(result) {
         .map((r) => {
           const id = `sync-${esc(r.key)}`
           const disabled = r.status === 'overridden' ? ' disabled' : ''
-          const field = FIELD_LABELS[r.field] || r.field
+          const field = fieldLabel(r.field)
           return `<tr class="${esc(r.status)}"><td><input type="checkbox" id="${id}" data-key="${esc(r.key)}"${r.ticked ? ' checked' : ''}${disabled} aria-label="Apply ${esc(r.model)} ${esc(field)}"></td><td class="name"><label for="${id}">${esc(r.model)}</label><span class="sub">${esc(field)} <span class="chip-s ${esc(r.status)}">${esc(SYNC_STATUS[r.status] || r.status)}</span></span></td><td>${esc(fmt(r.current))}</td><td class="new">${proposed(r)}</td></tr>`
         })
         .join('')}</tbody></table></div>`

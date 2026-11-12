@@ -66,6 +66,11 @@ export function requestCost(record, catalog) {
   return entryCost(entry, record.input, record.output, record.cacheRead, record.cacheWrite, record.cacheWrite1h);
 }
 
+// The rates a request pays: the entry's tier for the request's prompt size, else its base rates.
+export function ratesFor(entry, input, cacheRead, cacheWrite) {
+  return tierFor(entry, bandOf(num(input) + num(cacheRead) + num(cacheWrite)));
+}
+
 // USD for one request's counts at an entry's prices (the entry is already resolved), or null.
 export function entryCost(entry, rawInput, rawOutput, rawCacheRead, rawCacheWrite, rawWrite1h) {
   const input = num(rawInput);

@@ -213,8 +213,9 @@ test('unpriced models save nothing in cacheSavingsUsd', () => {
     rec(ago(0), { model: 'claude-haiku-5-5', cacheRead: 1_000_000 }),
     rec(ago(0), { provider: 'codex', model: 'gpt-5-codex', cacheRead: 9_000_000 }),
   ]);
-  // Haiku 5.5 bills input at $0.10 and cache reads at $0.01 per 1M, so 1M reads save $0.09.
-  assert.ok(Math.abs(mixed.totals.cacheSavingsUsd - 0.09) < 1e-9, String(mixed.totals.cacheSavingsUsd));
+  // A 1M-token prompt is over Haiku 5.5's 100k tier, which bills input at $0.50 and cache reads at
+  // $0.05 per 1M, so 1M reads save $0.45 (the same tier its cost uses).
+  assert.ok(Math.abs(mixed.totals.cacheSavingsUsd - 0.45) < 1e-9, String(mixed.totals.cacheSavingsUsd));
 });
 
 test('byProvider counts sessions and turns per provider, inside the range only', () => {
@@ -467,4 +468,15 @@ test('today.costUsd is null when today has no priced turn', () => {
   assert.equal(build([]).today.costUsd, null);
   assert.equal(build([rec(ago(1), { model: 'claude-opus-5-5', input: 1 })]).today.costUsd, null);
   assert.equal(build([rec(ago(0), { provider: 'codex', model: 'gpt-5-codex', input: 1 })]).today.costUsd, null);
+});
+
+test('cache savings use the rates the request paid, its long-prompt tier included', async () => {
+  const { DEFAULT_CATALOG } = await import('../src/core/pricing.mjs');
+  const record = { provider: 'codex', ts: '2026-11-12T10:00:00Z', model: 'gpt-5.6', project: 'p', sessionId: 's', input: 1000, output: 0, cacheRead: 300_000, cacheWrite: 0, cacheWrite1h: 0 };
+  const entry = DEFAULT_CATALOG.entries.get('gpt-5.6');
+  const tier = entry.tiers.find((t) => t.above === 272_000);
+  const report = buildReport([record], { range: '7d', now: new Date('2026-11-12T12:00:00Z'), catalog: DEFAULT_CATALOG });
+  assert.ok(Math.abs(report.totals.cacheSavingsUsd - (300_000 * (tier.input - tier.cacheRead)) / 1e6) < 1e-9);
+  const small = buildReport([{ ...record, cacheRead: 100_000 }], { range: '7d', now: new Date('2026-11-12T12:00:00Z'), catalog: DEFAULT_CATALOG });
+  assert.ok(Math.abs(small.totals.cacheSavingsUsd - (100_000 * (entry.input - entry.cacheRead)) / 1e6) < 1e-9);
 });

@@ -7,6 +7,8 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { buildExplainPrompt } from '../src/core/breakdown/explain.mjs';
 import { createClaudeEvents } from '../src/core/breakdown/claude-events.mjs';
+import { createCodexEvents } from '../src/core/breakdown/codex-events.mjs';
+import { createFold } from '../src/core/breakdown/fold.mjs';
 
 const finding = (over = {}) => ({
   id: 'large-results:1', kind: 'large-results', harness: 'claude', usd: 12.345, est: false,
@@ -82,4 +84,23 @@ test('the Claude adapter marks a session whose first message is an Explain promp
   assert.equal(arrival.explain, true);
   const other = createClaudeEvents({ sessionId: 's' }).push(JSON.stringify({ type: 'user', sessionId: 's', timestamp: '2026-11-03T10:00:00Z', message: { role: 'user', content: 'hello' } }), 0).find((e) => e.t === 'arrival');
   assert.equal(other.explain, undefined);
+});
+
+test('the Codex adapter marks a session whose first prompt, after AGENTS.md and context, is an Explain prompt', () => {
+  const user = (text) => JSON.stringify({ timestamp: '2026-11-03T10:00:00Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
+  const run = (...texts) => {
+    const adapter = createCodexEvents({ sessionId: 's' });
+    const fold = createFold({ harness: 'codex', host: 'local' });
+    texts.forEach((text, i) => adapter.push(user(text), i).forEach((event) => fold.add(event)));
+    return fold.digest().explain;
+  };
+  const prompt = buildExplainPrompt(finding()).prompt;
+  assert.equal(run('# AGENTS.md instructions for /w', '<environment_context>x</environment_context>', prompt), true);
+  assert.equal(run(prompt), true);
+  assert.equal(run('# AGENTS.md instructions for /w', 'fix the build', prompt), false, 'only the first prompt counts');
+  // The mark survives a restore between the context and the prompt.
+  const first = createCodexEvents({ sessionId: 's' });
+  first.push(user('# AGENTS.md instructions for /w'), 0);
+  const events = createCodexEvents({ sessionId: 's' }, first.state()).push(user(prompt), 1);
+  assert.ok(events.some((e) => e.t === 'explain'));
 });

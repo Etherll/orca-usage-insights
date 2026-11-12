@@ -55,6 +55,9 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
       case 'reset':
         s.reset = true;
         break;
+      case 'explain':
+        s.explain = true; // the Codex adapter's mark: the session started from an Explain prompt
+        break;
       case 'request':
         onRequest(event);
         break;
