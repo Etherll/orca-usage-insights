@@ -66,7 +66,18 @@ Switch the panel to **Breakdown** to see what the money went on. It splits the s
 * **Where it went**: click from a project into its folders and files, or into its commands (`$ git status`, `$ npm test`), subagents and other tools.
 * **Patterns worth a look**: large tool results that stayed in context, the same file read again with no edit in between, and the cache expiring after a break. Each card shows what that pattern cost.
 
+<table>
+  <tr>
+    <td><img src="images/screenshot-breakdown.png" alt="Breakdown: spend split into buckets, and one project's src folder split by file"></td>
+    <td><img src="images/screenshot-patterns.png" alt="Patterns worth a look: a large test output, a file read again, and the cache expiring after a break, each with its cost"></td>
+  </tr>
+</table>
+
 Each pattern has an **Explain** button. It gives you a prompt to paste into Claude Code or Codex. The prompt holds the numbers and a few `node` commands that print short excerpts of the transcripts involved, so your agent can work out the cause and suggest a fix. Reading those excerpts costs your agent a few thousand tokens (the panel shows an estimate), and they go to its model provider like any other file it reads.
+
+<p align="center">
+  <img src="images/screenshot-explain.png" alt="The Explain dialog with a prompt for one pattern, ready to copy" width="720">
+</p>
 
 `≈` marks a split that is estimated (several tool results in one turn are split by size). Spend that can't be split, such as usage on SSH hosts, is listed under **Not analysed** with the reason. Breakdown follows the range, custom dates included, but not the model or cache-token filters. The first Breakdown reads the transcripts changed within the range, which takes a few seconds on a big history; after that only new lines are read.
 
