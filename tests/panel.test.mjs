@@ -334,3 +334,26 @@ test('Breakdown takes the custom dates but not the model and cache-token options
   assert.doesNotMatch(get('chips').innerHTML, /No cache tokens/)
   assert.match(get('chips').innerHTML, /2026-11-01/)
 })
+
+test('a folder pill is a toggle: clicking it asks the worker to turn the folder off or on, then reloads', async () => {
+  let off = false
+  const { calls, get, settle } = await mountPanel((input) => {
+    const report = sampleReport(input.range, input.includeCache)
+    report.sources = [report.sources[0],
+      { kind: 'folder', label: '/Users/neo/.codex', path: '/Users/neo/.codex', provider: 'codex', source: 'default', state: off ? 'off' : 'ok', records: off ? 0 : 3 },
+    ]
+    return report
+  })
+  assert.match(get('sources').innerHTML, /<button type="button" class="src ok" data-source-path="\/Users\/neo\/\.codex" aria-pressed="true"/)
+  assert.doesNotMatch(get('sources').innerHTML, /<button[^>]*data-source-path[^>]*>[^]*This machine/, 'the machine pill is not a toggle')
+  const button = { disabled: false, dataset: { sourcePath: '/Users/neo/.codex' }, getAttribute: () => 'true' }
+  off = true
+  get('sources').listeners.click({ target: { closest: () => button } })
+  await settle()
+  const toggle = calls.find((c) => c.name === 'sources.toggle')
+  assert.deepEqual(toggle.input, { path: '/Users/neo/.codex', enabled: false })
+  assert.equal(calls.at(-1).name, 'usage.report', 'the report reloads after the toggle')
+  assert.match(get('sources').innerHTML, /class="src off"[^>]*aria-pressed="false"/)
+  assert.match(get('sources').innerHTML, /turned off/)
+  assert.match(get('sources').innerHTML, /1 local source · 1 off/)
+})

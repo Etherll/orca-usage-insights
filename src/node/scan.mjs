@@ -52,8 +52,8 @@ export function createScanner({
   // Every file's table interns into one dictionary, so the store copies their columns in bulk.
   const names = new NameDict();
   let store = createRecordStore({ names });
-  let extra = { claude: [], codex: [] }; // absolute folders from settings, see setExtraRoots
-  let extraKey = '[[],[]]';
+  let extra = { claude: [], codex: [], disabled: [] }; // folders from settings, see setExtraRoots
+  let extraKey = '[[],[],[]]';
   let rootsGen = 0;
   let dirty = false;
   const touched = new Set(); // paths read or dropped since the last save
@@ -71,15 +71,17 @@ export function createScanner({
 
   return { scan, reset, flush, close: () => pool?.close(), setExtraRoots, pool: () => pool };
 
-  // Extra folders are read next to the default roots. A change drops the reuse window, and a run
-  // that started with the old folders finishes before a new one starts. Same folders: no-op.
+  // Extra folders are read next to the default roots; `disabled` lists roots and folders turned off. A
+  // change drops the reuse window, and a run that started with the old folders finishes before a new one
+  // starts. Same folders: no-op.
   function setExtraRoots(next) {
     const claude = listOfStrings(next?.claude);
     const codex = listOfStrings(next?.codex);
-    const key = JSON.stringify([claude, codex]);
+    const disabled = listOfStrings(next?.disabled);
+    const key = JSON.stringify([claude, codex, disabled]);
     if (key === extraKey) return;
     extraKey = key;
-    extra = { claude, codex };
+    extra = { claude, codex, disabled };
     rootsGen++;
     last = null;
   }
@@ -136,7 +138,7 @@ export function createScanner({
       await loadCache(map);
     }
     const roots = await rootSpecs({ platform, env, home, readdir: fs.readdir });
-    const run = { map, errors: 0, changed: false, failed: [], skipped: { zstd: 0, tooLarge: 0 } };
+    const run = { map, errors: 0, changed: false, failed: [], disabled: [], skipped: { zstd: 0, tooLarge: 0 } };
     const { found, folders, stats } = await listTranscripts({ fs, platform, roots, extra: folderSpecs, run });
     // Largest files first (a .zst byte costs several plain ones), so no big file starts last while threads idle.
     const weight = (file) => (stats.get(file.path)?.size ?? 0) * (file.compressed ? 7 : 1);
@@ -145,15 +147,18 @@ export function createScanner({
       refreshFile(run, file, stats.get(file.path)).catch((error) => countFileError(run, file.path, error)),
     );
     const walked = new Set(found.map((file) => file.path));
+    // Cached files under a turned-off folder stay cached, so turning it on again reads only what changed.
+    const off = (path) => !walked.has(path) && underAny(run.disabled, path, p.sep);
     for (const path of [...map.keys()]) {
       // A directory that failed to read says nothing about its files, so their cache entries stay.
-      if (!walked.has(path) && !underAny(run.failed, path, p.sep)) drop(run, path);
+      if (!walked.has(path) && !underAny(run.failed, path, p.sep) && !off(path)) drop(run, path);
     }
     const ordered = new Map();
     for (const file of found) if (map.has(file.path)) ordered.set(file.path, map.get(file.path));
     for (const [path, entry] of map) if (!ordered.has(path)) ordered.set(path, entry);
     const sources = [];
     for (const [path, entry] of ordered) {
+      if (off(path)) continue;
       if (!ensureParser(entry)) {
         drop(run, path);
         continue;

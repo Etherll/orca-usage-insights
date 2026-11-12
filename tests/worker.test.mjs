@@ -46,6 +46,10 @@ function mockOrca({ settings = {}, workspaces = () => ({ workspaces: [] }) } = {
           if (mock.failSettings) throw new Error('settings offline');
           return { settings: mock.settings };
         }
+        if (method === 'settings.set') {
+          mock.settings = { ...mock.settings, [args.key]: args.value };
+          return { ok: true };
+        }
         if (method === 'workspace.list') return workspaces();
       },
     },
@@ -185,9 +189,9 @@ test('manifest is the trusted worker with exactly the declared keys', () => {
   assert.ok(existsSync(path.join(root, manifest.contributes.panels[0].entry)), 'panel entry exists')
 })
 
-test('manifest declares the three source settings as multiline strings', () => {
+test('manifest declares the source settings as multiline strings', () => {
   const manifest = JSON.parse(readFileSync(path.join(root, 'orca-plugin.json'), 'utf8'))
-  assert.deepEqual(manifest.contributes.settings.map((s) => s.key), ['extraClaudeFolders', 'extraCodexFolders', 'sshHosts'])
+  assert.deepEqual(manifest.contributes.settings.map((s) => s.key), ['extraClaudeFolders', 'extraCodexFolders', 'sshHosts', 'disabledFolders'])
   for (const setting of manifest.contributes.settings) {
     assert.deepEqual(Object.keys(setting), ['key', 'title', 'description', 'type', 'multiline', 'default', 'placeholder'])
     assert.equal(setting.type, 'string')
@@ -199,6 +203,7 @@ test('manifest declares the three source settings as multiline strings', () => {
   assert.equal(manifest.contributes.settings[1].title, 'Extra Codex folders')
   assert.equal(manifest.contributes.settings[2].title, 'SSH hosts')
   assert.match(manifest.contributes.settings[2].description, /Linux or macOS/)
+  assert.equal(manifest.contributes.settings[3].title, 'Turned-off transcript folders')
 })
 
 test('startWorker registers the usage.report, usage.refresh and price handlers', async () => {
@@ -211,6 +216,7 @@ test('startWorker registers the usage.report, usage.refresh and price handlers',
     'prices.status',
     'prices.sync',
     'prices.undo',
+    'sources.toggle',
     'usage.breakdown',
     'usage.explain',
     'usage.refresh',
@@ -451,7 +457,7 @@ test('settings folders are trimmed, ~ expands, comments and blanks drop, relativ
   await mock.handlers.get('usage.report')({});
   await mock.handlers.get('usage.report')({});
   const last = scanner.calls.roots.at(-1);
-  assert.deepEqual(last, { claude: [path.join(home, 'backup', '.claude'), abs], codex: [home] });
+  assert.deepEqual(last, { claude: [path.join(home, 'backup', '.claude'), abs], codex: [home], disabled: [] });
   assert.equal(mock.logs.filter((line) => /relative\/dir/.test(line)).length, 1, 'logged once across scans');
   await worker.stop();
 });
@@ -504,7 +510,7 @@ test('a failed settings read logs once, scans with no folders or hosts, and neve
   const first = await mock.handlers.get('usage.report')({});
   await mock.handlers.get('usage.report')({});
   assert.equal(mock.logs.filter((line) => /could not read settings/.test(line)).length, 1);
-  assert.deepEqual(scanner.calls.roots.at(-1), { claude: [], codex: [] });
+  assert.deepEqual(scanner.calls.roots.at(-1), { claude: [], codex: [], disabled: [] });
   assert.equal(ssh.info.size, 0);
   assert.deepEqual(first.sources.map((s) => s.id), ['local']);
   mock.failSettings = false;
@@ -1015,4 +1021,28 @@ test('model, date and cache options are validated, passed through and cache isol
       for (const bad of [{ models: null }, { models: [''] }, { includeCache: 1 }, { range: 'custom' }, { ...base, startDate: '2026-02-30' }, { ...base, endDate: '2026-11-04' }, { ...base, startDate: '2026-11-03' }]) await assert.rejects(handler(bad), { code: 'invalid_params' });
     }
   } finally { await worker.stop(); }
+});
+
+test('sources.toggle keeps the turned-off folders in the disabledFolders setting and the scanner gets them', async () => {
+  const home = path.join(os.tmpdir(), 'usage-home');
+  const mock = mockOrca({ settings: { disabledFolders: '# kept comment\n~/old' } });
+  const scanner = fakeScanner(() => result([]));
+  const worker = startWorker(mock.orca, scanner, { now: NOON, pollMs: 60_000, home, platform: 'linux' });
+  try {
+    await worker.ready;
+    const toggle = mock.handlers.get('sources.toggle');
+    assert.deepEqual(await toggle({ path: '/data/.codex', enabled: false }), { disabled: ['~/old', '/data/.codex'] });
+    assert.equal(mock.settings.disabledFolders, '~/old\n/data/.codex');
+    await mock.handlers.get('usage.report')({});
+    assert.deepEqual(scanner.calls.roots.at(-1).disabled, [path.join(home, 'old'), '/data/.codex']);
+    assert.deepEqual(await toggle({ path: path.join(home, 'old'), enabled: true }), { disabled: ['/data/.codex'] });
+    const writes = mock.callsTo('settings.set').length;
+    await toggle({ path: '/data/.codex', enabled: false });
+    assert.equal(mock.callsTo('settings.set').length, writes, 'an unchanged list is not written again');
+    for (const bad of [null, {}, { path: '', enabled: true }, { path: '/a\n/b', enabled: false }, { path: '/a', enabled: 'no' }]) {
+      await assert.rejects(toggle(bad), { code: 'invalid_params' });
+    }
+  } finally {
+    await worker.stop();
+  }
 });

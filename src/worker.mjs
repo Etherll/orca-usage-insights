@@ -112,7 +112,7 @@ export function startWorker(orca, scanner, {
   let pending = null;
   const inFlight = new Set();
 
-  let lastExtra = { claude: [], codex: [] };
+  let lastExtra = { claude: [], codex: [], disabled: [] };
   let digestScanner = null;
   let digestJob = null;
   let lastDigests = null;
@@ -135,6 +135,7 @@ export function startWorker(orca, scanner, {
   // Sync is not tracked: it may wait on the network, and stop() must not. Its own scan is tracked.
   orca.panels.handle('usage.breakdown', (input) => track(async () => breakdown(parseBreakdownInput(input, now()))));
   orca.panels.handle('usage.explain', (input) => track(async () => explain(parseExplainInput(input, now()))));
+  orca.panels.handle('sources.toggle', (input) => track(async () => toggleSource(parseToggleInput(input))));
 
   // The digest scan runs only from here, never from the poll or the agent rescan.
   async function breakdown(options, { waitMs = breakdownWaitMs } = {}) {
@@ -210,7 +211,7 @@ export function startWorker(orca, scanner, {
   // null means still running: the caller answers { loading } and usage.changed follows.
   function digestsWithin(waitMs, since = 0, sessions = null) {
     digestScanner ??= makeDigestScanner();
-    const folders = JSON.stringify([lastExtra.claude ?? [], lastExtra.codex ?? []]);
+    const folders = JSON.stringify([lastExtra.claude ?? [], lastExtra.codex ?? [], lastExtra.disabled ?? []]);
     if (!digestJob || digestJob.since > since || digestJob.folders !== folders) {
       const job = digestScanner
         .scan({ extra: lastExtra, since, sessions })
@@ -359,7 +360,22 @@ export function startWorker(orca, scanner, {
       claude: folderList(settings?.extraClaudeFolders, 'Extra Claude Code folder'),
       codex: folderList(settings?.extraCodexFolders, 'Extra Codex folder'),
       hosts: sshEntries(settingLines(settings?.sshHosts)),
+      disabled: [...new Set(settingLines(settings?.disabledFolders).map((line) => expandHome(line, { platform, home })))],
     };
+  }
+
+  // Turns one transcript folder (a root or an extra folder, by the path its status shows) off or on. The
+  // list lives in the disabledFolders setting, so it lasts across restarts and can be edited in Settings.
+  async function toggleSource({ path, enabled }) {
+    const settings = (await orca.host.call('settings.get'))?.settings ?? {};
+    const lines = settingLines(settings.disabledFolders);
+    const key = (value) => (platform === 'win32' ? value.toLowerCase() : value);
+    const kept = lines.filter((line) => key(expandHome(line, { platform, home })) !== key(path));
+    const next = enabled ? kept : [...kept, path];
+    if (next.length !== lines.length || next.some((line, i) => line !== lines[i])) {
+      await orca.host.call('settings.set', { key: 'disabledFolders', value: next.join('\n') });
+    }
+    return { disabled: next };
   }
 
   // '~' expands to home. Only absolute paths are kept, because the scanner reads them as given.
@@ -472,7 +488,7 @@ export function startWorker(orca, scanner, {
   // status bar poll (detach) never waits for SSH.
   async function gather({ force, detach, forceLocal = force }) {
     const config = await readConfig();
-    lastExtra = { claude: config.claude, codex: config.codex };
+    lastExtra = { claude: config.claude, codex: config.codex, disabled: config.disabled };
     scanner.setExtraRoots(lastExtra);
     reconcile(config.hosts);
     const hosts = [...sources];
@@ -746,6 +762,13 @@ function parseReportInput(input, at = new Date()) {
     out.hosts = body.hosts;
   }
   return out;
+}
+
+function parseToggleInput(input) {
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) throw invalidParams('sources.toggle input must be an object');
+  if (typeof input.path !== 'string' || input.path.trim() === '' || /[\r\n]/.test(input.path)) throw invalidParams('path must be a folder path');
+  if (typeof input.enabled !== 'boolean') throw invalidParams('enabled must be a boolean');
+  return { path: input.path, enabled: input.enabled };
 }
 
 function parsePricesInput(input) {

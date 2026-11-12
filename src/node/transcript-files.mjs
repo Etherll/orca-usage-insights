@@ -19,7 +19,9 @@ const STAT_LIMIT = 64;
 // Paths are canonical (top-level dirs and symlinked files resolved), and a hardlinked file is listed once by
 // device and inode, so a file several roots reach (account homes sharing history) is read once, as the
 // first root's. `stats` maps each listed path to its stat. A root that could not be discovered or opened is
-// in run.failed, so callers keep what they had read under it.
+// in run.failed, so callers keep what they had read under it. A root or folder in extra.disabled is not
+// walked: its state is 'off' and its dirs go to run.disabled, so callers keep what they read there but
+// leave it out (a file another root also reaches still counts through that root).
 export async function listTranscripts({ fs, platform = process.platform, roots, extra, run }) {
   const p = pathFor(platform);
   const out = [];
@@ -79,6 +81,8 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
 
   const specs = [...roots];
   for (const kind of Object.keys(PROVIDERS)) for (const path of extra?.[kind] ?? []) specs.push({ path, kind, source: 'extra' });
+  const off = new Set((extra?.disabled ?? []).map((path) => identityOf(path, platform)));
+  run.disabled ??= [];
   const folders = [];
   for (const spec of specs) {
     const { path: folder, kind, source } = spec;
@@ -91,6 +95,17 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
       Object.assign(entry, { state: 'warning', message: spec.message });
       entry.dirs.push(folder);
       fail(folder);
+      continue;
+    }
+    if (off.has(identityOf(folder, platform))) {
+      entry.state = 'off';
+      const top = await canonicalDir(fs, folder);
+      if (top === null) continue;
+      const asRoot = source !== 'extra' || (await Promise.all(provider.subdirs.map((sub) => isDirectory(fs, p.join(top, sub))))).some(Boolean);
+      for (const dir of asRoot ? provider.subdirs.map((sub) => p.join(top, sub)) : [top]) {
+        const real = await canonicalDir(fs, dir);
+        if (real !== null) run.disabled.push(real);
+      }
       continue;
     }
     const errorsBefore = run.errors;

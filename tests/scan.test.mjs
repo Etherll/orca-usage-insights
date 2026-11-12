@@ -1287,3 +1287,24 @@ test('a .zst that decompresses past the cap is not decompressed again after a re
   assert.equal(warm.skipped.tooLarge, 1);
   assert.deepEqual(warm.records.toRecords(), cold.records.toRecords());
 });
+
+test('a turned-off root is left out and keeps its cache, so turning it on reads nothing again', async (t) => {
+  const fx = await fixture(t);
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'one' })));
+  await fsp.writeFile(path.join(fx.codex, 'sessions', 'c.jsonl'), lines(codexUsage(4)));
+  const rec = recordingFs();
+  const scanner = createScanner({ env: fx.env, home: fx.base, fs: rec.fs, threads: 0 });
+  assert.equal((await scanner.scan()).records.length, 2);
+  scanner.setExtraRoots({ disabled: [fx.codex] });
+  rec.log.clear();
+  const off = await scanner.scan({ force: true });
+  assert.deepEqual(off.records.toRecords().map((r) => r.provider), ['claude']);
+  const status = off.folders.find((f) => f.path === fx.codex);
+  assert.deepEqual([status.state, status.files, status.records], ['off', 0, 0]);
+  assert.equal(off.errors, 0);
+  scanner.setExtraRoots({ disabled: [] });
+  rec.log.clear();
+  const on = await scanner.scan({ force: true });
+  assert.equal(on.records.length, 2);
+  assert.deepEqual(rec.log.opened, [], 'the cached Codex file is not read again');
+});

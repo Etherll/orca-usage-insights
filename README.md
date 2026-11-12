@@ -116,6 +116,8 @@ By default the plugin reads this machine's `~/.claude`, `~/.config/claude` and `
 
 Histories from all of them are combined. A transcript that several accounts share counts once, and so does a hard link or a copied Codex turn. Codex turns are matched by turn ID, so a session resumed or copied under a new session ID still counts once. Older Codex logs have no turn IDs and can't be matched across sessions. The transcripts don't say which subscription paid for a turn, so the totals cover all accounts together. The source strip under the filters shows each folder's status, files, turns and latest usage, and a transcript that several folders share is counted in each of them there.
 
+Click a folder there to leave it out, and click it again to count it again. A folder you turn off stays off after a restart; the list is in Settings as **Turned-off transcript folders**. Turning one back on doesn't read its files again.
+
 You can add more in **Settings → Plugins → Usage Insights**, one per line:
 
 **Extra folders**, for a WSL install, a second config folder or an old backup:

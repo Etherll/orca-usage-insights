@@ -422,6 +422,15 @@ input:focus-visible, select:focus-visible, .table-wrap:focus-visible { outline: 
 .source-details summary:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
 .source-roots { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 6px; }
 .source-roots .src .name { max-width: none; white-space: normal; overflow-wrap: anywhere; }
+
+/* Folder pills turn their folder off and on. */
+button.src { color: var(--fg); font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+button.src:hover { border-color: color-mix(in srgb, var(--fg) 35%, var(--border)); }
+button.src:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+button.src:disabled { cursor: progress; opacity: .7; }
+.src.off { color: var(--muted-fg); border-style: dashed; }
+.src.off .name { font-weight: 500; text-decoration: line-through; }
+.src.off .state { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted-fg); }
 </style>
 </head>
 <body>
@@ -1636,7 +1645,7 @@ const SOURCE_ICONS = {
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   ssh: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>',
 }
-const STATE_WORDS = { empty: 'No transcripts', ok: 'Up to date', warning: 'Warning', error: 'Error', loading: 'Loading…' }
+const STATE_WORDS = { empty: 'No transcripts', off: 'Turned off', ok: 'Up to date', warning: 'Warning', error: 'Error', loading: 'Loading…' }
 
 // Labels name the transcript root; they never claim which subscription or account a history belongs to.
 function sourceLabel(source) {
@@ -1652,29 +1661,36 @@ function sourceLabel(source) {
 }
 
 // One pill per source (this machine, each SSH host, each root or folder with a problem): state, size,
-// freshness. Healthy roots fold into a details list. Errors and warnings show their message on hover and
-// to screen readers.
+// freshness. Healthy and turned-off roots fold into a details list. A folder's pill is a button that turns
+// it off or on. Errors and warnings show their message on hover and to screen readers.
 function renderSources(r) {
   const list = r.sources || []
   const el = $('sources')
   const folders = list.filter((s) => s.kind === 'folder')
-  const multi = list.some((s) => s.kind === 'ssh' || (s.kind === 'folder' && s.source === 'extra')) || list.some((s) => s.state !== 'ok' && s.state !== 'empty')
+  const multi = list.some((s) => s.kind === 'ssh' || (s.kind === 'folder' && s.source === 'extra')) || list.some((s) => !['ok', 'empty', 'off'].includes(s.state))
   const wasOpen = el.querySelector('details')?.open || false
   el.hidden = !list.length
   if (!list.length) return
   const pill = (s) => {
     const state = STATE_WORDS[s.state] ? s.state : 'ok'
-    const meta = state === 'empty' ? 'no transcripts' : state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
+    const meta = state === 'off' ? 'turned off' : state === 'empty' ? 'no transcripts' : state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
     const detail = [s.path || '', s.source ? `Source: ${s.source}` : '', STATE_WORDS[state], s.message, s.files !== undefined ? `${s.files} files` : '', s.ms ? `scanned in ${s.ms} ms` : '', s.latestRecordAt ? `Latest recorded usage: ${new Date(s.latestRecordAt).toLocaleString()}` : ''].filter(Boolean).join(' · ')
     const icon = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SOURCE_ICONS[s.kind] || SOURCE_ICONS.local}</svg>`
     const label = sourceLabel(s)
-    return `<span class="src ${state}" title="${esc(detail)}" aria-label="${esc(`${label}: ${detail}`)}">${icon}<span class="state" aria-hidden="true"></span><span class="name">${esc(label)}</span><span class="meta">${esc(meta)}</span></span>`
+    const inner = `${icon}<span class="state" aria-hidden="true"></span><span class="name">${esc(label)}</span><span class="meta">${esc(meta)}</span>`
+    if (s.kind === 'folder' && s.path) {
+      const on = state !== 'off'
+      const action = on ? 'Click to leave this folder out' : 'Click to count this folder again'
+      return `<button type="button" class="src ${state}" data-source-path="${esc(s.path)}" aria-pressed="${on}" title="${esc(`${detail} · ${action}`)}" aria-label="${esc(`${label}: ${detail}. ${action}`)}">${inner}</button>`
+    }
+    return `<span class="src ${state}" title="${esc(detail)}" aria-label="${esc(`${label}: ${detail}`)}">${inner}</span>`
   }
-  const healthy = folders.filter((s) => s.state === 'ok' || s.state === 'empty')
+  const healthy = folders.filter((s) => ['ok', 'empty', 'off'].includes(s.state))
   const prominent = list.filter((s) => !healthy.includes(s))
   const warnings = folders.length - healthy.length
-  const roots = healthy.length ? `<details class="source-details"${wasOpen ? ' open' : ''}><summary>${folders.length} local ${folders.length === 1 ? 'source' : 'sources'}${warnings ? ` · ${warnings} ${warnings === 1 ? 'warning' : 'warnings'}` : ''}</summary><div class="source-roots">${healthy.map(pill).join('')}</div></details>` : ''
-  const hint = multi ? '' : '<span class="hint">Add folders or SSH hosts in Settings → Plugins → Usage Insights.</span>'
+  const off = folders.filter((s) => s.state === 'off').length
+  const roots = healthy.length ? `<details class="source-details"${wasOpen ? ' open' : ''}><summary>${folders.length} local ${folders.length === 1 ? 'source' : 'sources'}${off ? ` · ${off} off` : ''}${warnings ? ` · ${warnings} ${warnings === 1 ? 'warning' : 'warnings'}` : ''}</summary><div class="source-roots">${healthy.map(pill).join('')}</div></details>` : ''
+  const hint = multi ? '' : '<span class="hint">Click a folder to leave it out. Add folders or SSH hosts in Settings → Plugins → Usage Insights.</span>'
   el.innerHTML = prominent.map(pill).join('') + roots + hint
   const problems = list.filter((s) => s.state === 'error' || s.state === 'warning')
   const notes = []
@@ -1718,6 +1734,23 @@ function applyDates() {
 
 function timeZoneName() {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time' } catch { return 'local time' }
+}
+
+// The worker keeps the turned-off list in its settings; the report is then reloaded without the folder.
+async function toggleSource(button) {
+  if (!button || button.disabled) return
+  const path = button.dataset.sourcePath
+  const enabled = button.getAttribute('aria-pressed') !== 'true'
+  button.disabled = true
+  try {
+    await request('sources.toggle', { path, enabled })
+    $('live').textContent = enabled ? 'Folder counted again.' : 'Folder left out.'
+    await load()
+    if (state.view === 'breakdown') loadBreakdown()
+  } catch (err) {
+    showStatus(`Couldn't change the folder: ${err?.message || err}`, true)
+    button.disabled = false
+  }
 }
 
 function legendItem(color, label, value) {
@@ -2272,6 +2305,7 @@ function bindControls() {
     load()
   })
   $('refresh').addEventListener('click', () => load('usage.refresh'))
+  $('sources').addEventListener('click', (e) => toggleSource(e.target.closest?.('button[data-source-path]')))
   host?.plugin?.on?.('usage.changed', onChanged)
   host?.on?.('theme', () => state.report && render())
   // Charts are drawn at the container's pixel width, so redraw when the panel is resized.
