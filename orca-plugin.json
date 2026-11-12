@@ -4,7 +4,7 @@
   "name": "Usage Insights",
   "version": "1.2.0",
   "execution": "trusted-worker",
-  "description": "Charts of your Claude Code and Codex token use and estimated API cost by day, project, model and machine, plus a Breakdown of what the spend went on, down to the file or command, with prompts your agent can use to explain the costly patterns. Reads local transcripts and any SSH hosts you add.",
+  "description": "Charts of your Claude Code, Codex and OpenCode token use and estimated API cost by day, project, model and machine, plus a Breakdown of what the spend went on, down to the file or command, with prompts your agent can use to explain the costly patterns. Reads local transcripts and any SSH hosts you add.",
   "author": {
     "name": "Etherll",
     "url": "https://github.com/Etherll"

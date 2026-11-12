@@ -1,6 +1,6 @@
 // Breakdown view, Sync dialog and price line: HTML builders from the worker's replies. No DOM
 // access and no dollar math beyond formatting; panel.js owns events and requests.
-import { esc, sparkline } from './charts.mjs'
+import { esc, sparkline, PROVIDER_LABELS } from './charts.mjs'
 
 export const BUCKET_INFO = {
   startup: { label: 'Session start', tip: 'System prompt, tool definitions and memory files loaded before your first message.', color: 'var(--s4)' },
@@ -16,6 +16,7 @@ export const BUCKET_INFO = {
 
 export const REASON_INFO = {
   ssh: { label: 'On SSH hosts', next: 'Breakdown reads transcripts on this machine only. SSH usage still counts in the total.' },
+  opencode: { label: 'OpenCode sessions', next: 'Breakdown reads Claude Code and Codex transcripts. OpenCode usage still counts in the total.' },
   zstd: { label: 'Compressed Codex files', next: "This Orca's Node.js can't read .zst files. Updating Orca fixes it." },
   'too-large': { label: 'Files too large', next: 'Compressed transcripts over 64 MB are skipped.' },
   parse: { label: "Files that couldn't be read", next: 'See the This machine status above for which files failed.' },
@@ -153,7 +154,7 @@ export function findings(view) {
       const where = f.kind === 'cache-expired' ? lastSegment(f.where.project) : `${f.where.label} · ${lastSegment(f.where.project)}`
       const spark = (f.daily || []).length > 1 ? `<span class="spark-wrap" aria-hidden="true">${sparkline(f.daily.map((d) => d[1]), { width: 80, height: 22 })}</span>` : ''
       const facts = [`${f.facts?.sessions ?? 0} session${f.facts?.sessions === 1 ? '' : 's'}`, f.lastSeen ? `last seen ${f.lastSeen}` : ''].filter(Boolean).join(' · ')
-      return `<article class="finding"><header><span class="tag">${esc(f.harness === 'codex' ? 'Codex' : 'Claude Code')}</span><h3>${esc(info.title)}</h3></header>
+      return `<article class="finding"><header><span class="tag">${esc(PROVIDER_LABELS[f.harness] ?? f.harness ?? 'Unknown')}</span><h3>${esc(info.title)}</h3></header>
 <p class="where" title="${esc(f.where.key)}">${esc(where)}</p>
 <div class="fig"><div><span class="label">Cost of this pattern</span><strong>${esc(usd(f.usd, { est: f.est }))}</strong></div>${spark}</div>
 <p class="muted">${esc(info.what)} ${esc(facts)}.</p>

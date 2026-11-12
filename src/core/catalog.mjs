@@ -6,7 +6,7 @@ import { normalizeModelId } from './price-sources.mjs';
 export { PROMPT_BANDS, bandOf } from './bands.mjs';
 export { normalizeModelId } from './price-sources.mjs';
 
-const PROVIDERS = ['anthropic', 'openai'];
+const PROVIDERS = ['anthropic', 'openai', 'opencode', 'opencode-go'];
 const SOURCES = ['litellm', 'manual', 'user'];
 const ENTRY_FIELDS = ['provider', 'aliases', 'input', 'output', 'cacheRead', 'cacheWrite', 'tiers', 'contextWindow', 'source', 'asOf'];
 const RATE_KEYS = ['input', 'output', 'cacheRead'];
@@ -89,7 +89,7 @@ function linesCost(entry, rates, input, output, cacheRead, write5m, write1h) {
     usd += (cacheRead * rates.cacheRead) / 1e6;
   }
   const write = rates.cacheWrite;
-  if (entry.provider === 'openai') {
+  if (entry.provider !== 'anthropic') {
     const count = write5m + write1h;
     if (count !== 0) {
       const rate = write?.default;
@@ -214,9 +214,10 @@ function take(layer, id, candidate, entries, problems) {
 }
 
 function baseEntry(id) {
+  const channel = /^(opencode-go|opencode)\//.exec(id)?.[1];
   return {
     id,
-    provider: id.startsWith('claude-') ? 'anthropic' : 'openai',
+    provider: id.startsWith('claude-') ? 'anthropic' : channel ?? 'openai',
     aliases: [],
     cacheWrite: null,
     tiers: null,
@@ -280,14 +281,14 @@ function validTiers(tiers, provider) {
   });
 }
 
-// null (no cache-write rates) is valid; OpenAI write rates must include a default.
+// null (no cache-write rates) is valid; every provider except Anthropic must give a default rate.
 function validWrite(write, provider) {
   if (write === null || write === undefined) return true;
   if (!isObject(write)) return false;
   const keys = Object.keys(write);
   if (keys.length === 0 || keys.some((key) => !WRITE_KEYS.includes(key))) return false;
   if (!keys.every((key) => isRate(write[key]))) return false;
-  return provider !== 'openai' || write.default !== undefined;
+  return provider === 'anthropic' || write.default !== undefined;
 }
 
 function tierFor(entry, band) {

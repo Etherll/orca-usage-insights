@@ -231,9 +231,9 @@ export function sparkline(values, { width = 96, height = 26 } = {}) {
   return svg(width, height, `<polyline points="${d}" fill="none" class="spark" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${lx}" cy="${ly}" r="2.5" class="spark-dot"/>`, 'Trend')
 }
 
-export const PROVIDER_COLORS = { claude: 'var(--s2)', codex: 'var(--s1)' }
-export const PROVIDER_LABELS = { claude: 'Claude Code', codex: 'Codex' }
-export const providerColor = (p, i = 0) => PROVIDER_COLORS[p] ?? ['var(--s3)', 'var(--s4)'][i % 2]
+export const PROVIDER_COLORS = { claude: 'var(--s2)', codex: 'var(--s1)', opencode: 'var(--s3)' }
+export const PROVIDER_LABELS = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' }
+export const providerColor = (p, i = 0) => PROVIDER_COLORS[p] ?? ['var(--s3)', 'var(--s4)', 'var(--s5)'][i % 3]
 
 // Monotone cubic (Fritsch–Carlson) path through points, so smoothing never overshoots below 0.
 export function smoothPath(pts) {

@@ -33,6 +33,7 @@ const BREAKDOWN_WAIT_MS = 10_000;
 const HEAVY_MS = 1_000;
 const SETTLE_MS = 3_000;
 const VIEWS_KEPT = 8;
+const HARNESS_LABELS = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
 
 // activate, replaceWorker and deactivate run one at a time, so a new worker always starts after
 // the previous one has stopped.
@@ -176,7 +177,7 @@ export function startWorker(orca, scanner, {
     if (!view || view.prices?.version !== catalog.version) view = await breakdown(options, { waitMs: 600_000 });
     const finding = view?.findings?.find((f) => f.id === options.findingId);
     if (!finding) throw invalidParams('unknown findingId');
-    return { ...buildExplainPrompt(finding, { harnessLabel: finding.harness === 'codex' ? 'Codex' : 'Claude Code', platform }), estUsd: null };
+    return { ...buildExplainPrompt(finding, { harnessLabel: HARNESS_LABELS[finding.harness] ?? 'this agent', platform }), estUsd: null };
   }
 
   // The range's first local day less a day of margin for time zones and clock skew. 0 for 'all'.

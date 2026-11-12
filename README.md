@@ -3,7 +3,7 @@
   Usage Insights
 </h1>
 
-<h3 align="center">See how much Claude Code and Codex you actually use, inside Orca.</h3>
+<h3 align="center">See how much Claude Code, Codex and OpenCode you actually use, inside Orca.</h3>
 
 <p align="center">
   <a href="#install">Install</a> •
@@ -30,7 +30,7 @@ Needs Orca 1.4.248 or newer.
 
 ## What you get
 
-The panel reads your Claude Code and Codex transcripts and turns them into:
+The panel reads your Claude Code and Codex transcripts, plus the local OpenCode database, and turns them into:
 
 * **Totals** for today, 7 days, 30 days, 90 days, everything or dates you pick: tokens, estimated cost, today, cache hit rate, sessions and your streak.
 * **Daily charts** of tokens or cost, per token type and per provider.
@@ -56,7 +56,7 @@ One **Filters** menu narrows it down: only sessions that ran in an Orca worktree
   </tr>
 </table>
 
-Cost is an estimate at list API prices, so it's what the same tokens would cost on the API, not your bill. Claude and OpenAI models are both priced, per exact model, with long-prompt tiers and 1-hour cache writes ([more below](#prices)). A model with no price counts toward tokens, and its cost shows as `+`.
+Cost is an estimate at list API prices, so it's what the same tokens would cost on the API, not your bill. Claude, OpenAI and OpenCode models are priced, per exact model, with long-prompt tiers and 1-hour cache writes ([more below](#prices)). OpenCode models keep their channel in the name (`opencode/` for Console, `opencode-go/` for Go), because the same model can have different prices on each. A model with no price counts toward tokens, and its cost shows as `+`.
 
 ## Breakdown
 
@@ -79,11 +79,11 @@ Each pattern has an **Explain** button. It gives you a prompt to paste into Clau
   <img src="images/screenshot-explain.png" alt="The Explain dialog with a prompt for one pattern, ready to copy" width="720">
 </p>
 
-`≈` marks a split that is estimated (several tool results in one turn are split by size). Spend that can't be split, such as usage on SSH hosts, is listed under **Not analysed** with the reason. Breakdown follows the range, custom dates included, but not the model or cache-token filters. The first Breakdown reads the transcripts changed within the range, which takes a few seconds on a big history; after that only new lines are read.
+`≈` marks a split that is estimated (several tool results in one turn are split by size). Spend that can't be split, such as usage on SSH hosts or in OpenCode, is listed under **Not analysed** with the reason. Breakdown follows the range, custom dates included, but not the model or cache-token filters. The first Breakdown reads the transcripts changed within the range, which takes a few seconds on a big history; after that only new lines are read.
 
 ## Prices
 
-Prices ship with the plugin, taken from [LiteLLM](https://github.com/BerriAI/litellm)'s price list. The line at the bottom of the panel says which prices are in use.
+Prices ship with the plugin, taken from [LiteLLM](https://github.com/BerriAI/litellm) and [models.dev](https://models.dev) (which carries the OpenCode Console and Go lists). The line at the bottom of the panel says which prices are in use.
 
 **Sync prices** fetches the current lists from LiteLLM and [models.dev](https://models.dev) and shows what would change, and by how much for your last 30 days. Only the rows you tick are applied. Rows where the two sources agree come pre-ticked; big jumps and anything odd never are. **Undo** puts the previous prices back, and **Reset** goes back to the bundled ones.
 
@@ -108,11 +108,13 @@ Prices are USD per million tokens:
 }
 ```
 
-The first entry changes one price of a known model, the second adds a new model, and the alias prices a model name as another. A new model needs its `provider` unless its name starts with `claude-`: `anthropic` splits cache writes into `5m` and `1h`, and `openai` (the default for other names) takes one `default` rate. Your file always wins over the bundled and synced prices, and Sync, Undo and Reset never change it. The panel picks up edits on the next refresh and lists any line it couldn't use.
+The first entry changes one price of a known model, the second adds a new model, and the alias prices a model name as another. A new model needs its `provider` unless its name starts with `claude-`: `anthropic` splits cache writes into `5m` and `1h`, and every other provider (including `openai`, the default) takes one `default` rate. Use an `opencode/` or `opencode-go/` name to set a channel price. Your file always wins over the bundled and synced prices, and Sync, Undo and Reset never change it. The panel picks up edits on the next refresh and lists any line it couldn't use.
 
 ## More machines and folders
 
 By default the plugin reads this machine's `~/.claude`, `~/.config/claude` and `~/.codex`, plus `CLAUDE_CONFIG_DIR` and `CODEX_HOME` when they're set, and every Claude profile and Codex account home Orca manages. A new account shows up on the next scan.
+
+OpenCode 2.x is read from `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`, or the file `OPENCODE_DB` names. On Windows that's `%USERPROFILE%\.local\share\opencode`, not `%APPDATA%`. Channel builds such as `opencode-dev.db` are read too, and an install that has not upgraded to 2.x still reads its older tables. Recent turns can still be in the database's `-wal` file, so it is opened read-only as a real SQLite database. OpenCode is local-only for now: SSH hosts read transcripts, not databases.
 
 Histories from all of them are combined. A transcript that several accounts share counts once, and so does a hard link or a copied Codex turn. Codex turns are matched by turn ID, so a session resumed or copied under a new session ID still counts once. Older Codex logs have no turn IDs and can't be matched across sessions. The transcripts don't say which subscription paid for a turn, so the totals cover all accounts together. The source strip under the filters shows each folder's status, files, turns and latest usage, and a transcript that several folders share is counted in each of them there.
 
@@ -155,7 +157,7 @@ The first open after updating from 1.1.0 reads everything once, like a first ins
 
 Your transcripts stay on your machines. The plugin makes no network requests of its own, with two exceptions you start yourself: the SSH connections you add, and **Sync prices**, which downloads the public price lists from `raw.githubusercontent.com` (LiteLLM) and `models.dev` when you click it. Nothing about your usage is sent with those requests.
 
-**What it reads:** your Claude Code and Codex transcripts, including Codex's compressed `.jsonl.zst` files.
+**What it reads:** your Claude Code and Codex transcripts, including Codex's compressed `.jsonl.zst` files, and your local OpenCode SQLite database. Breakdown does not read OpenCode yet, so its spend shows under **Not analysed**.
 
 **What it keeps** in its cache folder, so later opens are fast:
 
@@ -176,7 +178,7 @@ node --test tests/*.test.mjs    # tests
 orca plugin dev load .          # try it in Orca
 ```
 
-There's also `scripts/preview.mjs` to render the panel with your own data in a browser (`--breakdown` opens the Breakdown view), `scripts/bench-worker.mjs` to time it, `scripts/prices.mjs` to regenerate the bundled prices from a LiteLLM price file, and `scripts/media/render.mjs`, which makes the images above from made-up demo data.
+There's also `scripts/preview.mjs` to render the panel with your own data in a browser (`--breakdown` opens the Breakdown view), `scripts/bench-worker.mjs` to time it, `scripts/prices.mjs` to regenerate the bundled prices from LiteLLM and models.dev price files (`node scripts/prices.mjs <litellm.json> [modelsdev.json] --write`), and `scripts/media/render.mjs`, which makes the images above from made-up demo data.
 
 ## License
 
