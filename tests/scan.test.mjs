@@ -449,7 +449,7 @@ test('cache is written atomically, at most once per 30 s, and its timer is unref
   assert.equal(to, fx.cacheFile);
   assert.notEqual(from, to);
   assert.match(from, /\.tmp$/);
-  assert.equal(JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')).version, 5);
+  assert.equal(JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')).version, 6);
 
   await fsp.appendFile(file, lines(claudeLine({ id: 'm2' })));
   clock += 10_000;
@@ -1027,35 +1027,40 @@ async function writeLegacyCache(fromFile, legacyFile) {
   await fsp.writeFile(legacyFile, JSON.stringify({ version: 4, files }));
 }
 
-test('a previous version cache carries over without reading a transcript, and is left in place', async (t) => {
-  const fx = await fixture(t);
-  const codexFile = path.join(fx.codex, 'sessions', 'rollout-5.jsonl');
-  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm1', cwd: '/w/alpha' }), claudeLine({ id: 'm2', output: 20 })));
-  await fsp.writeFile(codexFile, lines(codexMeta('/w/beta'), codexTurn('gpt-5-codex'), codexUsage(7)));
-  const legacyFile = path.join(path.dirname(fx.cacheFile), 'scan-cache-v4.json');
-  const first = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile });
-  const cold = (await first.scan()).records.toRecords();
-  await first.flush();
-  await writeLegacyCache(fx.cacheFile, legacyFile);
-  const legacyBody = await fsp.readFile(legacyFile, 'utf8');
-  await fsp.rm(fx.cacheFile);
+for (const version of [4, 5]) {
+  test(`a version ${version} cache carries Claude files over unread, rereads Codex files, and is left in place`, async (t) => {
+    const fx = await fixture(t);
+    const codexFile = path.join(fx.codex, 'sessions', 'rollout-5.jsonl');
+    await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm1', cwd: '/w/alpha' }), claudeLine({ id: 'm2', output: 20 })));
+    await fsp.writeFile(codexFile, lines(codexMeta('/w/beta'), codexTurn('gpt-5-codex'), codexUsage(7)));
+    const legacyFile = path.join(path.dirname(fx.cacheFile), `scan-cache-v${version}.json`);
+    const first = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile });
+    await first.scan();
+    await first.flush();
+    if (version === 4) await writeLegacyCache(fx.cacheFile, legacyFile);
+    else await fsp.writeFile(legacyFile, JSON.stringify({ ...JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')), version: 5 }));
+    const legacyBody = await fsp.readFile(legacyFile, 'utf8');
+    await fsp.rm(fx.cacheFile);
 
-  await fsp.appendFile(codexFile, lines(codexUsage(11)));
-  const rec = recordingFs();
-  const migrated = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, legacyCacheFile: legacyFile, fs: rec.fs });
-  const warm = await migrated.scan();
-  assert.deepEqual(rec.log.opened, [codexFile], 'only the grown file is read');
-  assert.equal(rec.log.reads[1].pos, (await fsp.stat(codexFile)).size - Buffer.byteLength(lines(codexUsage(11))), 'the tail starts at the stored offset');
-  assert.deepEqual(warm.records.toRecords(), [...cold, { ...cold[2], output: 11 }]);
-  await migrated.flush();
-  assert.equal(JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')).version, 5);
-  assert.equal(await fsp.readFile(legacyFile, 'utf8'), legacyBody);
+    await fsp.appendFile(codexFile, lines(codexUsage(11)));
+    const fresh = (await createScanner({ env: fx.env, home: fx.base, cacheFile: null }).scan()).records.toRecords();
+    const rec = recordingFs();
+    const missing = path.join(path.dirname(fx.cacheFile), 'scan-cache-missing.json');
+    const migrated = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, legacyCacheFile: [missing, legacyFile], fs: rec.fs });
+    const warm = await migrated.scan();
+    assert.deepEqual(rec.log.opened, [codexFile], 'only the Codex file is read');
+    assert.deepEqual(warm.records.toRecords(), fresh);
+    await migrated.flush();
+    assert.equal(JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')).version, 6);
+    assert.equal(await fsp.readFile(legacyFile, 'utf8'), legacyBody);
 
-  const rec2 = recordingFs();
-  const restarted = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, legacyCacheFile: legacyFile, fs: rec2.fs });
-  assert.deepEqual((await restarted.scan()).records.toRecords(), warm.records.toRecords());
-  assert.deepEqual(rec2.log.readFile, [fx.cacheFile, `${fx.cacheFile}.journal`], 'the current cache wins; the old one is not read');
-});
+    const rec2 = recordingFs();
+    const restarted = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, legacyCacheFile: legacyFile, fs: rec2.fs });
+    assert.deepEqual((await restarted.scan()).records.toRecords(), warm.records.toRecords());
+    assert.deepEqual(rec2.log.opened, [], 'the current cache covers every file');
+    assert.deepEqual(rec2.log.readFile, [fx.cacheFile, `${fx.cacheFile}.journal`], 'the current cache wins; the old one is not read');
+  });
+}
 
 test('a .zst that decompresses past the cap is not decompressed again after a restart', { skip: !zstdAvailable() && 'Node has no zstd' }, async (t) => {
   const fx = await fixture(t);

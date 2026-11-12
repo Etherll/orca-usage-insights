@@ -824,8 +824,8 @@ test('activate scans the real roots and deactivate flushes the cache under the c
     await deactivate();
   }
 
-  const cache = JSON.parse(await fsp.readFile(path.join(cacheDir(), 'scan-cache-v5.json'), 'utf8'));
-  assert.equal(cache.version, 5);
+  const cache = JSON.parse(await fsp.readFile(path.join(cacheDir(), 'scan-cache-v6.json'), 'utf8'));
+  assert.equal(cache.version, 6);
   assert.equal(Object.keys(cache.files).length, 1);
 });
 

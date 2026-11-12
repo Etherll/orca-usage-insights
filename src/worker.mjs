@@ -20,8 +20,8 @@ import { createScanner } from './node/scan.mjs';
 import { createSshSource } from './node/ssh-source.mjs';
 
 const SCOPES = new Set(['all', 'worktrees']);
-const CACHE_FILE = 'scan-cache-v5.json';
-const LEGACY_CACHE_FILE = 'scan-cache-v4.json';
+const CACHE_FILE = 'scan-cache-v6.json';
+const LEGACY_CACHE_FILES = ['scan-cache-v5.json', 'scan-cache-v4.json'];
 const POLL_MS = 60_000;
 // The panel waits this long at most for SSH hosts. A host still running then is reported as loading.
 const SSH_WAIT_MS = 1_500;
@@ -43,7 +43,7 @@ export default function activate(orca) {
   const home = homeDir();
   const dir = cacheDir({ home });
   orca.log(`Usage Insights: Node ${process.version}, zstd ${zstdAvailable() ? 'available' : 'unavailable'}, cache ${dir}`);
-  return replaceWorker(orca, () => createScanner({ home, cacheFile: join(dir, CACHE_FILE), legacyCacheFile: join(dir, LEGACY_CACHE_FILE) }), {
+  return replaceWorker(orca, () => createScanner({ home, cacheFile: join(dir, CACHE_FILE), legacyCacheFile: LEGACY_CACHE_FILES.map((file) => join(dir, file)) }), {
     home,
     sshCacheDir: dir,
     priceDir: dir,

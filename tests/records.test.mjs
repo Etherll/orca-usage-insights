@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { mergeTables } from '../src/core/record-store.mjs';
+import { tableFromRecords } from '../src/core/table.mjs';
 import {
   createClaudeParser,
   createCodexParser,
@@ -34,10 +36,11 @@ const claudeExpected = [
 ];
 
 const codexExpected = [
-  { key: 'codex:rollout-1:2026-10-01T09:01:00.000Z:1280', provider: 'codex', ts: '2026-10-01T09:01:00.000Z', model: 'gpt-5-codex', project: 'gamma', sessionId: 'rollout-1', input: 200, output: 80, cacheRead: 1000, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
-  { provider: 'codex', ts: '2026-10-01T09:06:00.000Z', model: 'gpt-5.1-codex-mini', project: 'gamma', sessionId: 'rollout-1', input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
+  { key: '["codex","s","cx-1","gpt-5-codex","2026-10-01T09:01:00.000Z","1200,1000,80,20,1280","1200,1000,80,20,1280"]', provider: 'codex', ts: '2026-10-01T09:01:00.000Z', model: 'gpt-5-codex', project: 'gamma', sessionId: 'rollout-1', input: 200, output: 80, cacheRead: 1000, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
+  // No running total: the key counts equal events in the same millisecond.
+  { key: '["codex","s","cx-1","gpt-5.1-codex-mini","2026-10-01T09:06:00.000Z","","50,0,10,0,0",0]', provider: 'codex', ts: '2026-10-01T09:06:00.000Z', model: 'gpt-5.1-codex-mini', project: 'gamma', sessionId: 'rollout-1', input: 50, output: 10, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
   // Cached tokens above input clamp the uncached input to zero.
-  { provider: 'codex', ts: '2026-10-01T09:07:00.000Z', model: 'gpt-5.1-codex-mini', project: 'gamma', sessionId: 'rollout-1', input: 0, output: 1, cacheRead: 9, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
+  { key: '["codex","s","cx-1","gpt-5.1-codex-mini","2026-10-01T09:07:00.000Z","","5,9,1,0,0",0]', provider: 'codex', ts: '2026-10-01T09:07:00.000Z', model: 'gpt-5.1-codex-mini', project: 'gamma', sessionId: 'rollout-1', input: 0, output: 1, cacheRead: 9, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/gamma', host: 'local' },
 ];
 
 test('claude fixture yields deduped records and skips synthetic, malformed and untimed lines', () => {
@@ -171,9 +174,9 @@ test('records outside the plausible year range are dropped', () => {
   assert.deepEqual(parseCodexTranscript(codex, codexCtx), []);
 });
 
-test('codex records carry a key only when the token event has a running total', () => {
+test('codex records always carry a key, from the session_meta id when there is no turn id', () => {
   const records = parseCodexTranscript(codexText, codexCtx);
-  assert.deepEqual(records.filter((r) => 'key' in r).map((r) => r.key), ['codex:rollout-1:2026-10-01T09:01:00.000Z:1280']);
+  assert.ok(records.every((r) => JSON.parse(r.key)[0] === 'codex' && JSON.parse(r.key)[2] === 'cx-1'));
 });
 
 test('codex cache writes come from cache_write_input_tokens', () => {
@@ -229,4 +232,139 @@ test('a parser restored from a previous version state keeps its records and stil
   assert.deepEqual(restored.records().map((r) => [r.key, r.output]), [['a:r', 5], ['b:r', 2], ['c:r', 3]]);
   const again = createClaudeParser({}, JSON.parse(JSON.stringify(restored.state())));
   assert.deepEqual(again.records(), restored.records());
+});
+
+const merged = (lists) => mergeTables(lists.map((list) => tableFromRecords(list))).toRecords();
+
+test('Codex identity follows session metadata across renamed and resumed files', () => {
+  const meta = JSON.stringify({ type: 'session_meta', payload: { id: 'real-session', cwd: '/w/p' } });
+  const event = tokenLine('2026-10-01T09:00:00.000Z', tokenUsage(10, 2), tokenUsage(10, 2));
+  const one = parseCodexTranscript(`${meta}\n${event}`, { sessionId: 'rollout-old' });
+  const two = parseCodexTranscript(`${meta}\n${event}`, { sessionId: 'renamed-copy' });
+  assert.equal(one[0].sessionId, 'rollout-old', 'records keep the file session id');
+  assert.equal(one[0].key, two[0].key);
+});
+
+test('Codex unchanged cumulative polling after midnight and a model change adds no usage', () => {
+  const parser = createCodexParser(codexCtx);
+  parser.push(`${tokenLine('2026-10-01T23:59:59.000Z', tokenUsage(10, 2), tokenUsage(10, 2))}\n`);
+  parser.push(`${JSON.stringify({ type: 'turn_context', payload: { model: 'new-model' } })}\n`);
+  parser.push(`${tokenLine('2026-10-02T00:00:00.000Z', tokenUsage(10, 2), tokenUsage(10, 2))}\n`);
+  parser.push(`${tokenLine('2026-10-02T00:00:01.000Z', tokenUsage(20, 4), tokenUsage(10, 2))}\n`);
+  assert.deepEqual(parser.records().map((r) => [r.ts, r.model]), [
+    ['2026-10-01T23:59:59.000Z', 'codex'], ['2026-10-02T00:00:01.000Z', 'new-model'],
+  ]);
+});
+
+test('Codex cumulative reset can reach an earlier total without losing a real event', () => {
+  const parser = createCodexParser(codexCtx);
+  parser.push([
+    tokenLine('2026-10-01T10:00:00.000Z', tokenUsage(100, 10), tokenUsage(100, 10)),
+    tokenLine('2026-10-01T10:01:00.000Z', tokenUsage(50, 5), tokenUsage(50, 5)),
+    tokenLine('2026-10-01T10:02:00.000Z', tokenUsage(100, 10), tokenUsage(50, 5)),
+  ].join('\n') + '\n');
+  const records = parser.records();
+  assert.equal(records.length, 3);
+  assert.equal(new Set(records.map((r) => r.key)).size, 3);
+});
+
+test('Codex equal usage events keep distinct ids, timestamps and same-millisecond occurrences', () => {
+  const last = tokenUsage(10, 2);
+  const make = (timestamp, id) => JSON.stringify({ timestamp, id, type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: last } } });
+  const parser = createCodexParser(codexCtx);
+  parser.push([make(TOKEN_TS, 'e1'), make(TOKEN_TS, 'e2'), make(TOKEN_TS), make(TOKEN_TS), make('2026-10-02T10:00:00.000Z')].join('\n') + '\n');
+  assert.equal(new Set(parser.records().map((r) => r.key)).size, 5);
+  const restored = createCodexParser(codexCtx, JSON.parse(JSON.stringify(parser.state())));
+  restored.push(make(TOKEN_TS) + '\n');
+  assert.equal(new Set(restored.records().map((r) => r.key)).size, 6);
+});
+const TOKEN_TS = '2026-10-01T10:00:00.000Z';
+
+test('a shared Codex event id cannot erase distinct usage events and exact copies still dedupe', () => {
+  const event = (total, usage) => {
+    const obj = JSON.parse(tokenLine(TOKEN_TS, total, usage));
+    obj.id = 'shared-turn-id';
+    return JSON.stringify(obj);
+  };
+  const text = [event(tokenUsage(10, 2), tokenUsage(10, 2)), event(tokenUsage(30, 6), tokenUsage(20, 4))].join('\n');
+  const records = parseCodexTranscript(text, codexCtx);
+  const copied = parseCodexTranscript(text, codexCtx);
+  assert.equal(records.length, 2);
+  assert.equal(new Set(records.map((r) => r.key)).size, 2);
+  assert.equal(merged([records, copied]).length, 2);
+});
+
+const stableMeta = (id, session_id = 'shared-root') => JSON.stringify({ type: 'session_meta', payload: { id, session_id } });
+const stableTurn = (turn_id, root_turn_id = 'shared-root-turn') => JSON.stringify({ type: 'turn_context', payload: { turn_id, root_turn_id, model: 'gpt-5-codex' } });
+const stableUsage = (ts = TOKEN_TS, input = 10, output = 2) => tokenLine(ts, tokenUsage(input, output), tokenUsage(input, output));
+const stableTranscript = (sessionId, turnId, event = stableUsage()) => [stableMeta(sessionId), stableTurn(turnId), event].join('\n');
+
+test('Codex copied turns dedupe across rewritten session ids while distinct turn ids remain independent', () => {
+  const original = parseCodexTranscript(stableTranscript('old-session', 'stable-turn'), codexCtx);
+  const replay = parseCodexTranscript(stableTranscript('rewritten-session', 'stable-turn'), codexCtx);
+  const independent = parseCodexTranscript(stableTranscript('third-session', 'other-turn'), codexCtx);
+  assert.equal(original[0].key, replay[0].key);
+  assert.equal(merged([original, replay]).length, 1);
+  assert.equal(merged([original, independent]).length, 2);
+  assert.equal(replay[0].sessionId, 'rollout-1', 'records keep the file session id');
+});
+
+test('Codex subagents sharing root_turn_id and legacy session_id retain their distinct turns', () => {
+  const left = parseCodexTranscript(stableTranscript('child-left', 'turn-left'), codexCtx);
+  const right = parseCodexTranscript(stableTranscript('child-right', 'turn-right'), codexCtx);
+  assert.equal(merged([left, right]).length, 2);
+});
+
+test('Codex old transcripts without turn ids dedupe within a session and preserve different sessions', () => {
+  const old = parseCodexTranscript(stableTranscript('old-session', undefined), codexCtx);
+  const same = parseCodexTranscript(stableTranscript('old-session', undefined), codexCtx);
+  const other = parseCodexTranscript(stableTranscript('new-session', undefined), codexCtx);
+  assert.equal(merged([old, same]).length, 1);
+  assert.equal(merged([old, other]).length, 2);
+});
+
+test('Codex stable turn identity survives persisted state and incremental appended usage', () => {
+  const parser = createCodexParser(codexCtx);
+  parser.push(stableTranscript('old-session', 'stable-turn') + '\n');
+  const restored = createCodexParser(codexCtx, JSON.parse(JSON.stringify(parser.state())));
+  const next = stableUsage('2026-10-01T10:01:00.000Z', 30, 6);
+  restored.push(next + '\n');
+  const replay = parseCodexTranscript(stableTranscript('rewritten-session', 'stable-turn', next), codexCtx);
+  assert.equal(restored.records().length, 2);
+  assert.equal(restored.records()[1].key, replay[0].key);
+  assert.equal(merged([restored.records(), replay]).length, 2);
+});
+
+test('a turn_context without turn_id clears a previous stable turn before fallback usage', () => {
+  const parser = createCodexParser(codexCtx);
+  parser.push([stableMeta('session-one'), stableTurn('old-turn'), stableTurn(undefined), stableUsage()].join('\n') + '\n');
+  const fallback = parseCodexTranscript(stableTranscript('session-one', undefined), codexCtx);
+  const otherSession = parseCodexTranscript(stableTranscript('other-session', 'old-turn'), codexCtx);
+  assert.equal(parser.records()[0].key, fallback[0].key);
+  assert.notEqual(parser.records()[0].key, otherSession[0].key);
+  assert.equal(parser.state().turn, null);
+});
+
+test('switching session metadata clears an old turn id before new session usage', () => {
+  const parser = createCodexParser(codexCtx);
+  parser.push([stableMeta('session-one'), stableTurn('old-turn'), stableMeta('session-two'), stableUsage()].join('\n') + '\n');
+  const fallback = parseCodexTranscript(stableTranscript('session-two', undefined), codexCtx);
+  assert.equal(parser.records()[0].key, fallback[0].key);
+  assert.equal(parser.state().turn, null);
+});
+
+test('changing stable turn ids does not turn an unchanged cumulative poll into new usage', () => {
+  const parser = createCodexParser(codexCtx);
+  parser.push([stableMeta('one-session'), stableTurn('first-turn'), stableUsage(), stableTurn('second-turn'), stableUsage('2026-10-01T10:01:00.000Z')].join('\n') + '\n');
+  assert.equal(parser.records().length, 1);
+});
+
+test('stable turn dedupe retains explicit event ids and same-millisecond occurrence numbers', () => {
+  const event = (id) => JSON.stringify({ timestamp: TOKEN_TS, ...(id ? { id } : {}), type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: tokenUsage(10, 2) } } });
+  const events = [event('event-one'), event('event-two'), event(), event()].join('\n');
+  const original = parseCodexTranscript(stableTranscript('old-session', 'stable-turn', events), codexCtx);
+  const replay = parseCodexTranscript(stableTranscript('new-session', 'stable-turn', events), codexCtx);
+  assert.equal(original.length, 4);
+  assert.equal(new Set(original.map((r) => r.key)).size, 4);
+  assert.equal(merged([original, replay]).length, 4);
 });

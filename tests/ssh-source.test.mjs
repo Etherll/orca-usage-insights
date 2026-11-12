@@ -6,6 +6,9 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createSshSource, explain, sshArgs } from '../src/node/ssh-source.mjs';
 import { parseListing, createReadParser } from '../src/node/ssh-script.mjs';
+import { parseCodexTranscript } from '../src/core/records.mjs';
+import { mergeTables } from '../src/core/record-store.mjs';
+import { tableFromRecords } from '../src/core/table.mjs';
 
 const isWin = process.platform === 'win32';
 const TS = new Date().toISOString();
@@ -67,7 +70,7 @@ test('remote script lists and reads Claude and Codex transcripts', { skip: isWin
   await fsp.writeFile(
     path.join(fx.codex, 'rollout.jsonl'),
     [
-      JSON.stringify({ type: 'session_meta', timestamp: TS, payload: { cwd: '/srv/api' } }),
+      JSON.stringify({ type: 'session_meta', timestamp: TS, payload: { id: 'real-codex-session', cwd: '/srv/api' } }),
       JSON.stringify({ type: 'turn_context', timestamp: TS, payload: { model: 'gpt-6-sol' } }),
       JSON.stringify({ type: 'event_msg', timestamp: TS, payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 3 }, total_token_usage: { input_tokens: 10, total_tokens: 13 } } } }),
     ].join('\n') + '\n',
@@ -83,6 +86,7 @@ test('remote script lists and reads Claude and Codex transcripts', { skip: isWin
   assert.equal(codex.length, 1);
   assert.ok(records.every((r) => r.host === 'ssh:box'));
   assert.deepEqual([codex[0].input, codex[0].cacheRead, codex[0].output, codex[0].model], [6, 4, 3, 'gpt-6-sol']);
+  assert.equal(JSON.parse(codex[0].key)[2], 'real-codex-session', 'the remote reader keeps the session_meta id');
   const big = claude.find((r) => r.key?.startsWith('m2'));
   assert.equal(big.output, 5, 'a slimmed line keeps its real usage, not the fake one in content');
 });
@@ -105,6 +109,25 @@ test('appended lines are read from the stored offset; unchanged files are not re
   calls.length = 0;
   await source.scan({ force: true });
   assert.equal(calls.length, 1, 'nothing changed: listing only');
+});
+
+test('remote Codex copies keep the same event identity as local transcripts', { skip: isWin }, async (t) => {
+  const fx = await fixture(t);
+  const transcript = [
+    JSON.stringify({ type: 'session_meta', timestamp: TS, payload: { id: 'shared-session', cwd: '/srv/api' } }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6-sol', turn_id: 'shared-turn' } }),
+    JSON.stringify({ type: 'event_msg', id: 'event-1', timestamp: TS, payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 10, output_tokens: 3 } } } }),
+  ].join('\n') + '\n';
+  await fsp.writeFile(path.join(fx.codex, 'first.jsonl'), transcript);
+  await fsp.writeFile(path.join(fx.codex, 'copied.jsonl'), transcript.replace('shared-session', 'resumed-session'));
+  const { source } = localSource(fx.home);
+  t.after(() => source.close());
+  const remote = await source.scan();
+  assert.equal(remote.records.length, 1, 'the copy under a new session id counts once');
+  const local = tableFromRecords(parseCodexTranscript(transcript, { sessionId: 'different-file-name' }));
+  const merged = mergeTables([local, remote.records]).toRecords();
+  assert.equal(merged.length, 1, 'copying a transcript onto another source must not add usage');
+  assert.equal(merged[0].input + merged[0].output, 13);
 });
 
 test('a half-written last line is held back and picked up once complete', { skip: isWin }, async (t) => {
@@ -162,6 +185,38 @@ test('ssh failures become a readable error status and keep earlier records', asy
   assert.match(m.status.message, /ssh was not found/);
   assert.equal(fail, false);
 });
+
+for (const version of [3, 4]) {
+  test(`a version ${version} SSH cache keeps Claude history offline and rereads Codex on reconnect`, { skip: isWin }, async (t) => {
+    const fx = await fixture(t);
+    await fsp.writeFile(path.join(fx.proj, 's1.jsonl'), claudeLine('cached-claude') + '\n');
+    await fsp.writeFile(path.join(fx.codex, 'session.jsonl'), [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'cached-codex-session' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6-sol', turn_id: 'cached-turn' } }),
+      JSON.stringify({ type: 'event_msg', timestamp: TS, payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 10, output_tokens: 3 } } } }),
+    ].join('\n') + '\n');
+    const cacheFile = path.join(fx.home, 'ssh-cache.json');
+    const before = localSource(fx.home, { cacheFile }).source;
+    assert.equal((await before.scan()).records.length, 2);
+    await before.close();
+    const legacy = JSON.parse(await fsp.readFile(cacheFile, 'utf8'));
+    await fsp.writeFile(cacheFile, JSON.stringify({ ...legacy, version }));
+    const offline = localSource(fx.home, {
+      cacheFile,
+      command: () => [process.execPath, ['-e', 'process.stderr.write("Permission denied (publickey)."); process.exit(255)']],
+    }).source;
+    const failed = await offline.scan();
+    assert.equal(failed.status.state, 'error');
+    assert.deepEqual(failed.records.toRecords().map((r) => r.provider), ['claude']);
+    await offline.close();
+    const online = localSource(fx.home, { cacheFile });
+    const restored = (await online.source.scan()).records.toRecords();
+    assert.deepEqual(restored.map((r) => r.provider).sort(), ['claude', 'codex']);
+    assert.equal(JSON.parse(restored.find((r) => r.provider === 'codex').key)[2], 'cached-turn');
+    await online.source.close();
+    assert.equal(JSON.parse(await fsp.readFile(cacheFile, 'utf8')).version, 5);
+  });
+}
 
 test('explain maps common ssh errors', () => {
   assert.match(explain(new Error('ssh: Could not resolve hostname x: Name or service not known')), /Unknown host/);

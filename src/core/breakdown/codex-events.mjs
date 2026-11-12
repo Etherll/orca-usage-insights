@@ -1,41 +1,28 @@
 // Codex rollout lines to breakdown events: sizes, offsets and targets, never transcript text. Pure: no Node built-ins.
-import { codexUsage } from '../records.mjs';
+import { codexUsage, createCodexIdentity } from '../records.mjs';
 import { EXPLAIN_MARKER } from './claude-events.mjs';
 import { agentTarget, commandTarget, injectedTarget, messagesTarget, pathTarget, toolTarget } from './targets.mjs';
 
 const CALLS_MAX = 2000;
 const MIN_YEAR = 2020;
-const TOTAL_KEYS = ['input_tokens', 'cached_input_tokens', 'output_tokens', 'reasoning_output_tokens', 'total_tokens'];
 const PATCH_FILE = /^\*\*\* (?:Update|Add) File: (.+?)\s*$/m;
 const SHELLS = new Set(['bash', 'sh', 'zsh']);
 const encoder = new TextEncoder();
 
 export function createCodexEvents(ctx = {}, state = null) {
   const home = ctx?.home ?? '';
-  const sessionId = ctx?.sessionId ?? '';
   let cwd = state?.cwd ?? '';
   let model = state?.model ?? 'codex';
-  let lastTotal = totalOf(state?.lastTotal);
+  const identity = createCodexIdentity(ctx, state);
   const calls = new Map(state?.calls ?? []);
   // Codex puts AGENTS.md and tagged context in user messages before the first prompt; those don't count.
   let prompted = state?.prompted === true;
 
-  function tokenCount(obj, payload, where, out) {
-    const info = isObject(payload.info) ? payload.info : {};
-    const total = totalOf(info.total_token_usage);
-    if (total) {
-      if (lastTotal && sameTotal(lastTotal, total)) return;
-      lastTotal = total;
-    }
-    const usage = info.last_token_usage;
-    if (!isObject(usage) || !isTimestamp(obj.timestamp)) return;
-    out.push({
-      t: 'request',
-      key: total ? `codex:${sessionId}:${obj.timestamp}:${total.total_tokens}` : `anonymous:${sessionId}:${where.offset}`,
-      ts: obj.timestamp,
-      model,
-      usage: codexUsage(usage),
-    });
+  // The same events and keys as the records parser (createCodexIdentity).
+  function tokenCount(obj, payload, out) {
+    const event = identity.tokenCount(obj, payload, model, isTimestamp);
+    if (!event) return;
+    out.push({ t: 'request', key: event.key, ts: obj.timestamp, model, usage: codexUsage(event.usage) });
   }
 
   function responseItem(payload, where, out) {
@@ -127,6 +114,7 @@ export function createCodexEvents(ctx = {}, state = null) {
       };
       const out = [];
       if (obj.type === 'session_meta') {
+        identity.sessionMeta(payload);
         // Every change is passed on: Usage files later turns under the latest session_meta cwd.
         if (nonBlank(payload.cwd) && payload.cwd !== cwd) {
           cwd = payload.cwd;
@@ -134,17 +122,18 @@ export function createCodexEvents(ctx = {}, state = null) {
         }
       } else if (obj.type === 'turn_context') {
         model = nonBlank(payload.model) ?? model;
+        identity.turnContext(payload);
       } else if (obj.type === 'compacted') {
         out.push({ t: 'reset' });
       } else if (obj.type === 'event_msg' && payload.type === 'token_count') {
-        tokenCount(obj, payload, where, out);
+        tokenCount(obj, payload, out);
       } else if (obj.type === 'response_item') {
         responseItem(payload, where, out);
       }
       return out;
     },
     state() {
-      return { cwd, model, lastTotal, calls: [...calls], prompted };
+      return { cwd, model, ...identity.state(), calls: [...calls], prompted };
     },
   };
 }
@@ -217,14 +206,7 @@ function lengthOf(value) {
   return typeof value === 'string' ? value.length : 0;
 }
 
-function totalOf(value) {
-  if (!isObject(value) || !TOTAL_KEYS.some((key) => typeof value[key] === 'number')) return null;
-  return Object.fromEntries(TOTAL_KEYS.map((key) => [key, count(value[key])]));
-}
 
-function sameTotal(a, b) {
-  return TOTAL_KEYS.every((key) => a[key] === b[key]);
-}
 
 function count(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;

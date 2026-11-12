@@ -82,38 +82,29 @@ export function createCodexParser(ctx, state, { names } = {}) {
   let model = state?.model ?? 'codex';
   let currentProject = state?.project ?? project;
   let currentCwd = state?.cwd ?? '';
-  let lastTotal = totalOf(state?.lastTotal);
+  const identity = createCodexIdentity(ctx, state);
   const table = restoreTable(state, names);
   const parse = timestampParser();
   const inRange = yearCheck();
+  let ms = NaN;
+  const timed = (ts) => {
+    ms = typeof ts === 'string' ? parse(ts) : NaN;
+    return inRange(ms);
+  };
   const add = (obj) => {
     const payload = isObject(obj.payload) ? obj.payload : {};
     if (obj.type === 'turn_context') {
       model = nonEmptyString(payload.model) ?? model;
+      identity.turnContext(payload);
     } else if (obj.type === 'session_meta') {
+      identity.sessionMeta(payload);
       currentProject = lastSegment(payload.cwd) || project;
       currentCwd = rawCwd(payload.cwd);
     } else if (obj.type === 'event_msg' && payload.type === 'token_count') {
-      // Codex repeats a token_count whose running total has not moved. A repeat adds no usage.
-      const total = totalOf(payload.info?.total_token_usage);
-      if (total) {
-        if (lastTotal && sameTotal(lastTotal, total)) return;
-        lastTotal = total;
-      }
-      const usage = payload.info?.last_token_usage;
-      if (!isObject(usage)) return;
-      const ms = typeof obj.timestamp === 'string' ? parse(obj.timestamp) : NaN;
-      if (!inRange(ms)) return;
-      const cacheRead = count(usage.cached_input_tokens);
-      table.push(
-        total ? `codex:${sessionId}:${obj.timestamp}:${total.total_tokens}` : undefined,
-        ms, 'codex', model, currentProject, sessionId, currentCwd, host,
-        Math.max(0, count(usage.input_tokens) - cacheRead),
-        count(usage.output_tokens),
-        cacheRead,
-        count(usage.cache_write_input_tokens),
-        0,
-      );
+      const event = identity.tokenCount(obj, payload, model, timed);
+      if (!event) return;
+      const { input, output, cacheRead, cacheWrite } = codexUsage(event.usage);
+      table.push(event.key, ms, 'codex', model, currentProject, sessionId, currentCwd, host, input, output, cacheRead, cacheWrite, 0);
     }
   };
   return {
@@ -127,7 +118,57 @@ export function createCodexParser(ctx, state, { names } = {}) {
     pushObject: add,
     table: () => table,
     records: () => table.toRecords(),
-    state: ({ binary = false } = {}) => ({ model, project: currentProject, cwd: currentCwd, lastTotal, table: encodeTable(table, { binary }) }),
+    state: ({ binary = false } = {}) => ({ model, project: currentProject, cwd: currentCwd, ...identity.state(), table: encodeTable(table, { binary }) }),
+  };
+}
+
+// Which Codex token_count lines are usage, and their keys. The records parser and the Breakdown adapter
+// share it, so both count the same events. A key identifies an event across copies of a transcript:
+// Orca account homes, migrations and resumed sessions replay the same turns under a new file name or
+// session id, but a turn keeps its turn_id (root_turn_id is shared by independent subagents, so it is
+// not used). Logs without turn ids fall back to the session_meta id.
+export function createCodexIdentity(ctx, state) {
+  let session = nonEmptyString(state?.session) ?? ctx?.sessionId ?? '';
+  let turn = nonEmptyString(state?.turn);
+  let lastTotal = totalOf(state?.lastTotal);
+  let lastScope = typeof state?.lastScope === 'string' ? state.lastScope : '';
+  let lastEventId = nonEmptyString(state?.lastEventId);
+  const occurrences = new Map(Array.isArray(state?.occurrences) ? state.occurrences : []);
+  return {
+    turnContext(payload) {
+      turn = nonEmptyString(payload.turn_id);
+    },
+    sessionMeta(payload) {
+      const next = nonEmptyString(payload.id) ?? session;
+      if (next !== session) turn = null;
+      session = next;
+    },
+    // { key, usage } for a usage event; null for a repeat, no usage or a timestamp `timed` rejects.
+    tokenCount(obj, payload, model, timed) {
+      const info = isObject(payload.info) ? payload.info : {};
+      const total = totalOf(info.total_token_usage);
+      const eventId = nonEmptyString(obj.id) ?? nonEmptyString(payload.id);
+      // Codex repeats a token_count whose running total has not moved, also after midnight or a model
+      // switch. A repeat adds no usage, unless a new explicit event id says it is a separate event.
+      if (total) {
+        if (lastTotal && lastScope === session && sameTotal(lastTotal, total) && (!eventId || eventId === lastEventId)) return null;
+        lastTotal = total;
+        lastScope = session;
+        lastEventId = eventId;
+      }
+      const usage = info.last_token_usage;
+      if (!isObject(usage) || !timed(obj.timestamp)) return null;
+      const id = [turn ? 't' : 's', turn ?? session, model, obj.timestamp, totalKey(total), totalKey(totalOf(usage))];
+      if (eventId) return { key: JSON.stringify(['codex', ...id, eventId]), usage };
+      if (total) return { key: JSON.stringify(['codex', ...id]), usage };
+      // No running total and no event id: equal events in one millisecond may both be real. Their
+      // occurrence number is the same in an exact copy of the file, so copies still dedupe.
+      const at = JSON.stringify(id);
+      const occurrence = occurrences.get(at) ?? 0;
+      occurrences.set(at, occurrence + 1);
+      return { key: JSON.stringify(['codex', ...id, occurrence]), usage };
+    },
+    state: () => ({ lastTotal, session, turn, lastScope, lastEventId, occurrences: [...occurrences] }),
   };
 }
 
@@ -236,6 +277,10 @@ function parseClaudeLine(line) {
 function totalOf(value) {
   if (!isObject(value) || !TOTAL_KEYS.some((key) => typeof value[key] === 'number')) return null;
   return Object.fromEntries(TOTAL_KEYS.map((key) => [key, count(value[key])]));
+}
+
+function totalKey(total) {
+  return total ? TOTAL_KEYS.map((key) => total[key]).join(',') : '';
 }
 
 function sameTotal(a, b) {

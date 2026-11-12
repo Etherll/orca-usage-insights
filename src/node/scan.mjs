@@ -14,9 +14,10 @@ import { listTranscripts, readTranscript } from './transcript-files.mjs';
 
 export { markedLines };
 
-const CACHE_VERSION = 5;
-// The pre-columns cache, read when there is no current one; parsers convert its states, so no file is reread.
-const LEGACY_CACHE_VERSION = 4;
+const CACHE_VERSION = 6;
+// Earlier caches, read when there is no current one. Their Claude entries carry over unread (parsers convert
+// pre-columns states); Codex files are read again, as their keys predate turn-based identity.
+const LEGACY_CACHE_VERSIONS = new Set([4, 5]);
 const REUSE_MS = 5_000;
 const SAVE_EVERY_MS = 30_000;
 // Files read whole for the first time go to parse threads when they are at most this big.
@@ -35,7 +36,7 @@ export function createScanner({
   home = os.homedir(),
   fs = fsp,
   cacheFile,
-  legacyCacheFile = null,
+  legacyCacheFile = null, // a path or a list of paths, newest first
   concurrency = 8,
   // Threads that parse files read whole for the first time (first open, rewritten files).
   // 0 parses on the calling thread. Tail reads always parse inline: they are small.
@@ -297,14 +298,18 @@ export function createScanner({
     journalTorn = text !== '' && !text.endsWith('\n');
   }
 
-  // The next save writes the current cache file in full; the old one stays for a downgrade.
+  // The first legacy file that loads is used. The next save writes the current cache file in full; the
+  // old one stays for a downgrade.
   async function loadLegacy(map) {
-    const raw = await readJson(legacyCacheFile);
-    if (raw?.version !== LEGACY_CACHE_VERSION || !isObject(raw.files)) return;
-    for (const [path, entry] of Object.entries(raw.files)) {
-      if (isCacheEntry(entry)) map.set(path, fromCache(entry));
+    for (const file of [legacyCacheFile].flat()) {
+      const raw = await readJson(file);
+      if (!LEGACY_CACHE_VERSIONS.has(raw?.version) || !isObject(raw.files)) continue;
+      for (const [path, entry] of Object.entries(raw.files)) {
+        if (isCacheEntry(entry) && entry.kind !== 'codex') map.set(path, fromCache(entry));
+      }
+      if (map.size > 0) dirty = true;
+      return;
     }
-    if (map.size > 0) dirty = true;
   }
 
   async function readJson(file) {
