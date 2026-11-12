@@ -128,3 +128,25 @@ test('the frame check accepts whole frames and flags input cut anywhere inside o
     assert.equal(done, ends.has(cut), `cut at ${cut}`);
   }
 });
+
+test('the stream fallback decodes every frame even when a decoder stops after its first', { skip: typeof zlib.zstdCompressSync !== 'function' && 'Node has no zstd' }, async () => {
+  const { createFrameCheck } = await import('../src/node/zstd.mjs');
+  const first = zlib.zstdCompressSync(Buffer.from('{"a":1}\n{"a":2}\n'));
+  const second = zlib.zstdCompressSync(Buffer.from('{"b":3}\n'));
+  const input = Buffer.concat([first, Buffer.from([0x50, 0x2a, 0x4d, 0x18, 1, 0, 0, 0, 7]), second]);
+  // Like some Node 24 builds: a decoder ends with its first frame and ignores the rest.
+  const stopsEarly = () => {
+    const stream = zlib.createZstdDecompress();
+    const end = stream.end.bind(stream);
+    stream.end = (buf) => {
+      const check = createFrameCheck();
+      check.push(buf);
+      const [frame] = check.frames();
+      return end(frame ? buf.subarray(frame[0], frame[1]) : buf);
+    };
+    return stream;
+  };
+  let text = '';
+  await forEachLines(input, (lines) => (text += lines.toString()), undefined, stopsEarly);
+  assert.equal(text, '{"a":1}\n{"a":2}\n{"b":3}\n');
+});

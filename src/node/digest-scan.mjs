@@ -119,7 +119,8 @@ export function createDigestScanner({
       entry = await loadShard(file);
       if (entry) files.set(file.path, entry);
     }
-    const prior = entry && entry.key !== null ? { key: entry.key, offset: entry.offset, consumer: null } : null;
+    // A digest made by the other provider's adapter (a folder reassigned) is never reused.
+    const prior = entry && entry.key !== null && entry.kind === file.kind ? { key: entry.key, offset: entry.offset, consumer: null } : null;
     if (prior && st?.isFile() && `${st.mtimeMs}:${st.size}` === prior.key) return 'ok';
     if (prior && !file.compressed) {
       const state = entry.state ?? (await loadState(file.path, entry.key));

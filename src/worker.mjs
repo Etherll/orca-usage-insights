@@ -519,7 +519,10 @@ export function startWorker(orca, scanner, {
   // Every local and SSH file goes to one store, which merges only what changed and returns the same table
   // when nothing did, so repeat requests keep their Report.
   function mergedRecords(local, hosts) {
-    if (!hosts.some(([, entry]) => entry.records.length > 0)) return asTable(local.records);
+    if (!hosts.some(([, entry]) => entry.records.length > 0)) {
+      store = null; // no SSH usage any more: drop the merged copy and the remote tables it holds
+      return asTable(local.records);
+    }
     if (!store || (local.names && store.names !== local.names)) store = createRecordStore(local.names ? { names: local.names } : {});
     const list = [...local.files];
     for (const [host, entry] of hosts) for (const { id, table } of entry.files) list.push({ id: `${host}\u0000${id}`, table });

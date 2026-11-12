@@ -256,3 +256,17 @@ test('a file last changed before the range is still digested when Usage has turn
   assert.deepEqual(kept.files.map((f) => f.state), ['ok']);
   assert.equal(kept.digests.length, 1);
 });
+
+test('a folder reassigned to the other provider is digested again by that provider', { skip: zstdSkip }, async (t) => {
+  const dir = await home();
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const folder = path.join(dir, 'extra');
+  await fsp.mkdir(folder, { recursive: true });
+  await fsp.writeFile(path.join(folder, 'rollout-2026-11-03T10-00-00-x.jsonl'), await fixture('breakdown-codex.jsonl'));
+  const scanner = createDigestScanner({ home: dir, env: { HOME: dir }, platform: 'linux', threads: 0 });
+  const asClaude = await scanner.scan({ extra: { claude: [folder], codex: [] } });
+  assert.deepEqual(asClaude.digests.map((d) => d.digest.harness), ['claude']);
+  const asCodex = await scanner.scan({ extra: { claude: [], codex: [folder] } });
+  assert.deepEqual(asCodex.digests.map((d) => d.digest.harness), ['codex']);
+  assert.ok(asCodex.digests[0].digest.requests > 0);
+});

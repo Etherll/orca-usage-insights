@@ -22,11 +22,13 @@ export function createFrameCheck() {
   let state = 'magic';
   let checksum = false;
   let frames = 0;
+  let pos = 0; // input bytes seen
+  const starts = []; // [offset, skippable] per frame, in order: frame k ends where frame k+1 starts
   function header(h) {
     if (state === 'magic') {
       const magic = (h[0] | (h[1] << 8) | (h[2] << 16) | (h[3] << 24)) >>> 0;
-      if (magic === ZSTD_MAGIC) return ((state = 'descriptor'), 1);
-      if ((magic & 0xfffffff0) >>> 0 === 0x184d2a50) return ((state = 'skippable'), 4);
+      if (magic === ZSTD_MAGIC) return (starts.push([pos - 4, false]), (state = 'descriptor'), 1);
+      if ((magic & 0xfffffff0) >>> 0 === 0x184d2a50) return (starts.push([pos - 4, true]), (state = 'skippable'), 4);
       throw new Error('zstd input has no frame magic');
     }
     if (state === 'skippable') {
@@ -68,9 +70,11 @@ export function createFrameCheck() {
           const n = Math.min(skip, to - i);
           skip -= n;
           i += n;
+          pos += n;
           continue;
         }
         head.push(buf[i++]);
+        pos++;
         if (head.length === need) {
           const h = head;
           head = [];
@@ -80,31 +84,39 @@ export function createFrameCheck() {
     },
     // True when the input ended right after a complete frame.
     complete: () => frames > 0 && state === 'magic' && head.length === 0 && skip === 0,
+    // [start, end) of each zstd frame seen so far, skippable frames left out.
+    frames: () => starts.flatMap(([start, skippable], k) => (skippable ? [] : [[start, k + 1 < starts.length ? starts[k + 1][0] : pos]])),
   };
 }
 const LF_BYTES = Buffer.from('\n');
 
-export async function forEachLines(buf, onLines, maxBytes = 768 << 20) {
+// decoder makes the per-frame decompress stream (tests pass one that stops early, as some builds do).
+export async function forEachLines(buf, onLines, maxBytes = 768 << 20, decoder = () => zlib.createZstdDecompress({ chunkSize: 64 << 10 })) {
   const check = createFrameCheck();
   check.push(buf);
-  const stream = zlib.createZstdDecompress({ chunkSize: 64 << 10 });
-  stream.end(buf);
+  // Each frame gets its own decoder: some Node 24 builds end a stream after its first frame. Input cut
+  // short is decoded whole, so its complete lines still arrive before the error.
+  const slices = check.complete() ? check.frames().map(([start, end]) => buf.subarray(start, end)) : [buf];
   let parts = [];
   let total = 0;
-  for await (const chunk of stream) {
-    total += chunk.length;
-    if (total > maxBytes) {
-      stream.destroy();
-      throw new Error(TOO_LARGE);
+  for (const slice of slices) {
+    const stream = decoder();
+    stream.end(slice);
+    for await (const chunk of stream) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        stream.destroy();
+        throw new Error(TOO_LARGE);
+      }
+      const cut = chunk.lastIndexOf(LF);
+      if (cut < 0) {
+        parts.push(chunk);
+        continue;
+      }
+      const head = chunk.subarray(0, cut + 1);
+      onLines(parts.length ? Buffer.concat([...parts, head]) : head);
+      parts = cut + 1 < chunk.length ? [chunk.subarray(cut + 1)] : [];
     }
-    const cut = chunk.lastIndexOf(LF);
-    if (cut < 0) {
-      parts.push(chunk);
-      continue;
-    }
-    const head = chunk.subarray(0, cut + 1);
-    onLines(parts.length ? Buffer.concat([...parts, head]) : head);
-    parts = cut + 1 < chunk.length ? [chunk.subarray(cut + 1)] : [];
   }
   if (parts.length) onLines(Buffer.concat([...parts, LF_BYTES]));
   if (!check.complete()) throw new Error(TRUNCATED);
