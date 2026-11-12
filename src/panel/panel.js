@@ -6,7 +6,7 @@ import { normalizeQuery, localDay, dayKey, MIN_USAGE_DATE } from '../core/query.
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { view: 'usage', range: '1d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+const state = { view: 'usage', range: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
 const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
 
 function money(n) {
@@ -155,7 +155,7 @@ function clearFilter(key) {
     $('model-search').value = ''
   }
   if (key === 'range' || (key === 'all' && state.range === 'custom')) {
-    state.range = '1d'
+    state.range = '7d'
     $('custom-range').hidden = true
     $('date-error').hidden = true
   }

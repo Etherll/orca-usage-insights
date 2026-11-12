@@ -440,7 +440,7 @@ input:focus-visible, select:focus-visible, .table-wrap:focus-visible { outline: 
       <button role="radio" data-view="usage" aria-checked="true">Usage</button><button role="radio" data-view="breakdown" aria-checked="false" tabindex="-1">Breakdown</button>
     </div>
     <div class="seg" role="radiogroup" aria-label="Range" id="ranges">
-      <button role="radio" data-range="1d" aria-checked="true">Today</button><button role="radio" data-range="7d" aria-checked="false" tabindex="-1">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button><button role="radio" data-range="custom" aria-checked="false" tabindex="-1" aria-controls="custom-range">Custom</button>
+      <button role="radio" data-range="1d" aria-checked="false" tabindex="-1">Today</button><button role="radio" data-range="7d" aria-checked="true">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button><button role="radio" data-range="custom" aria-checked="false" tabindex="-1" aria-controls="custom-range">Custom</button>
     </div>
     <div class="seg" role="radiogroup" aria-label="Measure" id="metric">
       <button role="radio" data-metric="tokens" aria-checked="true">Tokens</button><button role="radio" data-metric="cost" aria-checked="false" tabindex="-1">Cost</button>
@@ -1432,7 +1432,7 @@ function syncBody(result) {
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { view: 'usage', range: '1d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+const state = { view: 'usage', range: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
 const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
 
 function money(n) {
@@ -1581,7 +1581,7 @@ function clearFilter(key) {
     $('model-search').value = ''
   }
   if (key === 'range' || (key === 'all' && state.range === 'custom')) {
-    state.range = '1d'
+    state.range = '7d'
     $('custom-range').hidden = true
     $('date-error').hidden = true
   }

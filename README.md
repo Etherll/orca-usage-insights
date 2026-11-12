@@ -41,7 +41,7 @@ The panel reads your Claude Code and Codex transcripts and turns them into:
 
 It updates a few seconds after an agent finishes a turn, so the numbers keep up while you work.
 
-**Today** is the default range: the current local day from midnight, not the last 24 hours. **Custom** takes a start and end date (both included, in local time; pick the same date twice for one day). The calendar and streak keep their full history whatever the range.
+**7d** is the default range. **Today** is the current local day from midnight, not the last 24 hours. **Custom** takes a start and end date (both included, in local time; pick the same date twice for one day). The calendar and streak keep their full history whatever the range.
 
 One **Filters** menu narrows it down: only sessions that ran in an Orca worktree, one provider, one or more models, one machine, or no cache tokens. Turning cache tokens off takes them out of every total, share and chart; the cache read and write counts and the cost stay as recorded. A model selection is a fixed list, so a model that shows up later is only included under **All models**.
 

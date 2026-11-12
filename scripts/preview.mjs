@@ -57,7 +57,7 @@ const shim = `<script>window.__USAGE_PREVIEW__ = (() => { const R = ${JSON.strin
   if (name === 'usage.explain') return E[input.findingId] || { prompt: 'Not captured in this preview.', estTokens: 0 }
   if (name === 'usage.breakdown') return V[JSON.stringify([input.range, input.path || []])] || V[JSON.stringify([input.range, []])]
   if (name.startsWith('prices.')) throw new Error('Not available in the preview')
-  return R[JSON.stringify({ range: input.range, ...(input.scope ? { scope: input.scope } : {}) })] || R['{"range":"1d"}'] } })()</script>`
+  return R[JSON.stringify({ range: input.range, ...(input.scope ? { scope: input.scope } : {}) })] || R['{"range":"7d"}'] } })()</script>`
 const html = readFileSync(new URL('../panel/index.html', import.meta.url), 'utf8')
   .replace('<html lang="en">', `<html lang="en" class="${light ? 'light' : 'dark'}">`)
   .replace('<script>', `${shim}<script>`)
