@@ -4,7 +4,7 @@ import { pixelBanner } from './art.mjs'
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { range: '7d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false }
+const state = { range: '1d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false }
 
 function money(n) {
   const v = Number(n) || 0

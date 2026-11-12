@@ -35,7 +35,7 @@ The panel reads your Claude Code and Codex transcripts and turns them into:
 * **Breakdowns** by model, project and machine.
 * **A pixel-art skyline** at the top, drawn from your daily usage. The stars are your streak.
 
-Choose **Today** to show the current local calendar day, starting at midnight, rather than the last 24 hours. The default range is 7 days. The activity calendar and streak keep their usual history when Today is selected.
+Choose **Today** to show the current local calendar day, starting at midnight, rather than the last 24 hours. This is the default range. The activity calendar and streak keep their usual history when Today is selected.
 
 It updates a few seconds after an agent finishes a turn, so the numbers keep up while you work.
 

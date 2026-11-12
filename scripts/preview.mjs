@@ -38,7 +38,7 @@ for (const range of ['1d', '7d', '30d', '90d', 'all']) {
   }
 }
 await worker.stop()
-const shim = `<script>window.__USAGE_PREVIEW__ = (() => { const R = ${JSON.stringify(reports)}; return async (name, input) => R[JSON.stringify({ range: input.range, ...(input.scope ? { scope: input.scope } : {}) })] || R['{"range":"7d"}'] })()</script>`
+const shim = `<script>window.__USAGE_PREVIEW__ = (() => { const R = ${JSON.stringify(reports)}; return async (name, input) => R[JSON.stringify({ range: input.range, ...(input.scope ? { scope: input.scope } : {}) })] || R['{"range":"1d"}'] })()</script>`
 const html = readFileSync(new URL('../panel/index.html', import.meta.url), 'utf8')
   .replace('<html lang="en">', `<html lang="en" class="${light ? 'light' : 'dark'}">`)
   .replace('<script>', `${shim}<script>`)

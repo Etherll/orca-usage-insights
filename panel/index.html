@@ -283,7 +283,7 @@ table.bd { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
 
   <nav class="controls" aria-label="Filters">
     <div class="seg" role="radiogroup" aria-label="Range" id="ranges">
-      <button role="radio" data-range="1d" aria-checked="false" tabindex="-1">Today</button><button role="radio" data-range="7d" aria-checked="true">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button>
+      <button role="radio" data-range="1d" aria-checked="true">Today</button><button role="radio" data-range="7d" aria-checked="false" tabindex="-1">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button>
     </div>
     <div class="seg" role="radiogroup" aria-label="Measure" id="metric">
       <button role="radio" data-metric="tokens" aria-checked="true">Tokens</button><button role="radio" data-metric="cost" aria-checked="false" tabindex="-1">Cost</button>
@@ -934,7 +934,7 @@ function pixelBanner(report, opts = {}) {
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { range: '7d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false }
+const state = { range: '1d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false }
 
 function money(n) {
   const v = Number(n) || 0
