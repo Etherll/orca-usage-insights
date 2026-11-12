@@ -21,7 +21,7 @@ test('paths under the cwd are relative to it', () => {
 test('paths under the home folder read as ~/, and a sibling folder does not', () => {
   assert.equal(pathTarget('/home/dev/.config/tool/settings.json', CWD, HOME).key, 'file:~/.config/tool/settings.json');
   assert.equal(pathTarget('/home/dev/application/x.mjs', CWD, HOME).key, 'file:~/application/x.mjs');
-  assert.equal(pathTarget('/home/devx/a.txt', CWD, HOME).key, 'file:/home/devx/a.txt');
+  assert.equal(pathTarget('/home/devx/a.txt', CWD, HOME).key, 'file:/home/*/a.txt');
 });
 
 test('temp folders and scratchpads share one folder target', () => {
@@ -120,4 +120,11 @@ test('every target has exactly key, label and a contract kind', () => {
     assert.equal(typeof target.label, 'string');
     assert.ok(KINDS.includes(target.kind), target.kind);
   }
+});
+
+test('an absolute path outside the project and home keeps five folders, without another user name', () => {
+  assert.equal(pathTarget('/usr/lib/node_modules/typescript/lib/tsc.js', CWD, HOME).label, '/usr/lib/node_modules/typescript/lib');
+  assert.equal(pathTarget('/home/alice/notes/plan.md', CWD, HOME).label, '/home/*/notes/plan.md');
+  assert.equal(pathTarget('/mnt/win/Users/alice/.codex/x.jsonl', CWD, HOME).label, '/mnt/win/Users/*/.codex');
+  assert.equal(pathTarget('C:\\Users\\alice\\proj\\a.mjs', CWD, HOME).label, 'C:/Users/*/proj/a.mjs');
 });

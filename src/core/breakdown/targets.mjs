@@ -26,7 +26,8 @@ export function pathTarget(path, cwd, home) {
   if (TEMP_PATH.test(p) || p.split('/').includes('scratchpad')) return { ...TEMP_TARGET };
   const base = trimSlashes(slashes(home));
   if (absolute && base && (p === base || p.startsWith(`${base}/`))) return fileTarget(`~${p.slice(base.length)}`);
-  const head = p.split('/').filter(Boolean).slice(0, MAX_SEGMENTS).join('/');
+  // Another user's folder name (under home/ or Users/) is not kept.
+  const head = p.split('/').filter(Boolean).slice(0, MAX_SEGMENTS).map((part, i, all) => (i > 0 && /^(home|Users)$/i.test(all[i - 1]) ? '*' : part)).join('/');
   return fileTarget(p.startsWith('/') ? `/${head}` : head);
 }
 

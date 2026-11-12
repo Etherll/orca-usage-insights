@@ -107,3 +107,24 @@ test('readLines keeps lines before a decode error and throws, like forEachLines'
   const big = await zstdLines(z, 1000);
   assert.match(big.error.message, /too large/);
 });
+
+test('the frame check accepts whole frames and flags input cut anywhere inside one', { skip: typeof zlib.zstdCompressSync !== 'function' && 'Node has no zstd' }, async () => {
+  const { createFrameCheck } = await import('../src/node/zstd.mjs');
+  const text = Array.from({ length: 20000 }, (_, i) => JSON.stringify({ i, r: (i * 7919).toString(36) })).join('\n');
+  const frame = zlib.zstdCompressSync(Buffer.from(text), { params: { [zlib.constants.ZSTD_c_checksumFlag]: 1 } });
+  const skippable = Buffer.from([0x50, 0x2a, 0x4d, 0x18, 3, 0, 0, 0, 1, 2, 3]);
+  const input = Buffer.concat([frame, skippable, zlib.zstdCompressSync(Buffer.from('x\n'))]);
+  const whole = createFrameCheck();
+  for (let i = 0; i < input.length; i += 4096) whole.push(input, i, Math.min(input.length, i + 4096));
+  assert.equal(whole.complete(), true);
+  const ends = new Set([frame.length, frame.length + skippable.length, input.length]);
+  for (let cut = 1; cut < input.length; cut += 1 + (cut % 53)) {
+    const check = createFrameCheck();
+    let done = false;
+    try {
+      check.push(input.subarray(0, cut));
+      done = check.complete();
+    } catch {}
+    assert.equal(done, ends.has(cut), `cut at ${cut}`);
+  }
+});

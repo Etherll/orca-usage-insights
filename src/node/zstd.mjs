@@ -9,9 +9,84 @@ export function zstdAvailable() {
 export const TOO_LARGE = 'decompressed transcript is too large';
 
 const LF = 0x0a;
+const TRUNCATED = 'zstd input ends inside a frame';
+const ZSTD_MAGIC = 0xfd2fb528;
+
+// Walks frame and block headers as input arrives, without decoding, and says whether the input
+// ended on a frame boundary. Some Node 24 builds finish a frame cut short without an error, and a
+// file read that way would be cached as complete.
+export function createFrameCheck() {
+  let head = []; // bytes of the header being collected
+  let need = 4; // bytes the next header needs; 0 while skipping block content
+  let skip = 0;
+  let state = 'magic';
+  let checksum = false;
+  let frames = 0;
+  function header(h) {
+    if (state === 'magic') {
+      const magic = (h[0] | (h[1] << 8) | (h[2] << 16) | (h[3] << 24)) >>> 0;
+      if (magic === ZSTD_MAGIC) return ((state = 'descriptor'), 1);
+      if ((magic & 0xfffffff0) >>> 0 === 0x184d2a50) return ((state = 'skippable'), 4);
+      throw new Error('zstd input has no frame magic');
+    }
+    if (state === 'skippable') {
+      skip = (h[0] | (h[1] << 8) | (h[2] << 16) | (h[3] << 24)) >>> 0;
+      frames++;
+      return ((state = 'magic'), 4);
+    }
+    if (state === 'descriptor') {
+      const d = h[0];
+      const single = (d >> 5) & 1;
+      checksum = ((d >> 2) & 1) === 1;
+      const fcs = [single, 2, 4, 8][d >> 6];
+      const rest = (single ? 0 : 1) + [0, 1, 2, 4][d & 3] + fcs;
+      state = 'block';
+      if (rest > 0) return ((state = 'frame-rest'), rest);
+      return 3;
+    }
+    if (state === 'frame-rest') return ((state = 'block'), 3);
+    if (state === 'block') {
+      const raw = h[0] | (h[1] << 8) | (h[2] << 16);
+      const type = (raw >> 1) & 3;
+      if (type === 3) throw new Error('zstd block type is reserved');
+      skip = type === 1 ? 1 : raw >>> 3;
+      if (raw & 1) {
+        frames++;
+        if (checksum) return ((state = 'checksum'), 4);
+        return ((state = 'magic'), 4);
+      }
+      return 3;
+    }
+    // checksum
+    return ((state = 'magic'), 4);
+  }
+  return {
+    push(buf, from = 0, to = buf.length) {
+      let i = from;
+      while (i < to) {
+        if (skip > 0) {
+          const n = Math.min(skip, to - i);
+          skip -= n;
+          i += n;
+          continue;
+        }
+        head.push(buf[i++]);
+        if (head.length === need) {
+          const h = head;
+          head = [];
+          need = header(h);
+        }
+      }
+    },
+    // True when the input ended right after a complete frame.
+    complete: () => frames > 0 && state === 'magic' && head.length === 0 && skip === 0,
+  };
+}
 const LF_BYTES = Buffer.from('\n');
 
 export async function forEachLines(buf, onLines, maxBytes = 768 << 20) {
+  const check = createFrameCheck();
+  check.push(buf);
   const stream = zlib.createZstdDecompress({ chunkSize: 64 << 10 });
   stream.end(buf);
   let parts = [];
@@ -32,6 +107,7 @@ export async function forEachLines(buf, onLines, maxBytes = 768 << 20) {
     parts = cut + 1 < chunk.length ? [chunk.subarray(cut + 1)] : [];
   }
   if (parts.length) onLines(Buffer.concat([...parts, LF_BYTES]));
+  if (!check.complete()) throw new Error(TRUNCATED);
 }
 
 const ZIN_BYTES = 256 << 10;
@@ -58,6 +134,7 @@ export async function readLines(fh, size, onLines, scratch = {}, maxBytes = 768 
   let out = (scratch.zout ??= Buffer.allocUnsafeSlow(ZOUT_BYTES));
   const handle = z._handle;
   const state = z._writeState;
+  const check = createFrameCheck();
   let pos = 0;
   let inOff = 0;
   let inLen = 0;
@@ -73,6 +150,7 @@ export async function readLines(fh, size, onLines, scratch = {}, maxBytes = 768 
     if (inLen === 0 && !eof) {
       inOff = 0;
       inLen = pos < size ? (await fh.read(zin, 0, Math.min(zin.length, size - pos), pos)).bytesRead : 0;
+      check.push(zin, 0, inLen);
       pos += inLen;
       eof = inLen === 0;
     }
@@ -106,4 +184,5 @@ export async function readLines(fh, size, onLines, scratch = {}, maxBytes = 768 
     out[filled] = LF;
     onLines(out.subarray(0, filled + 1));
   }
+  if (!check.complete()) throw new Error(TRUNCATED);
 }

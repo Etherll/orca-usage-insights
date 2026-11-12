@@ -139,7 +139,7 @@ Your transcripts stay on your machines. The plugin makes no network requests of 
 **What it keeps** in its cache folder, so later opens are fast:
 
 * token counts, times, model names and project folders;
-* for Breakdown, a small file per transcript (plus one with where to read on from, for transcripts that can grow) with token counts per bucket, file paths (relative to the project, or under `~`), and command families. A command family is the program and, for a few tools like `git` or `npm`, the subcommand (`$ git status`). Arguments are dropped.
+* for Breakdown, a small file per transcript (plus one with where to read on from, for transcripts that can grow) with token counts per bucket, file paths (relative to the project or under `~`; any other absolute path keeps at most its first five folders, such as `/usr/lib/node_modules/typescript/lib`, with a user name under `home` or `Users` replaced by `*`), and command families. A command family is the program and, for a few tools like `git` or `npm`, the subcommand (`$ git status`). Arguments are dropped.
 
 It never stores message text, tool output, command arguments or file contents. The Explain prompt only contains numbers, paths and read commands; it is shown for you to copy, and nothing is sent anywhere until you paste it into an agent.
 
