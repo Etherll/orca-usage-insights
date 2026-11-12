@@ -7,6 +7,9 @@
 //   reopen:           the same request again inside the 5 s reuse window
 //   refresh button:   usage.refresh
 //   report size:      JSON bytes sent to the panel per range
+//   breakdown:        usage.breakdown cold (no digests), warm, and after a restart (digests from disk)
+//   peak RSS:         the most memory the process (threads included) used during the run
+// Usage: node scripts/bench-worker.mjs [runs] [--codex <extra Codex folder>]
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,8 +18,10 @@ import { createScanner } from '../src/node/scan.mjs';
 import { startWorker } from '../src/worker.mjs';
 
 const RUNS = Number(process.argv[2]) || 5;
+const codexAt = process.argv.indexOf('--codex');
+const settings = { extraCodexFolders: codexAt > 0 ? process.argv[codexAt + 1] : '' };
 const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'usage-bench-worker-'));
-const cacheFile = path.join(dir, 'scan-cache-v1.json');
+const cacheFile = path.join(dir, 'scan-cache-v4.json');
 
 let offset = 0; // moves the clock past the 5 s reuse window without sleeping
 const clock = () => Date.now() + offset;
@@ -25,11 +30,11 @@ function boot() {
   const handlers = new Map();
   const orca = {
     panels: { handle: (name, fn) => handlers.set(name, fn), post() {} },
-    host: { call: async () => {} },
+    host: { call: async (method) => (method === 'settings.get' ? { settings } : undefined) },
     log() {},
   };
   const scanner = createScanner({ home: os.homedir(), cacheFile, now: clock });
-  const worker = startWorker(orca, scanner, { pollMs: 3_600_000 });
+  const worker = startWorker(orca, scanner, { pollMs: 3_600_000, sshCacheDir: dir, priceDir: dir, breakdownWaitMs: 3_600_000 });
   return { worker, scanner, call: (name, input) => handlers.get(name)(input, {}) };
 }
 
@@ -88,9 +93,29 @@ try {
   }
   await w.worker.stop();
 
+  // Breakdown: the digest scan reads every transcript once, then keeps one shard per file.
+  w = boot();
+  await w.call('usage.report', { range: '7d' });
+  const [bdCold, bd] = await time(() => w.call('usage.breakdown', { range: '30d' }));
+  row('breakdown (cold, no digests)', bdCold, `$${bd.totals.analysedUsd.toFixed(2)} of $${bd.totals.usageUsd.toFixed(2)} analysed in 30d`);
+  const warm = [];
+  for (let i = 0; i < RUNS; i++) {
+    offset += 6_000;
+    warm.push((await time(() => w.call('usage.breakdown', { range: '30d' })))[0]);
+  }
+  row('breakdown (warm)', median(warm), 'stat only + analyze');
+  const bdSize = (JSON.stringify(bd).length / 1024).toFixed(1);
+  await w.worker.stop();
+  w = boot();
+  await w.call('usage.report', { range: '7d' });
+  const [bdRestart] = await time(() => w.call('usage.breakdown', { range: '30d' }));
+  row('breakdown (worker restart)', bdRestart, 'digests read back from disk');
+  await w.worker.stop();
+
   console.log(`machine: ${os.cpus()[0]?.model ?? 'cpu'} ×${os.cpus().length}, load ${os.loadavg()[0].toFixed(1)}, node ${process.version}`);
   console.log(rows.join('\n'));
-  console.log(`report size: ${sizes.join(' · ')} (limit 1 MiB)`);
+  console.log(`report size: ${sizes.join(' · ')} (limit 1 MiB) · breakdown 30d ${bdSize} KB`);
+  console.log(`peak RSS: ${Math.round(process.resourceUsage().maxRSS / 1024)} MB`);
 } finally {
   await fsp.rm(dir, { recursive: true, force: true });
 }

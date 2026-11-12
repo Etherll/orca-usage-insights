@@ -5,9 +5,14 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { createClaudeParser, createCodexParser } from '../core/records.mjs';
+import { createRecordStore } from '../core/record-store.mjs';
+import { NameDict } from '../core/table.mjs';
 import { LIST_SCRIPT, createReadParser, parseListing, readScript } from './ssh-script.mjs';
 
-const CACHE_VERSION = 1;
+// 2: usage keeps the cache_creation split (1h tokens), which v1 entries lack.
+const CACHE_VERSION = 4;
+// Version 3 held parser states as packed rows; the parsers convert them when restored.
+const LEGACY_CACHE_VERSION = 3;
 const SAVE_EVERY_MS = 30_000;
 
 export function sshArgs(host) {
@@ -49,6 +54,9 @@ export function createSshSource({
   // ssh's own messages can include the address; show the name instead.
   const hide = (msg) => (label === host ? msg : String(msg).split(host).join(label));
   let files = new Map(); // path -> { key, offset, kind, ctx, state, parser }
+  // This host's tables share a dictionary; `records` is their merge (the worker merges `sources`).
+  const names = new NameDict();
+  const store = createRecordStore({ names });
   let loaded = false;
   let inFlight = null;
   let last = null; // { at, result }
@@ -107,9 +115,9 @@ export function createSshSource({
         await readFiles(jobs);
       }
       if (changed && !closed) markDirty();
-      const records = collect();
-      status = { id, kind: 'ssh', label, state: 'ok', files: listing.length, records: records.length, lastScanAt: new Date(now()).toISOString(), ms: now() - started };
-      const result = { records, status, changed };
+      const { sources, records, rows } = collect();
+      status = { id, kind: 'ssh', label, state: 'ok', files: listing.length, records: rows, lastScanAt: new Date(now()).toISOString(), ms: now() - started };
+      const result = { records, sources, status, changed };
       last = { at: now(), result };
       return result;
     } catch (error) {
@@ -118,13 +126,13 @@ export function createSshSource({
       for (const [p, e] of files) {
         if ('pendingKey' in e) files.set(p, freshEntry({ path: p, kind: e.kind }));
       }
-      const records = collect();
+      const { sources, records, rows } = collect();
       status = {
-        id, kind: 'ssh', label, state: 'error', files: files.size, records: records.length,
+        id, kind: 'ssh', label, state: 'error', files: files.size, records: rows,
         lastScanAt: status.lastScanAt, ms: now() - started, message: hide(explain(error)),
       };
       // Keep showing what was pulled before; retry on the next scan instead of waiting out the interval.
-      const result = { records, status, changed: false };
+      const result = { records, sources, status, changed: false };
       last = null;
       return result;
     }
@@ -230,13 +238,23 @@ export function createSshSource({
     return { key: null, offset: 0, kind: file.kind, ctx, state: null, parser: makeParser(file.kind, ctx) };
   }
 
+  // A parser on this host's dictionary. Every row's host is this source's id: a state from an
+  // older cache may name another, so a restored table is relabelled before anything reads it.
   function makeParser(kind, ctx, state) {
-    return kind === 'claude' ? createClaudeParser(ctx, state) : createCodexParser(ctx, state);
+    const parser = kind === 'claude' ? createClaudeParser(ctx, state, { names }) : createCodexParser(ctx, state, { names });
+    if (state) {
+      const table = parser.table();
+      table.host.fill(names.id(id), 0, table.length);
+    }
+    return parser;
   }
 
+  // Every file's table in order (`sources`), their merge (`records`), and the row count before
+  // the merge (`rows`, what the status shows).
   function collect() {
-    const out = [];
-    for (const entry of files.values()) {
+    const sources = [];
+    let rows = 0;
+    for (const [p, entry] of files) {
       if (!entry.parser) {
         try {
           entry.parser = makeParser(entry.kind, entry.ctx, entry.state);
@@ -245,21 +263,25 @@ export function createSshSource({
           continue;
         }
       }
-      for (const r of entry.parser.records()) out.push(r.host === id ? r : { ...r, host: id });
+      const table = entry.parser.table();
+      sources.push({ id: p, table });
+      rows += table.length;
     }
-    return out;
+    return { sources, records: store.update(sources), rows };
   }
 
   async function loadCache() {
     if (!cacheFile) return;
     try {
       const raw = JSON.parse(await fs.readFile(cacheFile, 'utf8'));
-      if (raw?.version !== CACHE_VERSION || raw.host !== host || typeof raw.files !== 'object' || raw.files === null) return;
+      if ((raw?.version !== CACHE_VERSION && raw?.version !== LEGACY_CACHE_VERSION) || raw.host !== host || typeof raw.files !== 'object' || raw.files === null) return;
       for (const [p, e] of Object.entries(raw.files)) {
         if (!e || (e.kind !== 'claude' && e.kind !== 'codex') || !Number.isSafeInteger(e.offset) || e.offset < 0 || !e.state || typeof e.state !== 'object') continue;
         files.set(p, { key: typeof e.key === 'string' ? e.key : null, offset: e.offset, kind: e.kind, ctx: { ...e.ctx, host: id }, state: e.state, parser: null });
       }
       if (files.size) status = { ...status, records: 0 };
+      // Rewrite a previous version's file in the current format.
+      if (raw.version === LEGACY_CACHE_VERSION && files.size) markDirty();
     } catch {
       // No cache or unreadable: start fresh.
     }

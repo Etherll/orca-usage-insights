@@ -73,7 +73,8 @@ test('remote script lists and reads Claude and Codex transcripts', { skip: isWin
     ].join('\n') + '\n',
   );
   const { source } = localSource(fx.home);
-  const { records, status } = await source.scan();
+  const { records: table, status } = await source.scan();
+  const records = table.toRecords();
   assert.equal(status.state, 'ok', status.message);
   assert.equal(status.files, 2);
   const claude = records.filter((r) => r.provider === 'claude');
@@ -218,7 +219,7 @@ test('close() kills a running ssh and the source never writes its cache afterwar
   const r = await running;
   assert.equal(r.status.state, 'error');
   const after = (await source.scan()).records;
-  assert.deepEqual(after, []);
+  assert.equal(after.length, 0);
 });
 
 test('codex reads only keep codex marker lines', async () => {

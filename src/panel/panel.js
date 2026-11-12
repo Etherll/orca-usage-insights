@@ -1,10 +1,12 @@
 // Panel controller: asks the worker for a Report and renders it. Knows nothing about transcripts.
 import { stackedBars, calendarHeatmap, punchCard, donut, hBars, sparkline, areaTrend, segmentBar, providerColor, compact, esc, TOKEN_KEYS, TOKEN_LABELS, TOKEN_COLORS, PROVIDER_LABELS } from './charts.mjs'
 import { pixelBanner } from './art.mjs'
+import { headline, tree, findings, notAnalysed, legend, priceLine, syncBody, changedSyncRows } from './breakdown.js'
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { range: '7d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false }
+const state = { view: 'usage', range: '7d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
 
 function money(n) {
   const v = Number(n) || 0
@@ -29,6 +31,17 @@ async function request(name, input) {
   throw new Error('Orca host is not available.')
 }
 
+// The filters both views share, as the worker's input.
+function filterInput() {
+  const input = { range: state.range }
+  if (state.provider !== 'all') input.providers = [state.provider]
+  if (state.host !== 'all') input.hosts = [state.host]
+  if (state.scope !== 'all') input.scope = state.scope
+  return input
+}
+
+// Loads the report (header, controls, Usage view), then the Breakdown when it is on screen, so a
+// range or filter change updates both.
 async function load(kind = 'usage.report') {
   if (state.busy) {
     // A change that lands mid-request triggers one more load when this one finishes.
@@ -44,12 +57,9 @@ async function load(kind = 'usage.report') {
     $('skeleton').hidden = false
   }
   try {
-    const input = { range: state.range }
-    if (state.provider !== 'all') input.providers = [state.provider]
-    if (state.host !== 'all') input.hosts = [state.host]
-    if (state.scope !== 'all') input.scope = state.scope
-    state.report = await request(kind, input)
+    state.report = await request(kind, filterInput())
     render()
+    if (state.view === 'breakdown') setTimeout(() => loadBreakdown(), 0)
     $('live').textContent = kind === 'usage.refresh' ? `Refreshed. ${compact(state.report.totals.total)} tokens in range.` : ''
   } catch (err) {
     showStatus(`Couldn't load usage: ${err?.message || err}`, true)
@@ -196,8 +206,10 @@ function legendItem(color, label, value) {
 }
 
 export function render() {
+  renderView()
   const r = state.report
   if (!r) return
+  renderNote()
   const keys = state.cache ? TOKEN_KEYS : ['input', 'output']
   const t = r.totals
   const shownTotal = keys.reduce((s, k) => s + (t[k] || 0), 0)
@@ -233,18 +245,18 @@ export function render() {
   if (focusGroup && !$('filters-pop').hidden) $(focusGroup)?.querySelector('[aria-checked="true"]')?.focus()
 
   const empty = t.turns === 0
-  $('status').hidden = !empty
+  $('status').hidden = !empty || state.view === 'breakdown'
   if (empty) {
     $('status').textContent = 'No usage in this range yet. Run Claude Code or Codex and it will appear here.'
     $('status').classList.remove('error')
   }
-  $('content').hidden = false
+  $('content').hidden = state.view === 'breakdown'
 
   const daySpark = sparkline(r.daily.map((d) => keys.reduce((s, k) => s + (d[k] || 0), 0)))
   $('tiles').innerHTML = [
     tile('Tokens', compact(shownTotal), `${compact(t.input)} in · ${compact(t.output)} out`, `<div class="spark-wrap">${daySpark}</div>`),
     tile('Est. cost', money(t.costUsd) + (t.hasUnpriced ? '+' : ''), t.hasUnpriced ? 'some models unpriced' : 'at API list prices'),
-    tile('Today', compact(r.today.total), money(r.today.costUsd)),
+    tile('Today', compact(r.today.total), r.today.costUsd == null ? '—' : money(r.today.costUsd)),
     cacheTile(t),
     tile('Sessions / turns', `${t.sessions.toLocaleString()} / ${t.turns.toLocaleString()}`),
     tile('Streak', `${r.streak.current} day${r.streak.current === 1 ? '' : 's'}`, `longest ${r.streak.longest}`),
@@ -341,6 +353,218 @@ function renderBreakdown(r) {
   $('breakdown').innerHTML = head + `<tbody>${body}</tbody>`
 }
 
+// Which view is on screen, and the controls that only apply to Usage.
+function renderView() {
+  const bd = state.view === 'breakdown'
+  for (const b of $('view').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.view === state.view))
+  $('metric').hidden = bd
+  $('sec-cache').hidden = bd
+  $('content').hidden = bd || !state.report
+  $('bd').hidden = !bd
+  if (bd) $('status').hidden = true
+  $('prices').hidden = !state.prices
+  $('prices').innerHTML = priceLine(state.prices)
+}
+
+// A one-time note that 1.2.0 changed how costs are priced. localStorage can be missing or throw
+// (private frames), so the note just shows again in that case.
+function renderNote() {
+  let seen = false
+  try { seen = globalThis.localStorage?.getItem(NOTE_KEY) === '1' } catch {}
+  const el = $('note')
+  if (seen || !el.hidden) return
+  el.innerHTML = 'Prices now come from a per-model catalog with tiers and 1-hour cache writes, so some costs differ from earlier versions. <button class="link-btn" id="note-ok">Got it</button>'
+  el.hidden = false
+}
+
+async function loadBreakdown() {
+  if (state.bdBusy) { state.bdAgain = true; return }
+  state.bdBusy = true
+  $('bd-stale').hidden = true
+  if (!state.bd) {
+    $('bd-status').textContent = 'Splitting your usage by file, command and tool… The first run reads the transcripts in this range and takes a few seconds.'
+    $('bd-status').classList.remove('error')
+    $('bd-status').hidden = false
+  }
+  try {
+    const view = await request('usage.breakdown', { ...filterInput(), ...(state.bdPath.length ? { path: state.bdPath } : {}) })
+    if (view?.loading) {
+      const { done = 0, total = 0 } = view.loading
+      $('bd-status').textContent = `Reading transcripts… ${done.toLocaleString()} of ${total.toLocaleString()} files. This view updates when it's done.`
+      $('bd-status').classList.remove('error')
+      $('bd-status').hidden = false
+      state.bdLoading = true
+      return
+    }
+    state.bdLoading = false
+    state.bd = view
+    state.bdPath = view.path || []
+    renderBreakdownView()
+  } catch (err) {
+    $('bd-status').textContent = `Couldn't build the breakdown: ${err?.message || err}`
+    $('bd-status').classList.add('error')
+    $('bd-status').hidden = false
+  } finally {
+    state.bdBusy = false
+    if (state.bdAgain) {
+      state.bdAgain = false
+      setTimeout(() => loadBreakdown(), 0)
+    }
+  }
+}
+
+function renderBreakdownView() {
+  const v = state.bd
+  if (!v) return
+  $('bd-status').hidden = true
+  $('bd-body').hidden = false
+  $('bd-head').innerHTML = headline(v)
+  const t = tree(v)
+  $('bd-crumbs').innerHTML = t.crumbs
+  $('bd-tree').innerHTML = t.rows
+  $('bd-findings').innerHTML = findings(v)
+  const not = notAnalysed(v)
+  $('bd-not').hidden = !not
+  $('bd-not').innerHTML = not
+  $('bd-foot').textContent = legend(v)
+}
+
+async function loadPrices() {
+  try {
+    state.prices = await request('prices.status')
+  } catch {
+    state.prices = null
+  }
+  renderView()
+}
+
+async function priceAction(action) {
+  if (action === 'sync') return openSync()
+  try {
+    await request(action === 'undo' ? 'prices.undo' : 'prices.reset')
+    $('live').textContent = action === 'undo' ? 'Previous prices restored.' : 'Bundled prices restored.'
+  } catch (err) {
+    showStatus(`Couldn't change prices: ${err?.message || err}`, true)
+  }
+  await loadPrices()
+}
+
+async function openSync() {
+  const dlg = $('sync-dlg')
+  $('sync-body').innerHTML = '<p class="muted">Fetching LiteLLM and models.dev…</p>'
+  $('sync-apply').disabled = true
+  state.sync = null
+  if (!dlg.open) dlg.showModal?.()
+  try {
+    state.sync = await request('prices.sync')
+    $('sync-body').innerHTML = syncBody(state.sync)
+    $('sync-apply').disabled = !changedSyncRows(state.sync.rows).some((r) => r.status !== 'overridden')
+  } catch (err) {
+    $('sync-body').innerHTML = `<p class="status error">Couldn't fetch prices: ${esc(err?.message || err)}</p>`
+  }
+}
+
+async function applySync() {
+  if (!state.sync) return
+  const keys = [...$('sync-body').querySelectorAll('input[type=checkbox][data-key]')].filter((b) => b.checked && !b.disabled).map((b) => b.dataset.key)
+  $('sync-apply').disabled = true
+  try {
+    await request('prices.apply', { diffId: state.sync.diffId, keys })
+    $('sync-dlg').close?.()
+    $('live').textContent = `${keys.length} price${keys.length === 1 ? '' : 's'} applied.`
+    await loadPrices()
+  } catch (err) {
+    const stale = err?.code === 'stale_diff' || /stale_diff|out of date/.test(String(err?.message))
+    $('sync-body').insertAdjacentHTML('afterbegin', `<p class="status error">${esc(stale ? 'Prices changed since this sync. Sync again.' : `Couldn't apply: ${err?.message || err}`)}</p>`)
+    $('sync-apply').disabled = false
+  }
+}
+
+async function openExplain(findingId) {
+  const dlg = $('explain-dlg')
+  $('explain-text').value = 'Building the prompt…'
+  $('explain-size').textContent = ''
+  if (!dlg.open) dlg.showModal?.()
+  try {
+    const res = await request('usage.explain', { ...filterInput(), findingId })
+    $('explain-text').value = res.prompt
+    $('explain-size').textContent = `≈ ${compact(res.estTokens)} tokens for your agent to read it`
+  } catch (err) {
+    $('explain-text').value = `Couldn't build the prompt: ${err?.message || err}`
+  }
+}
+
+// Clipboard access can be blocked in a frame; selecting the text keeps a manual copy one keystroke away.
+async function copyExplain() {
+  const box = $('explain-text')
+  box.focus()
+  box.select()
+  let ok = false
+  try {
+    await navigator.clipboard.writeText(box.value)
+    ok = true
+  } catch {
+    try { ok = document.execCommand('copy') } catch {}
+  }
+  $('explain-copy').textContent = ok ? 'Copied' : 'Press Ctrl+C to copy'
+  setTimeout(() => { $('explain-copy').textContent = 'Copy prompt' }, 2000)
+}
+
+function bindBreakdown() {
+  $('view').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-view]')
+    if (!b || b.dataset.view === state.view) return
+    state.view = b.dataset.view
+    renderView()
+    if (state.view === 'breakdown') loadBreakdown()
+    else if (state.report) render()
+    else load()
+  })
+  $('bd-tree').addEventListener('click', (e) => {
+    const b = e.target.closest('button.node[data-key]')
+    if (!b) return
+    state.bdPath = [...state.bdPath, b.dataset.key].slice(0, 8)
+    loadBreakdown()
+  })
+  $('bd-crumbs').addEventListener('click', (e) => {
+    const b = e.target.closest('button.crumb')
+    if (!b) return
+    state.bdPath = state.bdPath.slice(0, Number(b.dataset.depth) || 0)
+    loadBreakdown()
+  })
+  $('bd-findings').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-explain]')
+    if (b) openExplain(b.dataset.explain)
+  })
+  $('bd-stale').addEventListener('click', () => load())
+  $('prices').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-price]')
+    if (b) priceAction(b.dataset.price)
+  })
+  $('note').addEventListener('click', (e) => {
+    if (!e.target.closest('#note-ok')) return
+    try { globalThis.localStorage?.setItem(NOTE_KEY, '1') } catch {}
+    $('note').hidden = true
+  })
+  for (const id of ['sync-dlg', 'explain-dlg']) {
+    $(id).addEventListener('click', (e) => {
+      if (e.target.closest('[data-close]')) $(id).close?.()
+    })
+  }
+  $('sync-apply').addEventListener('click', applySync)
+  $('explain-copy').addEventListener('click', copyExplain)
+}
+
+// New data while Breakdown is on screen: a loading view refreshes itself; a finished one offers an
+// update instead of reordering under the reader.
+function onChanged() {
+  loadPrices()
+  if (state.view !== 'breakdown') return load()
+  if (state.bdLoading || !state.bd) return loadBreakdown()
+  $('bd-stale').hidden = false
+  state.report = null
+}
+
 function bindTooltip() {
   const tip = $('tip')
   document.addEventListener('pointermove', (e) => {
@@ -376,7 +600,7 @@ function bindRadioKeys(group) {
 
 // Only the selected option is in the tab order (roving tabindex).
 function syncRadioTabs() {
-  for (const id of ['ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) {
+  for (const id of ['view', 'ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) {
     const items = [...$(id).querySelectorAll('button[role="radio"]')]
     const checked = items.find((b) => b.getAttribute('aria-checked') === 'true') || items[0]
     for (const b of items) b.tabIndex = b === checked ? 0 : -1
@@ -384,7 +608,7 @@ function syncRadioTabs() {
 }
 
 function bindControls() {
-  for (const id of ['ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) bindRadioKeys($(id))
+  for (const id of ['view', 'ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) bindRadioKeys($(id))
   $('scope').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-scope]')
     if (!b || b.dataset.scope === state.scope) return
@@ -446,7 +670,7 @@ function bindControls() {
     render()
   })
   $('refresh').addEventListener('click', () => load('usage.refresh'))
-  host?.plugin?.on?.('usage.changed', () => load())
+  host?.plugin?.on?.('usage.changed', onChanged)
   host?.on?.('theme', () => state.report && render())
   // Charts are drawn at the container's pixel width, so redraw when the panel is resized.
   let lastW = 0
@@ -455,13 +679,15 @@ function bindControls() {
     clearTimeout(timer)
     timer = setTimeout(() => {
       const w = document.body?.clientWidth || 0
-      if (state.report && Math.abs(w - lastW) > 8) { lastW = w; render() }
+      if (state.report && state.view === 'usage' && Math.abs(w - lastW) > 8) { lastW = w; render() }
     }, 120)
   })
 }
 
 if (typeof document !== 'undefined' && document.getElementById('app')) {
   bindControls()
+  bindBreakdown()
   bindTooltip()
   load()
+  loadPrices()
 }

@@ -6,6 +6,7 @@
 
 const RS = '\x1e';
 
+// Lists the *.jsonl transcripts only: compressed .jsonl.zst files are not listed or read over SSH.
 // Lists every transcript as `RS F <tab> kind <tab> size <tab> mtime <tab> path`, then `RS E`.
 // GNU find has -printf; BSD/macOS find doesn't, so fall back to stat -f in batches.
 export const LIST_SCRIPT = [
@@ -68,14 +69,20 @@ const PY = String.raw`
 import json, os, sys
 RS = '\x1e'
 w = sys.stdout.buffer.write
-KEEP = ('input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens')
+KEEP = ('input_tokens', 'output_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens', 'cache_creation')
+def usage(u):
+    r = {k: u[k] for k in KEEP if k in u}
+    c = r.get('cache_creation')
+    if isinstance(c, dict):
+        r['cache_creation'] = {k: v for k, v in c.items() if isinstance(v, (int, float))}
+    return r
 def claude(o):
     m = o.get('message')
     if o.get('type') != 'assistant' or not isinstance(m, dict) or not isinstance(m.get('usage'), dict):
         return None
     u = m['usage']
     return {'type': 'assistant', 'timestamp': o.get('timestamp'), 'requestId': o.get('requestId'), 'cwd': o.get('cwd'),
-            'sessionId': o.get('sessionId'), 'message': {'model': m.get('model'), 'id': m.get('id'), 'usage': {k: u[k] for k in KEEP if k in u}}}
+            'sessionId': o.get('sessionId'), 'message': {'model': m.get('model'), 'id': m.get('id'), 'usage': usage(u)}}
 def codex(o):
     t = o.get('type')
     p = o.get('payload') if isinstance(o.get('payload'), dict) else {}

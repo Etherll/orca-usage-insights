@@ -2,25 +2,35 @@
 // Stat-first: a file whose `mtimeMs:size` key is unchanged costs one stat and no reads.
 // Entries keep the parser per file, so records survive tails. The persisted cache stores
 // { key, offset, kind, ctx, state } per file; `offset` is the end of the last complete line.
+// Listing and reading live in transcript-files.mjs; this file keeps the cache and the records.
 import fsp from 'node:fs/promises';
 import os from 'node:os';
-import { mergeRecords } from '../core/merge.mjs';
+import { createRecordStore } from '../core/record-store.mjs';
+import { NameDict } from '../core/table.mjs';
 import { PROVIDERS } from '../core/providers.mjs';
-import { MARKER_BYTES, markedLines } from './lines.mjs';
+import { MARKER_BYTES, createRecordsConsumer, markedLines } from './lines.mjs';
 import { createParsePool } from './parse-pool.mjs';
+import { pathFor, resolveRoots } from './paths.mjs';
+import { listTranscripts, readTranscript } from './transcript-files.mjs';
 
 export { markedLines };
-import { pathFor, resolveRoots } from './paths.mjs';
 
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 5;
+// The cache before records were stored as columns. Read once when there is no current cache; its
+// parser states are converted when the parsers are restored, so no file is read again.
+const LEGACY_CACHE_VERSION = 4;
 const REUSE_MS = 5_000;
 const SAVE_EVERY_MS = 30_000;
-const CHUNK_BYTES = 4 << 20;
 // Files read whole for the first time go to parse threads when they are at most this big.
+// Compressed files over this size are skipped: they are never read whole on the calling thread.
 const THREAD_MAX_BYTES = 64 << 20;
-const LF = 0x0a;
-const JSONL = /\.jsonl$/i;
-const EMPTY = Buffer.alloc(0);
+const STAT_LIMIT = 64;
+// Saves append the files that changed to a journal next to the cache file. The whole cache is
+// rewritten (and the journal emptied) on the first save, after reset, when more files changed than
+// this, or once the journal is this big.
+const JOURNAL_MAX_FILES = 512;
+const JOURNAL_MAX_BYTES = 32 << 20;
+const WRITE_CHUNK_CHARS = 1 << 20;
 
 export function createScanner({
   platform = process.platform,
@@ -28,10 +38,13 @@ export function createScanner({
   home = os.homedir(),
   fs = fsp,
   cacheFile,
+  // The previous version's cache file, read when cacheFile is missing or unusable. It is left as is.
+  legacyCacheFile = null,
   concurrency = 8,
   // Threads that parse files read whole for the first time (first open, rewritten files).
-  // 0 parses on the calling thread. Tail reads always parse inline: they are small.
-  threads = Math.min(4, Math.max(0, (os.availableParallelism?.() ?? os.cpus().length) - 1)),
+  // 0 parses on the calling thread. Tail reads always parse inline: they are small. Each thread
+  // costs ~35 MB; on a full local history 4 took ~2.1 s, 6 ~1.6 s, 8 ~1.5 s (measured).
+  threads = Math.min(6, Math.max(0, (os.availableParallelism?.() ?? os.cpus().length) - 1)),
   now = () => Date.now(),
 } = {}) {
   const p = pathFor(platform);
@@ -41,16 +54,25 @@ export function createScanner({
   let generation = 0;
   let inFlight = null; // { job, roots } while a run is going
   let last = null;
+  // Every file's table interns into one dictionary, so the store copies their columns in bulk.
+  const names = new NameDict();
+  let store = createRecordStore({ names });
   let extra = { claude: [], codex: [] }; // absolute folders from settings, see setExtraRoots
   let extraKey = '[[],[]]';
   let rootsGen = 0;
   let dirty = false;
+  const touched = new Set(); // paths read or dropped since the last save
+  const journalFile = cacheFile ? `${cacheFile}.journal` : null;
+  let baseGen = null; // gen of the cache file the journal extends; null: the next save rewrites it
+  let journalBytes = 0;
   let lastSave = 0;
   let saveTimer = null;
   let saveChain = Promise.resolve();
-  const pool = threads > 0 ? createParsePool(threads) : null;
+  // Parse threads open files with the real fs, so an injected fs (tests) parses inline.
+  const pool = threads > 0 && fs === fsp ? createParsePool(threads) : null;
 
-  return { scan, reset, flush, close: () => pool?.close(), setExtraRoots };
+  // pool() lets the digest scanner share these threads instead of starting its own.
+  return { scan, reset, flush, close: () => pool?.close(), setExtraRoots, pool: () => pool };
 
   // Extra folders are read next to the default roots. A change drops the reuse window, and a run
   // that started with the old folders finishes before a new one starts. Same folders: no-op.
@@ -78,10 +100,8 @@ export function createScanner({
       (result) => {
         if (inFlight === current) inFlight = null;
         if (gen === generation && roots === rootsGen) last = { at: now(), result };
-        if (gen === generation && result.changed) {
-          dirty = true;
-          scheduleSave();
-        }
+        if (gen === generation && result.changed) dirty = true;
+        if (dirty) scheduleSave();
         return result;
       },
       (error) => {
@@ -98,6 +118,8 @@ export function createScanner({
   function reset() {
     generation++;
     files = new Map();
+    store = createRecordStore({ names });
+    baseGen = null;
     loaded = true;
     inFlight = null;
     last = null;
@@ -117,260 +139,116 @@ export function createScanner({
       await loadCache(map);
     }
     const roots = await resolveRoots({ platform, env, home, realpath: fs.realpath });
-    const run = { map, errors: 0, changed: false, failed: [] };
-    const { found, owners, folders } = await listTranscripts(roots, folderSpecs, run);
-    await mapLimit(found, limit, (file) =>
-      refreshFile(run, file).catch(() => {
-        run.errors++;
-      }),
+    const run = { map, errors: 0, changed: false, failed: [], skipped: { zstd: 0, tooLarge: 0 } };
+    const { found, owners, folders } = await listTranscripts({ fs, platform, roots, extra: folderSpecs, run });
+    // Stat everything first and read the largest files first (a .zst byte costs ~7 plain ones), so
+    // no big file starts last while the other threads sit idle. readTranscript reuses the stat.
+    const stats = new Map();
+    await mapLimit(found, STAT_LIMIT, async (file) => {
+      try {
+        stats.set(file.path, await fs.stat(file.path));
+      } catch {}
+    });
+    const weight = (file) => (stats.get(file.path)?.size ?? 0) * (file.compressed ? 7 : 1);
+    const order = [...found].sort((a, b) => weight(b) - weight(a));
+    await mapLimit(order, limit, (file) =>
+      refreshFile(run, file, stats.get(file.path)).catch((error) => countFileError(run, file.path, error)),
     );
     const walked = new Set(found.map((file) => file.path));
     for (const path of [...map.keys()]) {
       // A directory that failed to read says nothing about its files, so their cache entries stay.
       if (!walked.has(path) && !underAny(run.failed, path, p.sep)) drop(run, path);
     }
-    const records = [];
-    for (const [path, entry] of [...map]) {
+    // Listing order, so ties between files resolve the same way on every run (map order follows
+    // which file finished reading first). Entries kept for unreadable folders go last.
+    const ordered = new Map();
+    for (const file of found) if (map.has(file.path)) ordered.set(file.path, map.get(file.path));
+    for (const [path, entry] of map) if (!ordered.has(path)) ordered.set(path, entry);
+    const sources = [];
+    for (const [path, entry] of ordered) {
       if (!ensureParser(entry)) {
         drop(run, path);
         continue;
       }
-      const list = entry.parser.records();
-      for (const record of list) records.push(record);
+      const table = entry.parser.table();
+      sources.push({ id: path, table });
       const folder = owners.get(path);
-      if (folder) folder.records += list.length;
+      if (folder) folder.records += table.length;
     }
+    // Only what changed since the last run is merged again; nothing changed, same table back.
+    const records = store.update(sources);
     return {
-      records: mergeRecords([records]),
+      records,
+      // The files' own tables, in order, and the dictionary they share: for merging with other sources.
+      sources,
+      names,
       files: found.length,
       errors: run.errors,
       changed: run.changed,
       folders: folders.map(publicFolder),
+      skipped: run.skipped,
     };
   }
 
-  // Every file path is canonical: top-level dirs are resolved once, and so are symlinked files.
-  // A physical file is therefore listed once even when two roots reach it through a symlink.
-  // Default roots come first, so they own a file that an extra folder also reaches. `owners` maps
-  // each file that an extra folder owns to that folder's status entry.
-  async function listTranscripts(roots, folderSpecs, run) {
-    const out = [];
-    const owners = new Map();
-    const seen = new Set();
-    const walks = new Map(); // identity of a top-level dir -> files under it, walked once per run
-    const walkTop = async (dir) => {
-      const top = await canonicalDir(dir);
-      if (top === null) return null;
-      const id = identityOf(top);
-      if (!walks.has(id)) {
-        const found = [];
-        await walk(top, found, run);
-        walks.set(id, found);
-      }
-      return walks.get(id);
-    };
-    const claim = (kind, paths, folder) => {
-      for (const path of paths) {
-        if (seen.has(identityOf(path))) continue;
-        seen.add(identityOf(path));
-        if (folder) owners.set(path, folder);
-        out.push({
-          path,
-          kind,
-          ctx: { sessionId: p.basename(path, p.extname(path)), project: p.basename(p.dirname(path)) },
+  // Brings one file's entry up to date. The reader decides between unchanged, tail, whole read
+  // and skipped; this keeps the cache entry and the error counts.
+  async function refreshFile(run, file, stat) {
+    const entry = run.map.get(file.path);
+    const prior = entry?.kind === file.kind && ensureParser(entry) ? entry : undefined;
+    const result = await readTranscript({
+      fs,
+      file,
+      stat,
+      prior: prior ? { key: prior.key, offset: prior.offset, consumer: prior.parser } : null,
+      pool,
+      markers: MARKER_BYTES[file.kind],
+      open: (f, state) => createParser(f.kind, f.ctx, state),
+      maxWholeBytes: THREAD_MAX_BYTES,
+    });
+    switch (result.status) {
+      case 'unchanged':
+        return;
+      case 'gone':
+        // A file whose stat said ENOENT is an error and leaves the cache. A path that is no
+        // longer a file just leaves it.
+        if (result.missing) run.errors++;
+        drop(run, file.path);
+        return;
+      case 'skipped':
+        run.skipped[result.reason === 'zstd' ? 'zstd' : 'tooLarge']++;
+        drop(run, file.path);
+        return;
+      case 'read':
+        run.changed = true;
+        touched.add(file.path);
+        // Lines already pushed stay counted; a full re-read on the next scan keeps them exact.
+        if (result.error) run.errors++;
+        run.map.set(file.path, {
+          key: result.key,
+          offset: result.offset,
+          kind: file.kind,
+          ctx: file.ctx,
+          parser: result.consumer,
+          state: result.state,
         });
-      }
-    };
-    for (const [kind, provider] of Object.entries(PROVIDERS)) {
-      for (const root of roots[kind]) {
-        for (const sub of provider.subdirs) claim(kind, (await walkTop(p.join(root, sub))) ?? [], null);
-      }
-    }
-    const folders = [];
-    for (const [kind, provider] of Object.entries(PROVIDERS)) {
-      for (const folder of folderSpecs[kind]) {
-        const entry = { path: folder, kind, state: 'ok', files: 0, records: 0, message: null };
-        folders.push(entry);
-        const errorsBefore = run.errors;
-        const top = await canonicalDir(folder);
-        if (top === null) {
-          Object.assign(entry, { state: 'warning', message: 'Folder not found' });
-          continue;
-        }
-        let st;
-        try {
-          st = await fs.stat(top);
-        } catch (error) {
-          // The folder's own status carries this warning; it is not counted as a file error.
-          Object.assign(entry, { state: 'warning', message: `Cannot open folder (${error?.code ?? 'error'})` });
-          continue;
-        }
-        if (!st.isDirectory()) {
-          Object.assign(entry, { state: 'warning', message: 'Not a folder' });
-          continue;
-        }
-        // A folder that holds the provider's main subdir (projects, sessions) is read like a default
-        // root. Any other folder is read whole.
-        const asRoot = await isDirectory(fs, p.join(top, provider.subdirs[0]));
-        for (const dir of asRoot ? provider.subdirs.map((sub) => p.join(top, sub)) : [top]) {
-          const found = await walkTop(dir);
-          if (!found) continue;
-          entry.files += found.length;
-          claim(kind, found, entry);
-        }
-        if (run.errors > errorsBefore) Object.assign(entry, { state: 'warning', message: 'Some files could not be read' });
-      }
-    }
-    return { found: out, owners, folders };
-  }
-
-  // Realpath of a top-level dir. null when it is gone; other failures keep the dir as given, so
-  // the read in walk() reports them.
-  async function canonicalDir(dir) {
-    try {
-      return await fs.realpath(dir);
-    } catch (error) {
-      if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return null;
-      return dir;
+        return;
     }
   }
 
-  // Symlinked directories are not Dirent directories, so they are never followed. Only the
-  // top-level dirs (resolved by canonicalDir) can be symlinks.
-  async function walk(dir, out, run) {
-    let entries;
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        run.errors++;
-        run.failed.push(dir);
-      }
-      return;
-    }
-    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    for (const entry of entries) {
-      const full = p.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(full, out, run);
-      else if (JSONL.test(entry.name)) out.push(entry.isSymbolicLink() ? await realFile(full) : full);
-    }
+  function createParser(kind, ctx, state) {
+    return createRecordsConsumer(kind, ctx, state, { names });
   }
 
-  async function realFile(file) {
+  // Builds the parser from persisted state on first use. False when the state cannot be restored.
+  function ensureParser(entry) {
+    if (!entry) return false;
+    if (entry.parser) return true;
     try {
-      return await fs.realpath(file);
-    } catch {
-      return file;
-    }
-  }
-
-  // Key used to decide that two paths name the same file or directory.
-  function identityOf(file) {
-    return platform === 'win32' ? file.toLowerCase() : file;
-  }
-
-  async function refreshFile(run, file) {
-    let st;
-    try {
-      st = await fs.stat(file.path);
-    } catch (error) {
-      countFileError(run, file.path, error);
-      return;
-    }
-    if (!st.isFile()) {
-      drop(run, file.path);
-      return;
-    }
-    const key = `${st.mtimeMs}:${st.size}`;
-    let entry = run.map.get(file.path);
-    if (entry?.kind !== file.kind || !ensureParser(entry)) entry = undefined;
-    if (entry?.key === key) return;
-
-    let fh;
-    try {
-      fh = await fs.open(file.path, 'r');
-    } catch (error) {
-      countFileError(run, file.path, error);
-      return;
-    }
-    run.changed = true;
-    let target = null;
-    try {
-      // Size grew with no older mtime, and the byte before the stored offset ends a line: only the
-      // bytes past the offset are new. Otherwise the file was rewritten, so it is read whole.
-      const tail = entry !== undefined && entry.key !== null && canTail(entry.key, st) && (await endsLine(fh, entry.offset));
-      target = tail ? entry : freshEntry(file);
-      if (!tail) run.map.set(file.path, target);
-      if (!tail && pool && st.size > 0 && st.size <= THREAD_MAX_BYTES && (await readWholeThreaded(fh, target, st.size))) {
-        // parsed on a thread; target holds its state and offset
-      } else {
-        await readAppended(fh, target, st.size);
-      }
-      target.key = key;
-    } catch {
-      run.errors++;
-      // Lines already pushed stay counted; a full re-read on the next scan keeps them exact.
-      if (target) target.key = null;
-    } finally {
-      await fh.close().catch(() => {});
-    }
-  }
-
-  // True when offset is 0 or the byte before it is LF. The scanner only stores offsets that follow
-  // an LF, so any other byte means the file was replaced under the stored offset.
-  async function endsLine(fh, offset) {
-    if (offset === 0) return true;
-    const probe = Buffer.alloc(1);
-    const { bytesRead } = await fh.read(probe, 0, 1, offset - 1);
-    return bytesRead === 1 && probe[0] === LF;
-  }
-
-  // Reads a whole file and hands the bytes to a parse thread. Returns false (nothing changed on
-  // target) when the pool can't take it, so the caller falls back to the inline reader.
-  async function readWholeThreaded(fh, target, size) {
-    const buf = Buffer.allocUnsafe(size);
-    let got = 0;
-    while (got < size) {
-      const { bytesRead } = await fh.read(buf, got, size - got, got);
-      if (bytesRead === 0) break;
-      got += bytesRead;
-    }
-    const cut = buf.subarray(0, got).lastIndexOf(LF) + 1;
-    if (cut === 0) return got === 0;
-    let result;
-    try {
-      result = await pool.parse(buf.subarray(0, cut), target.kind, target.ctx);
+      entry.parser = createParser(entry.kind, entry.ctx, entry.state);
+      entry.state = null;
+      return true;
     } catch {
       return false;
-    }
-    target.parser = null;
-    target.state = result.state;
-    target.offset = cut;
-    return true;
-  }
-
-  // Reads [offset, end) in chunks. Each chunk is cut at its last LF, so the parser only sees
-  // whole lines and `offset` advances in the same step as the push.
-  async function readAppended(fh, target, end) {
-    let pos = target.offset;
-    let carry = EMPTY;
-    while (pos < end) {
-      const want = Math.min(CHUNK_BYTES, end - pos);
-      const buf = Buffer.allocUnsafe(carry.length + want);
-      carry.copy(buf, 0);
-      const { bytesRead } = await fh.read(buf, carry.length, want, pos);
-      if (bytesRead === 0) break;
-      pos += bytesRead;
-      const data = buf.subarray(0, carry.length + bytesRead);
-      const cut = data.lastIndexOf(LF);
-      if (cut < 0) {
-        carry = data;
-        continue;
-      }
-      const text = markedLines(data, cut + 1, MARKER_BYTES[target.kind]);
-      if (text) target.parser.push(text);
-      target.offset += cut + 1;
-      carry = data.subarray(cut + 1);
     }
   }
 
@@ -380,21 +258,61 @@ export function createScanner({
   }
 
   function drop(run, path) {
-    if (run.map.delete(path)) run.changed = true;
+    if (!run.map.delete(path)) return;
+    run.changed = true;
+    touched.add(path);
   }
 
+  // The cache file, then the journal lines written on top of it (same gen). A line from another gen
+  // was written before the cache file was last rewritten, so it is stale and skipped; so is a line
+  // that doesn't parse (a save cut short).
   async function loadCache(map) {
     if (!cacheFile) return;
-    let raw;
-    try {
-      raw = JSON.parse(await fs.readFile(cacheFile, 'utf8'));
-    } catch {
+    const raw = await readJson(cacheFile);
+    if (raw?.version !== CACHE_VERSION || !isObject(raw.files)) {
+      if (legacyCacheFile) await loadLegacy(map);
       return;
     }
-    if (raw?.version !== CACHE_VERSION || !isObject(raw.files)) return;
     for (const [path, entry] of Object.entries(raw.files)) {
-      if (!isCacheEntry(entry)) continue;
-      map.set(path, { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, state: entry.state, parser: null });
+      if (isCacheEntry(entry)) map.set(path, fromCache(entry));
+    }
+    if (!Number.isSafeInteger(raw.gen)) return;
+    let text = '';
+    try {
+      text = await fs.readFile(journalFile, 'utf8');
+    } catch {}
+    for (const line of text.split('\n')) {
+      let item;
+      try {
+        item = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(item) || item[0] !== raw.gen || typeof item[1] !== 'string') continue;
+      if (item[2] === null) map.delete(item[1]);
+      else if (isCacheEntry(item[2])) map.set(item[1], fromCache(item[2]));
+    }
+    baseGen = raw.gen;
+    journalBytes = text.length;
+  }
+
+  // The old cache's entries, whose parser states the parsers convert on restore. The next save
+  // writes the current cache file in full; the old one stays for a downgrade.
+  async function loadLegacy(map) {
+    const raw = await readJson(legacyCacheFile);
+    if (raw?.version !== LEGACY_CACHE_VERSION || !isObject(raw.files)) return;
+    for (const [path, entry] of Object.entries(raw.files)) {
+      if (isCacheEntry(entry)) map.set(path, fromCache(entry));
+    }
+    // Saved after the first run, once every parser has converted its state.
+    if (map.size > 0) dirty = true;
+  }
+
+  async function readJson(file) {
+    try {
+      return JSON.parse(await fs.readFile(file, 'utf8'));
+    } catch {
+      return null;
     }
   }
 
@@ -417,35 +335,89 @@ export function createScanner({
   async function writeCache() {
     if (!cacheFile || !dirty) return;
     dirty = false;
-    const body = JSON.stringify({ version: CACHE_VERSION, files: serialize(files) });
-    const tmp = `${cacheFile}.${process.pid}.tmp`;
+    const paths = [...touched];
+    touched.clear();
     try {
-      await fs.mkdir(p.dirname(cacheFile), { recursive: true });
-      await fs.writeFile(tmp, body);
-      try {
-        await fs.rename(tmp, cacheFile);
-      } catch (error) {
-        await fs.unlink(tmp).catch(() => {});
-        throw error;
-      }
+      if (baseGen === null || paths.length > JOURNAL_MAX_FILES || journalBytes >= JOURNAL_MAX_BYTES) await writeBase();
+      else await appendJournal(paths);
     } catch (error) {
       dirty = true;
+      for (const path of paths) touched.add(path);
       throw error;
     }
     lastSave = now();
   }
+
+  // The changed entries as journal lines; a dropped file is a null entry. Entries are serialized
+  // before the first await, so the lines are one consistent snapshot.
+  async function appendJournal(paths) {
+    let text = '';
+    for (const path of paths) {
+      const entry = files.get(path);
+      text += `${JSON.stringify([baseGen, path, entry ? toCache(entry) : null])}\n`;
+    }
+    try {
+      await fs.appendFile(journalFile, text);
+    } catch (error) {
+      baseGen = null; // a line may be cut short, so the next save rewrites everything
+      throw error;
+    }
+    journalBytes += text.length;
+  }
+
+  // Rewrites the cache file under a new gen, atomically, which also retires every journal line.
+  // Each entry is serialized on its own and written in ~1 MB pieces, so no single string holds
+  // the whole cache.
+  async function writeBase() {
+    const gen = nextGen(baseGen);
+    const parts = [];
+    for (const [path, entry] of files) parts.push(`${JSON.stringify(path)}:${JSON.stringify(toCache(entry))}`);
+    const tmp = `${cacheFile}.${process.pid}.tmp`;
+    await fs.mkdir(p.dirname(cacheFile), { recursive: true });
+    try {
+      await fs.writeFile(tmp, pieces(`{"version":${CACHE_VERSION},"gen":${gen},"files":{`, parts, '}}'));
+      await fs.rename(tmp, cacheFile);
+    } catch (error) {
+      await fs.unlink(tmp).catch(() => {});
+      throw error;
+    }
+    baseGen = gen;
+    journalBytes = 0;
+    await fs.unlink(journalFile).catch(() => {});
+  }
+}
+
+// Comma-joined parts between a head and a tail, yielded in strings of about WRITE_CHUNK_CHARS.
+function* pieces(head, parts, tail) {
+  let chunk = head;
+  for (let i = 0; i < parts.length; i++) {
+    chunk += i === 0 ? parts[i] : `,${parts[i]}`;
+    if (chunk.length >= WRITE_CHUNK_CHARS) {
+      yield chunk;
+      chunk = '';
+    }
+  }
+  yield chunk + tail;
+}
+
+// A gen for a rewritten cache file, never the one before it.
+function nextGen(previous) {
+  let gen;
+  do gen = Math.floor(Math.random() * 2 ** 48);
+  while (gen === previous);
+  return gen;
+}
+
+function fromCache(entry) {
+  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, state: entry.state, parser: null };
+}
+
+function toCache(entry) {
+  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, state: entry.parser ? entry.parser.state() : entry.state };
 }
 
 function listOfStrings(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item !== '') : [];
-}
-
-async function isDirectory(fs, file) {
-  try {
-    return (await fs.stat(file)).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 function publicFolder({ path, kind, state, files, records, message }) {
@@ -454,50 +426,8 @@ function publicFolder({ path, kind, state, files, records, message }) {
 
 function noop() {}
 
-function freshEntry(file) {
-  return { key: null, offset: 0, kind: file.kind, ctx: file.ctx, parser: createParser(file.kind, file.ctx), state: null };
-}
-
 function underAny(dirs, file, sep) {
   return dirs.some((dir) => file.startsWith(dir.endsWith(sep) ? dir : dir + sep));
-}
-
-function createParser(kind, ctx, state) {
-  return PROVIDERS[kind].createParser(ctx, state);
-}
-
-// Builds the parser from persisted state on first use. False when the state cannot be restored.
-function ensureParser(entry) {
-  if (!entry) return false;
-  if (entry.parser) return true;
-  try {
-    entry.parser = createParser(entry.kind, entry.ctx, entry.state);
-    entry.state = null;
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function canTail(prevKey, st) {
-  const i = prevKey.lastIndexOf(':');
-  const prevMtime = Number(prevKey.slice(0, i));
-  const prevSize = Number(prevKey.slice(i + 1));
-  return i > 0 && Number.isFinite(prevMtime) && Number.isFinite(prevSize) && st.size > prevSize && st.mtimeMs >= prevMtime;
-}
-
-function serialize(map) {
-  const out = {};
-  for (const [path, entry] of map) {
-    out[path] = {
-      key: entry.key,
-      offset: entry.offset,
-      kind: entry.kind,
-      ctx: entry.ctx,
-      state: entry.parser ? entry.parser.state() : entry.state,
-    };
-  }
-  return out;
 }
 
 function isCacheEntry(entry) {
@@ -525,4 +455,3 @@ async function mapLimit(items, limit, fn) {
 function isObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
-

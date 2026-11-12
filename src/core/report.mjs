@@ -2,76 +2,78 @@
 // built-in or Orca imports. Days and hours bucket in local time. Records with a bad timestamp or
 // a day after `now` belong to no window, so they are skipped. Each record is visited twice, once
 // to normalize and once to aggregate.
-import { estimateCostUsd, priceFor } from './pricing.mjs';
+import { DEFAULT_CATALOG, tableCosts } from './pricing.mjs';
+import { dayKey, selectRecords } from './filters.mjs';
 
-const DAY_MS = 86_400_000;
-const RANGE_DAYS = new Map([['7d', 7], ['30d', 30], ['90d', 90]]);
 const CALENDAR_DAYS = 182;
 const TOP_PROJECTS = 8;
 
-export function buildReport(records, { range, now = new Date(), providers, hosts, scope } = {}) {
-  if (range !== 'all' && !RANGE_DAYS.has(range)) throw new RangeError(`Unknown range: ${range}`);
-  const today = dayNumber(now.getFullYear(), now.getMonth(), now.getDate());
-  const allowed = providers ? new Set(providers) : null;
-  const allowedHosts = hosts ? new Set(hosts) : null;
-  const inScope = scopeMatcher(scope);
-
-  // Pass 1: local day and weekday-hour slot per record. `providers` and `hosts` list every value in the data.
-  const allProviders = new Set();
-  const allHosts = new Set();
-  const rowProviders = new Set();
-  const rows = [];
-  let earliest = today;
-  for (const record of records) {
-    allProviders.add(record.provider);
-    const host = hostOf(record);
-    allHosts.add(host);
-    if (allowed && !allowed.has(record.provider)) continue;
-    if (allowedHosts && !allowedHosts.has(host)) continue;
-    if (inScope && !inScope(record.cwd)) continue;
-    const date = new Date(record.ts);
-    if (Number.isNaN(date.getTime())) continue;
-    const day = dayNumber(date.getFullYear(), date.getMonth(), date.getDate());
-    if (day > today) continue;
-    earliest = Math.min(earliest, day);
-    rowProviders.add(record.provider);
-    rows.push({ record, day, host, slot: date.getDay() * 24 + date.getHours(), cost: estimateCostUsd(record) });
-  }
-  const startDay = range === 'all' ? earliest : today - (RANGE_DAYS.get(range) - 1);
+// `records` is a RecordTable (or an array of plain records, converted). `catalog` prices every
+// record and the cache savings; it defaults to the bundled catalog.
+export function buildReport(records, { range, now = new Date(), providers, hosts, scope, catalog = DEFAULT_CATALOG } = {}) {
+  // Pass 1: the filters (shared with the breakdown). `providers` and `hosts` list every value in the data.
+  const selected = selectRecords(records, { range, now, providers, hosts, scope });
+  const { table, rows, days, slots, count, hostNames, today, startDay, allProviders, allHosts, rowProviders } = selected;
+  const { costs, entries } = tableCosts(table, catalog);
+  const { names } = table;
+  const nameOf = (id) => (id < 0 ? undefined : names[id]);
 
   // Pass 2: perDay covers every day (streak, calendar). The rest only count in-range records.
+  // Buckets are keyed by name id (Maps keep first-seen order, as the output sorts are stable).
   const perDay = new Map();
-  const perProviderDay = new Map(); // provider -> day -> bucket, in-range records only
+  const perProviderDay = new Map(); // provider id -> day -> bucket, in-range records only
   const totals = { ...blank(), savingsUsd: 0 };
-  const sessions = new Set();
-  const sessionsByProvider = new Map(); // provider -> Set<sessionId>
-  const sessionsByModel = new Map(); // model -> Set<provider:sessionId>
-  const tokensByModel = new Map(); // model -> Map<provider, tokens>
+  const sessionsByProvider = new Map(); // provider id -> Set<sessionId id>
+  const sessionsByModel = new Map(); // model id -> provider id -> Set<sessionId id>
+  const sessionsByHost = new Map(); // host -> provider id -> Set<sessionId id>
+  const tokensByModel = new Map(); // model id -> Map<provider, tokens>
   const punchCard = new Array(168).fill(0);
   const models = new Map();
   const projects = new Map();
   const providerBuckets = new Map();
   const hostBuckets = new Map();
-  const sessionsByHost = new Map(); // host -> Set<provider:sessionId>
-  for (const { record, day, host, slot, cost } of rows) {
-    add(bucket(perDay, day), record, cost);
+  const unpricedByModel = new Map(); // model id -> { model, turns, tokens }, in-range records only
+  const { provider: providerCol, model: modelCol, project: projectCol, sessionId: sessionCol, host: hostCol } = table;
+  const { input: inputCol, output: outputCol, cacheRead: readCol, cacheWrite: writeCol } = table;
+  for (let k = 0; k < count; k++) {
+    const i = rows[k];
+    const day = days[k];
+    const usd = costs[i];
+    const cost = Number.isNaN(usd) ? null : usd;
+    const input = inputCol[i];
+    const output = outputCol[i];
+    const cacheRead = readCol[i];
+    const cacheWrite = writeCol[i];
+    add(bucket(perDay, day), input, output, cacheRead, cacheWrite, cost);
     if (day < startDay) continue;
-    add(totals, record, cost);
-    totals.savingsUsd += savingsOf(record);
-    const session = `${record.provider}:${record.sessionId}`;
-    sessions.add(session);
-    getOrSet(sessionsByProvider, record.provider, () => new Set()).add(record.sessionId);
-    getOrSet(sessionsByModel, record.model, () => new Set()).add(session);
-    const tokensByProvider = getOrSet(tokensByModel, record.model, () => new Map());
-    tokensByProvider.set(record.provider, (tokensByProvider.get(record.provider) ?? 0) + tokensOf(record));
-    punchCard[slot] += tokensOf(record);
-    add(bucket(models, record.model), record, cost);
-    add(bucket(projects, record.project), record, cost);
-    add(bucket(providerBuckets, record.provider), record, cost);
-    add(bucket(hostBuckets, host), record, cost);
-    getOrSet(sessionsByHost, host, () => new Set()).add(session);
-    add(bucket(getOrSet(perProviderDay, record.provider, () => new Map()), day), record, cost);
+    const tokens = input + output + cacheRead + cacheWrite;
+    const provider = providerCol[i];
+    const model = modelCol[i];
+    const sessionId = sessionCol[i];
+    const host = hostNames[hostCol[i] + 1];
+    add(totals, input, output, cacheRead, cacheWrite, cost);
+    if (cost === null) {
+      const unpriced = getOrSet(unpricedByModel, model, () => ({ model: nameOf(model), turns: 0, tokens: 0 }));
+      unpriced.turns += 1;
+      unpriced.tokens += tokens;
+    }
+    // USD the cache reads saved against paying full input price. Unpriced records save nothing.
+    const price = entries[model + 1];
+    totals.savingsUsd += price ? (cacheRead * (price.input - price.cacheRead)) / 1e6 : 0;
+    getOrSet(sessionsByProvider, provider, newSet).add(sessionId);
+    getOrSet(getOrSet(sessionsByModel, model, newMap), provider, newSet).add(sessionId);
+    getOrSet(getOrSet(sessionsByHost, host, newMap), provider, newSet).add(sessionId);
+    const tokensByProvider = getOrSet(tokensByModel, model, newMap);
+    const providerName = nameOf(provider);
+    tokensByProvider.set(providerName, (tokensByProvider.get(providerName) ?? 0) + tokens);
+    punchCard[slots[k]] += tokens;
+    add(bucket(models, model), input, output, cacheRead, cacheWrite, cost);
+    add(bucket(projects, projectCol[i]), input, output, cacheRead, cacheWrite, cost);
+    add(bucket(providerBuckets, provider), input, output, cacheRead, cacheWrite, cost);
+    add(bucket(hostBuckets, host), input, output, cacheRead, cacheWrite, cost);
+    add(bucket(getOrSet(perProviderDay, provider, newMap), day), input, output, cacheRead, cacheWrite, cost);
   }
+  const providerIds = new Map([...providerBuckets.keys(), ...perProviderDay.keys()].map((id) => [nameOf(id), id]));
 
   const dayOf = (day) => perDay.get(day) ?? blank();
   const share = (value) => (totals.total > 0 ? value / totals.total : 0);
@@ -114,7 +116,7 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
   const seriesByProvider = [...rowProviders]
     .sort()
     .map((provider) => {
-      const byDay = perProviderDay.get(provider) ?? new Map();
+      const byDay = perProviderDay.get(providerIds.get(provider)) ?? new Map();
       const series = [];
       let total = 0;
       for (let day = startDay; day <= today; day++) {
@@ -132,7 +134,8 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
     range,
     providers: [...allProviders].sort(),
     hosts: sortHosts(allHosts),
-    scoped: inScope !== null,
+    scoped: Boolean(scope),
+    prices: { version: catalog.version, asOf: newestAsOf(catalog) },
     totals: {
       input: totals.input,
       output: totals.output,
@@ -142,34 +145,37 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
       costUsd: totals.costUsd,
       cacheSavingsUsd: totals.savingsUsd,
       hasUnpriced: totals.unpricedTurns > 0,
-      sessions: sessions.size,
+      unpricedModels: [...unpricedByModel.values()].sort(
+        (a, b) => b.tokens - a.tokens || (String(a.model) < String(b.model) ? -1 : String(a.model) > String(b.model) ? 1 : 0),
+      ),
+      sessions: countSessions(sessionsByProvider),
       turns: totals.pricedTurns + totals.unpricedTurns,
       cacheReuseRate: reads > 0 ? totals.cacheRead / reads : 0,
       // Stricter: cache writes are input that missed the cache, so they count in the denominator.
       cacheHitRate: reads + totals.cacheWrite > 0 ? totals.cacheRead / (reads + totals.cacheWrite) : 0,
     },
-    today: { total: todayBucket.total, costUsd: todayBucket.costUsd },
+    today: { total: todayBucket.total, costUsd: costOf(todayBucket) },
     daily,
     seriesByProvider,
     calendar,
     punchCard,
     byModel: [...models]
       .map(([model, b]) => ({
-        model,
+        model: nameOf(model),
         total: b.total,
         costUsd: costOf(b),
         share: share(b.total),
         provider: topProvider(tokensByModel.get(model)),
-        sessions: sessionsByModel.get(model).size,
+        sessions: countSessions(sessionsByModel.get(model)),
       }))
       .sort(byTotal),
     byProject: [...projects]
-      .map(([project, b]) => ({ project, total: b.total, share: share(b.total) }))
+      .map(([project, b]) => ({ project: nameOf(project), total: b.total, share: share(b.total) }))
       .sort(byTotal)
       .slice(0, TOP_PROJECTS),
     byProvider: [...providerBuckets]
       .map(([provider, b]) => ({
-        provider,
+        provider: nameOf(provider),
         total: b.total,
         costUsd: costOf(b),
         share: share(b.total),
@@ -183,7 +189,7 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
         total: b.total,
         costUsd: costOf(b),
         share: share(b.total),
-        sessions: sessionsByHost.get(host).size,
+        sessions: countSessions(sessionsByHost.get(host)),
         turns: b.pricedTurns + b.unpricedTurns,
       }))
       .sort(byTotal),
@@ -192,33 +198,19 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
   };
 }
 
-// Predicate for the `scope` option: true when the cwd is one of the roots or sits under one at a
-// segment boundary ('/a/b' is not under '/a/bc'). Null when no scope was given. Empty cwds never match.
-function scopeMatcher(scope) {
-  if (!scope) return null;
-  const fold = Boolean(scope.caseInsensitive);
-  const roots = (scope.roots ?? []).map((root) => normalizePath(root, fold));
-  return (cwd) => {
-    if (!cwd) return false;
-    const path = normalizePath(cwd, fold);
-    return roots.some((root) => path === root || path.startsWith(`${root}/`));
-  };
-}
-
-// Forward slashes, no trailing slashes, optionally lower-cased. Roots and cwds both go through it.
-function normalizePath(path, fold) {
-  const slashed = path.replaceAll('\\', '/').replace(/\/+$/, '');
-  return fold ? slashed.toLowerCase() : slashed;
-}
-
-// Records without a host (and empty ones) belong to this machine.
-function hostOf(record) {
-  return record.host || 'local';
-}
-
 // 'local' first, the other hosts sorted. The stable second sort keeps the sorted order of the rest.
 function sortHosts(hosts) {
   return [...hosts].sort().sort((a, b) => (b === 'local') - (a === 'local'));
+}
+
+const newSet = () => new Set();
+const newMap = () => new Map();
+
+// Distinct (provider, sessionId) pairs in a provider -> Set<sessionId> map.
+function countSessions(byProvider) {
+  let n = 0;
+  for (const ids of byProvider.values()) n += ids.size;
+  return n;
 }
 
 function blank() {
@@ -235,12 +227,12 @@ function getOrSet(map, key, make) {
   return value;
 }
 
-function add(b, record, cost) {
-  b.input += record.input;
-  b.output += record.output;
-  b.cacheRead += record.cacheRead;
-  b.cacheWrite += record.cacheWrite;
-  b.total += tokensOf(record);
+function add(b, input, output, cacheRead, cacheWrite, cost) {
+  b.input += input;
+  b.output += output;
+  b.cacheRead += cacheRead;
+  b.cacheWrite += cacheWrite;
+  b.total += input + output + cacheRead + cacheWrite;
   if (cost === null) {
     b.unpricedTurns += 1;
   } else {
@@ -254,10 +246,13 @@ function costOf(b) {
   return b.pricedTurns > 0 ? b.costUsd : null;
 }
 
-// USD the cache reads saved against paying full input price. Unpriced records save nothing.
-function savingsOf(record) {
-  const price = priceFor(record.model);
-  return price ? (record.cacheRead * (price.input - price.cacheRead)) / 1e6 : 0;
+// The newest asOf date among the catalog's entries, or null when none has one.
+export function newestAsOf(catalog) {
+  let newest = null;
+  for (const entry of catalog.entries.values()) {
+    if (entry.asOf && (newest === null || entry.asOf > newest)) newest = entry.asOf;
+  }
+  return newest;
 }
 
 // The provider with the most tokens for a model; ties go to the name sorted first.
@@ -268,17 +263,4 @@ function topProvider(tokensByProvider) {
     if (tokens > top || (tokens === top && provider < best)) best = provider;
   }
   return best;
-}
-
-function tokensOf(record) {
-  return record.input + record.output + record.cacheRead + record.cacheWrite;
-}
-
-// Whole days since the epoch for a local calendar date. Day arithmetic stays in whole days, so DST never shifts it.
-function dayNumber(year, monthIndex, date) {
-  return Date.UTC(year, monthIndex, date) / DAY_MS;
-}
-
-function dayKey(day) {
-  return new Date(day * DAY_MS).toISOString().slice(0, 10);
 }

@@ -19,6 +19,8 @@
   --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
   /* sequential blue, dark steps */
   --q1: #184f95; --q2: #256abf; --q3: #3987e5; --q4: #86b6ef;
+  /* extra slots for the Breakdown buckets */
+  --s5: #9b72d9; --s6: #d4609c; --s7: #7a8a99;
   color-scheme: dark;
 }
 html.light {
@@ -32,6 +34,7 @@ html.light {
   --primary: var(--orca-primary, #141414);
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
   --q1: #b7d3f6; --q2: #6da7ec; --q3: #2a78d6; --q4: #184f95;
+  --s5: #8455c9; --s6: #c44b8a; --s7: #66717d;
   color-scheme: light;
 }
 * { box-sizing: border-box; }
@@ -268,6 +271,115 @@ table.bd { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
 
 .filter-btn .count[hidden] { display: none; }
 .tiles { grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
+
+/* --- 1.2.0: Breakdown view, price line, dialogs --- */
+.small { font-size: 11px; }
+#bd:not([hidden]), #bd-body:not([hidden]) { display: flex; flex-direction: column; gap: 16px; }
+#bd-body[hidden] { display: none; }
+.bd-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.bd-head .label { color: var(--muted-fg); font-size: 12px; display: block; }
+.bd-total { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; display: block; }
+.stack { display: flex; gap: 2px; height: 12px; border-radius: 6px; overflow: hidden; background: var(--muted); }
+.stack span { min-width: 3px; cursor: help; }
+.stack span:hover { filter: brightness(1.2); }
+.bucket-list, .nodes, .reasons, .src-list { list-style: none; margin: 0; padding: 0; }
+.bucket-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 20px; }
+.bucket-list li { display: grid; grid-template-columns: auto 1fr auto 52px; gap: 8px; align-items: baseline; cursor: help; padding: 2px 0; }
+.bucket-list .sw { width: 9px; height: 9px; border-radius: 50%; align-self: center; }
+.amt { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.pct { color: var(--muted-fg); font-variant-numeric: tabular-nums; text-align: right; font-size: 12px; }
+
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; font-size: 12px; }
+.crumb { border: 0; background: none; color: var(--muted-fg); font: inherit; padding: 4px 6px; border-radius: 6px; cursor: pointer; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crumb:hover { color: var(--fg); background: var(--accent); }
+.crumb[aria-current="page"] { color: var(--fg); font-weight: 600; cursor: default; background: none; }
+.crumb:focus-visible { outline: 2px solid var(--s1); }
+.crumbs .sep { color: var(--muted-fg); }
+.nodes li + li { border-top: 1px solid var(--border); }
+.node { display: grid; grid-template-columns: minmax(0, 1fr) auto 52px 14px; gap: 10px; align-items: center; width: 100%; padding: 8px 6px; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; border-radius: 6px; }
+button.node { cursor: pointer; transition: background-color .15s ease; }
+button.node:hover { background: var(--accent); }
+button.node:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+.cell-name { min-width: 0; }
+.node .nm { display: flex; align-items: baseline; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node .nm small { color: var(--muted-fg); font-size: 11px; flex: none; }
+.node .share-line { display: block; height: 2px; border-radius: 2px; margin-top: 5px; min-width: 2px; background: var(--s1); }
+.node .chev { color: var(--muted-fg); font-size: 15px; }
+.nodes .more, .nodes .empty { padding: 8px 6px; font-size: 12px; }
+
+.findings-wrap { display: flex; flex-direction: column; gap: 6px; }
+.findings { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin-top: 4px; }
+.findings > .empty { grid-column: 1 / -1; padding: 10px 12px; border: 1px dashed var(--border); border-radius: var(--radius); }
+.finding { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.finding header { display: flex; flex-direction: column; gap: 4px; }
+.finding h3 { margin: 0; font-size: 13px; font-weight: 600; }
+.finding .tag { align-self: flex-start; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted-fg); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px; }
+.finding .where { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.finding .fig { display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; }
+.finding .fig .label { color: var(--muted-fg); font-size: 11px; display: block; }
+.finding .fig strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.finding .spark-wrap svg.chart { width: 80px; }
+.finding footer { margin-top: auto; padding-top: 4px; display: flex; justify-content: flex-end; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--fg); font: inherit; cursor: pointer; transition: background-color .15s ease; }
+.btn:hover { background: var(--accent); }
+.btn:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.btn:disabled { opacity: .55; cursor: default; }
+.btn.primary { background: var(--s1); border-color: var(--s1); color: #fff; font-weight: 600; }
+.btn.primary:hover:not(:disabled) { filter: brightness(1.1); background: var(--s1); }
+
+.reasons li { padding: 8px 0; }
+.reasons li + li { border-top: 1px solid var(--border); }
+.reasons .row { display: grid; grid-template-columns: 1fr auto 80px; gap: 10px; align-items: baseline; }
+.reasons .name { font-weight: 600; }
+.reasons p { font-size: 12px; margin-top: 2px; }
+#bd-not[hidden] { display: none; }
+
+.stale { align-self: center; border: 1px solid color-mix(in srgb, var(--s1) 45%, var(--border)); background: color-mix(in srgb, var(--s1) 12%, var(--card)); color: var(--fg); font: inherit; font-size: 12px; border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+.stale[hidden] { display: none; }
+
+.prices { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 12px; justify-content: center; }
+.prices[hidden] { display: none; }
+.prices .warn, .warn { flex-basis: 100%; text-align: center; color: var(--s4); font-size: 12px; }
+.note .link-btn { color: var(--fg); font-weight: 600; margin-left: 6px; }
+
+dialog { width: min(760px, calc(100vw - 24px)); max-height: calc(100vh - 32px); padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--orca-popover, var(--card)); color: var(--orca-popover-foreground, var(--fg)); box-shadow: 0 16px 48px rgba(0,0,0,.4); }
+dialog[open] { display: flex; flex-direction: column; gap: 10px; }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog > header, dialog > footer { display: flex; align-items: center; gap: 8px; }
+dialog > header { justify-content: space-between; }
+dialog > footer { justify-content: flex-end; flex-wrap: wrap; }
+dialog > footer .muted { margin-right: auto; }
+dialog .icon-btn { margin-left: 0; }
+.dlg-body { overflow: auto; display: flex; flex-direction: column; gap: 10px; min-height: 60px; }
+.impact { font-size: 14px; }
+.src-list { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; }
+.src-list li::before { content: "●"; margin-right: 6px; }
+.src-list .ok::before { color: var(--s3); }
+.src-list .bad::before { color: var(--orca-destructive, #e34948); }
+.bd.sync td { padding: 6px 8px; }
+.bd.sync td:first-child { width: 1%; text-align: left; }
+.bd.sync td.name { width: auto; overflow-wrap: anywhere; }
+.bd.sync td.name label { display: block; color: var(--fg); }
+.bd.sync td.name .sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-top: 2px; font-size: 11px; color: var(--muted-fg); }
+.bd.sync td.new .small { display: block; font-size: 11px; white-space: nowrap; }
+.bd.sync td, .bd.sync th { vertical-align: top; }
+.bd.sync input { accent-color: var(--s1); width: 15px; height: 15px; }
+.bd.sync tr.overridden td { color: var(--muted-fg); }
+.chip-s { font-size: 11px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--border); white-space: nowrap; }
+.chip-s.agree { border-color: color-mix(in srgb, var(--s3) 50%, var(--border)); }
+.chip-s.flagged, .chip-s.disagree { border-color: color-mix(in srgb, var(--s4) 60%, var(--border)); color: var(--s4); }
+#explain-text { width: 100%; resize: vertical; min-height: 180px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+#explain-text:focus-visible { outline: 2px solid var(--s1); }
+@media (max-width: 480px) {
+  .node { grid-template-columns: minmax(0, 1fr) auto 14px; }
+  .node .pct { display: none; }
+  .bucket-list li { grid-template-columns: auto 1fr auto; }
+  .bucket-list .pct { display: none; }
+}
+
+.seg[hidden] { display: none; }
+.node .nm .txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -282,6 +394,9 @@ table.bd { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
   </section>
 
   <nav class="controls" aria-label="Filters">
+    <div class="seg" role="radiogroup" aria-label="View" id="view">
+      <button role="radio" data-view="usage" aria-checked="true">Usage</button><button role="radio" data-view="breakdown" aria-checked="false" tabindex="-1">Breakdown</button>
+    </div>
     <div class="seg" role="radiogroup" aria-label="Range" id="ranges">
       <button role="radio" data-range="7d" aria-checked="true">7d</button><button role="radio" data-range="30d" aria-checked="false" tabindex="-1">30d</button><button role="radio" data-range="90d" aria-checked="false" tabindex="-1">90d</button><button role="radio" data-range="all" aria-checked="false" tabindex="-1">All</button>
     </div>
@@ -309,7 +424,7 @@ table.bd { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
           <h3 class="pop-title" id="hosts-title">Machine</h3>
           <div class="opt-list" role="radiogroup" aria-labelledby="hosts-title" id="hosts"></div>
         </section>
-        <section class="pop-section">
+        <section class="pop-section" id="sec-cache">
           <label class="toggle"><input type="checkbox" id="cache" checked> Include cache tokens</label>
         </section>
         <footer class="pop-foot"><button class="link-btn" id="filters-reset">Reset filters</button><button class="link-btn" id="filters-done">Done</button></footer>
@@ -321,6 +436,7 @@ table.bd { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
 
   <p id="status" class="status" role="status" hidden></p>
   <p id="notice" class="notice" role="status" hidden></p>
+  <p id="note" class="notice note" hidden></p>
   <section id="sources" class="sources" aria-label="Sources" hidden></section>
   <div id="skeleton" class="skeleton" aria-hidden="true">
     <div class="sk-tiles"><i></i><i></i><i></i><i></i><i></i><i></i></div>
@@ -371,8 +487,8 @@ table.bd { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
     </div>
 
     <article class="card">
-      <header><h2>Breakdown</h2>
-        <div class="seg" role="radiogroup" aria-label="Breakdown by" id="bd-mode"><button role="radio" data-mode="model" aria-checked="true">By model</button><button role="radio" data-mode="day" aria-checked="false" tabindex="-1">By day</button></div>
+      <header><h2>Ranking</h2>
+        <div class="seg" role="radiogroup" aria-label="Rank by" id="bd-mode"><button role="radio" data-mode="model" aria-checked="true">By model</button><button role="radio" data-mode="day" aria-checked="false" tabindex="-1">By day</button></div>
       </header>
       <div class="table-wrap"><table class="bd" id="breakdown"></table></div>
     </article>
@@ -388,8 +504,43 @@ table.bd { width: 100%; border-collapse: collapse; font-variant-numeric: tabular
       </article>
     </div>
 
-    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine and the folders and SSH hosts in Settings. No data is sent anywhere else. Cost is an estimate at list API prices.</p>
+    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine and the folders and SSH hosts in Settings. No usage data is sent anywhere. Cost is an estimate at list API prices.</p>
   </section>
+  <section id="bd" aria-label="Breakdown" hidden>
+    <p id="bd-status" class="status" role="status" hidden></p>
+    <button id="bd-stale" class="stale" hidden>New usage since this view · Update</button>
+    <div id="bd-body" hidden>
+      <article class="card" id="bd-head"></article>
+      <article class="card">
+        <header><h2>Where it went</h2><span class="muted small">Projects › folders › files, commands and tools</span></header>
+        <nav class="crumbs" id="bd-crumbs" aria-label="Location"></nav>
+        <div id="bd-tree"></div>
+      </article>
+      <section aria-labelledby="bd-find-title" class="findings-wrap">
+        <h2 id="bd-find-title">Patterns worth a look</h2>
+        <p class="muted small">Each card is one pattern and what it cost. They overlap, so they don't add up. Explain gives you a prompt for your own agent to find the cause.</p>
+        <div class="findings" id="bd-findings"></div>
+      </section>
+      <article class="card" id="bd-not" hidden></article>
+      <p class="footnote muted" id="bd-foot"></p>
+    </div>
+  </section>
+
+  <section id="prices" class="prices" aria-label="Prices" hidden></section>
+
+  <dialog id="sync-dlg" aria-labelledby="sync-title">
+    <header><h2 id="sync-title">Sync prices</h2><button class="icon-btn" data-close aria-label="Close">✕</button></header>
+    <p class="muted small">Fetches public price lists from LiteLLM and models.dev. Nothing about your usage is sent. Only the rows you tick are applied, and Undo puts the previous prices back.</p>
+    <div id="sync-body" class="dlg-body"></div>
+    <footer><button class="btn" data-close>Cancel</button><button class="btn primary" id="sync-apply" disabled>Apply ticked</button></footer>
+  </dialog>
+
+  <dialog id="explain-dlg" aria-labelledby="explain-title">
+    <header><h2 id="explain-title">Explain this pattern</h2><button class="icon-btn" data-close aria-label="Close">✕</button></header>
+    <p class="muted small">Paste this into Claude Code or Codex in any folder. The agent reads the transcript excerpts listed in the prompt and sends them to its model provider, like any other file it reads.</p>
+    <textarea id="explain-text" readonly rows="12" spellcheck="false" aria-label="Prompt"></textarea>
+    <footer><span class="muted small" id="explain-size"></span><button class="btn" data-close>Close</button><button class="btn primary" id="explain-copy">Copy prompt</button></footer>
+  </dialog>
   <div id="tip" class="tip" role="tooltip" hidden></div>
 </main>
 <script>;(() => {
@@ -927,12 +1078,258 @@ function pixelBanner(report, opts = {}) {
   return `<svg class="banner" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid slice" shape-rendering="crispEdges" role="img" aria-label="Pixel skyline drawn from your usage" xmlns="http://www.w3.org/2000/svg">${body}</svg>`
 }
 
+// src/panel/breakdown.js
+// Breakdown view, Sync dialog and price line: HTML builders from the worker's replies. No DOM
+// access and no dollar math beyond formatting; panel.js owns events and requests.
+
+const BUCKET_INFO = {
+  startup: { label: 'Session start', tip: 'System prompt, tool definitions and memory files loaded before your first message.', color: 'var(--s4)' },
+  tools: { label: 'Tool results', tip: 'File reads, command output and other tool results, paid for again on every turn they stay in context.', color: 'var(--s1)' },
+  messages: { label: 'Your messages', tip: 'What you typed, kept in context.', color: 'var(--s3)' },
+  injected: { label: 'Injected context', tip: 'Reminders, attachments and hook output the harness adds to the conversation.', color: 'var(--s5)' },
+  replies: { label: 'Earlier replies', tip: "The model's own earlier answers, re-read on every turn.", color: 'var(--q4)' },
+  compaction: { label: 'Compaction summaries', tip: 'Summaries written when a long session was compacted.', color: 'var(--s7)' },
+  rebuilds: { label: 'Cache rebuilds', tip: 'Context written to the cache again after it expired, after a model switch, or after compaction.', color: 'var(--s2)' },
+  output: { label: 'Output', tip: 'Tokens the model wrote: answers, tool calls and thinking.', color: 'var(--s6)' },
+  unattributed: { label: 'Unattributed', tip: "Context growth the transcript doesn't explain.", color: 'var(--muted-fg)' },
+}
+
+const REASON_INFO = {
+  ssh: { label: 'On SSH hosts', next: 'Breakdown reads transcripts on this machine only. SSH usage still counts in the total.' },
+  zstd: { label: 'Compressed Codex files', next: "This Orca's Node.js can't read .zst files. Updating Orca fixes it." },
+  'too-large': { label: 'Files too large', next: 'Compressed transcripts over 64 MB are skipped.' },
+  parse: { label: "Files that couldn't be read", next: 'See the This machine status above for which files failed.' },
+  unmatched: { label: 'No transcript detail', next: 'Usage whose transcript lines are gone or trimmed, so it can be counted but not split.' },
+  unpriced: { label: 'Unpriced models', next: 'Add their prices in price-overrides.json (see the README).' },
+}
+
+const FINDING_INFO = {
+  'large-results': { title: 'Large tool result kept in context', what: 'Output from this target stayed in context and was paid for on later turns.' },
+  'repeat-reads': { title: 'Same file read again', what: 'This file was read again with no edit in between.' },
+  'cache-expired': { title: 'Cache expired after a break', what: 'After a pause longer than the cache lifetime, the whole context was written to the cache again.' },
+}
+
+const SYNC_STATUS = {
+  agree: 'Both agree',
+  disagree: 'Sources disagree',
+  single: 'One source only',
+  flagged: 'Check this',
+  new: 'New model',
+  overridden: 'Set in your overrides file',
+}
+const FIELD_LABELS = {
+  input: 'Input',
+  output: 'Output',
+  cacheRead: 'Cache read',
+  'cacheWrite.5m': 'Cache write (5 min)',
+  'cacheWrite.1h': 'Cache write (1 h)',
+  'cacheWrite.default': 'Cache write',
+}
+
+// Dollars: ≈ when estimated, + when some usage is unpriced, — when the value can't be measured.
+function usd(n, { est = false, plus = false } = {}) {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return '—'
+  const v = Number(n)
+  if (v > 0 && v < 0.0001) return `${est ? '≈' : ''}<$0.0001`
+  const text = v >= 1000 ? Math.round(v).toLocaleString('en-US') : v >= 0.995 || v === 0 ? v.toFixed(2) : v.toFixed(v < 0.01 ? 4 : 3)
+  return `${est ? '≈' : ''}$${text}${plus ? '+' : ''}`
+}
+
+function share(x) {
+  const v = (Number(x) || 0) * 100
+  return v > 0 && v < 0.1 ? '<0.1%' : `${v.toFixed(1)}%`
+}
+
+function tipAttr(title, rows) {
+  return `data-tip="${esc(JSON.stringify({ title, rows }))}"`
+}
+
+// Headline and bucket bar: "Spent $X", what was analysed, and where it went by bucket.
+function headline(view) {
+  const t = view.totals
+  const unpriced = (t.unpricedModels || []).length > 0
+  const rest = t.usageUsd - t.analysedUsd
+  const buckets = view.buckets || []
+  const bar = buckets.length
+    ? `<div class="stack" role="img" aria-label="Spend by bucket">${buckets
+        .map((b) => {
+          const info = BUCKET_INFO[b.key] || { label: b.key, tip: '', color: 'var(--muted-fg)' }
+          return `<span style="flex-grow:${Math.max(b.share, 0.004)};background:${info.color}" ${tipAttr(info.label, [['Cost', usd(b.usd, { est: b.est })], ['Share', share(b.share)], ['', info.tip]])}></span>`
+        })
+        .join('')}</div>`
+    : ''
+  const list = buckets
+    .map((b) => {
+      const info = BUCKET_INFO[b.key] || { label: b.key, tip: '', color: 'var(--muted-fg)' }
+      return `<li title="${esc(info.tip)}"><span class="sw" style="background:${info.color}"></span><span class="name">${esc(info.label)}</span><span class="amt">${esc(usd(b.usd, { est: b.est }))}</span><span class="pct">${esc(share(b.share))}</span></li>`
+    })
+    .join('')
+  const sub = rest > 0.005
+    ? `${usd(t.analysedUsd)} broken down · ${usd(rest)} not analysed (below)`
+    : 'All of it broken down'
+  return `<div class="bd-head"><div><span class="label">Spent</span><strong class="bd-total">${esc(usd(t.usageUsd, { plus: unpriced }))}</strong><p class="muted">${esc(sub)}</p></div></div>${bar}<ul class="bucket-list">${list}</ul>`
+}
+
+// Names for the targets the fold makes itself (kind 'bucket').
+const OWN_TARGETS = {
+  startup: 'Session start',
+  replies: 'Earlier replies',
+  output: 'Output',
+  unattributed: 'Unattributed',
+  other: '(other)',
+  'rebuild:idle': 'Cache rebuilt after a break',
+  'rebuild:model': 'Cache rebuilt after a model switch',
+  'rebuild:compaction': 'Cache rebuilt after compaction',
+  'rebuild:other': 'Other cache rewrites',
+}
+
+// Breadcrumbs and the rows of the selected level. Rows with children are buttons that drill in.
+function tree(view) {
+  const path = view.path || []
+  const crumbs = [`<button class="crumb" data-depth="0"${path.length === 0 ? ' aria-current="page"' : ''}>All projects</button>`]
+  path.forEach((key, i) => {
+    const label = i === 0 ? lastSegment(key) : key
+    crumbs.push(`<span class="sep" aria-hidden="true">›</span><button class="crumb" data-depth="${i + 1}"${i === path.length - 1 ? ' aria-current="page"' : ''} title="${esc(key)}">${esc(label)}</button>`)
+  })
+  const nodes = view.nodes || []
+  const top = Math.max(0, ...nodes.map((n) => n.usd))
+  const rows = nodes
+    .map((n) => {
+      const width = top > 0 ? Math.max(1.5, (n.usd / top) * 100) : 0
+      const label = n.kind === 'bucket' ? OWN_TARGETS[n.key] ?? n.label : n.label || n.key
+      const name = `<span class="nm"><span class="txt">${esc(label)}</span>${n.kind === 'folder' || n.kind === 'group' || n.kind === 'project' ? '' : `<small>${esc(kindLabel(n.kind))}</small>`}</span><span class="share-line" style="width:${width.toFixed(1)}%"></span>`
+      const cells = `<span class="amt">${esc(usd(n.usd, { est: n.est }))}</span><span class="pct">${esc(share(n.share))}</span>`
+      return n.children
+        ? `<li><button class="node" data-key="${esc(n.key)}" title="${esc(n.key)}"><span class="cell-name">${name}</span>${cells}<span class="chev" aria-hidden="true">›</span></button></li>`
+        : `<li><div class="node leaf" title="${esc(n.key)}"><span class="cell-name">${name}</span>${cells}<span class="chev" aria-hidden="true"></span></div></li>`
+    })
+    .join('')
+  const more = view.more ? `<li class="more muted">+ ${view.more.count} more · ${esc(usd(view.more.usd))}</li>` : ''
+  const empty = nodes.length ? '' : '<li class="muted empty">Nothing analysed here in this range.</li>'
+  return { crumbs: crumbs.join(''), rows: `<ul class="nodes">${rows}${more}${empty}</ul>` }
+}
+
+function kindLabel(kind) {
+  return { file: 'file', command: 'command', agent: 'subagent', web: 'web', mcp: 'MCP', tool: 'tool', messages: 'message', injected: 'injected', summary: 'summary', bucket: '' }[kind] ?? ''
+}
+
+function lastSegment(path) {
+  const parts = String(path).split(/[\\/]+/).filter(Boolean)
+  return parts[parts.length - 1] || String(path)
+}
+
+// Finding cards. They overlap, so no total is shown.
+function findings(view) {
+  const list = view.findings || []
+  if (!list.length) return '<p class="muted empty">No pattern above $1 in this range.</p>'
+  return list
+    .map((f) => {
+      const info = FINDING_INFO[f.kind] || { title: f.kind, what: '' }
+      const where = f.kind === 'cache-expired' ? lastSegment(f.where.project) : `${f.where.label} · ${lastSegment(f.where.project)}`
+      const spark = (f.daily || []).length > 1 ? `<span class="spark-wrap" aria-hidden="true">${sparkline(f.daily.map((d) => d[1]), { width: 80, height: 22 })}</span>` : ''
+      const facts = [`${f.facts?.sessions ?? 0} session${f.facts?.sessions === 1 ? '' : 's'}`, f.lastSeen ? `last seen ${f.lastSeen}` : ''].filter(Boolean).join(' · ')
+      return `<article class="finding"><header><span class="tag">${esc(f.harness === 'codex' ? 'Codex' : 'Claude Code')}</span><h3>${esc(info.title)}</h3></header>
+<p class="where" title="${esc(f.where.key)}">${esc(where)}</p>
+<div class="fig"><div><span class="label">Cost of this pattern</span><strong>${esc(usd(f.usd, { est: f.est }))}</strong></div>${spark}</div>
+<p class="muted">${esc(info.what)} ${esc(facts)}.</p>
+<footer><button class="btn" data-explain="${esc(f.id)}">Explain…</button></footer></article>`
+    })
+    .join('')
+}
+
+// Spend that wasn't split, by reason, with what to do about it.
+function notAnalysed(view) {
+  const rows = view.totals.notAnalysed || []
+  if (!rows.length) return ''
+  const models = (view.totals.unpricedModels || []).map((m) => m.model).filter(Boolean)
+  const items = rows
+    .map((r) => {
+      const info = REASON_INFO[r.reason] || { label: r.reason, next: '' }
+      const extra = r.reason === 'unpriced' && models.length ? ` Models: ${models.slice(0, 6).join(', ')}${models.length > 6 ? '…' : ''}.` : ''
+      return `<li><div class="row"><span class="name">${esc(info.label)}</span><span class="amt">${esc(usd(r.usd))}</span><span class="pct muted">${r.turns.toLocaleString()} turns</span></div><p class="muted">${esc(info.next + extra)}</p></li>`
+    })
+    .join('')
+  return `<header><h2>Not analysed</h2></header><ul class="reasons">${items}</ul>`
+}
+
+function legend(view) {
+  const h = view.health || {}
+  const parts = [`≈ estimated split (${share(h.splitShare)} of the analysed cost)`, '+ some models unpriced', '— can’t be measured']
+  if (h.dedupeUsd > 0.005) parts.push(`${usd(h.dedupeUsd)} of repeated history from resumed sessions left out`)
+  if (h.explainUsd > 0.005) parts.push(`${usd(h.explainUsd)} from Explain sessions, not in findings`)
+  return parts.join(' · ')
+}
+
+// The price source line: where prices come from and the Sync, Undo and Reset actions.
+function priceLine(status) {
+  if (!status) return ''
+  const from = status.overlay
+    ? `Prices: synced ${String(status.overlay.appliedAt || '').slice(0, 10)}${status.overlay.sources?.length ? ` from ${status.overlay.sources.join(' + ')}` : ''}`
+    : `Prices: bundled ${status.asOf || ''}`
+  const o = status.overrides
+  const own = o ? ` · <span title="${esc(o.file)}">+ your overrides (${o.models} model${o.models === 1 ? '' : 's'}${o.aliases ? `, ${o.aliases} alias${o.aliases === 1 ? '' : 'es'}` : ''})</span>` : ''
+  const problems = o?.problems?.length ? `<p class="warn">Overrides file: ${esc(o.problems.slice(0, 3).join('; '))}${o.problems.length > 3 ? '…' : ''}</p>` : ''
+  const actions = [
+    '<button class="link-btn" data-price="sync">Sync prices…</button>',
+    status.canUndo ? '<button class="link-btn" data-price="undo">Undo</button>' : '',
+    status.overlay ? '<button class="link-btn" data-price="reset">Reset to bundled</button>' : '',
+  ].join('')
+  return `<span class="muted">${esc(from)}${own}</span>${actions}${problems}`
+}
+
+// The Sync dialog body: impact first, then the source results and the rows to tick.
+// A row whose sources give exactly the price in use changes nothing, so it is counted, not listed.
+function changedSyncRows(rows = []) {
+  return rows.filter((r) => {
+    const values = [r.litellm, r.modelsdev].filter((v) => v !== null && v !== undefined)
+    return r.current === null || r.current === undefined || values.some((v) => Math.abs(v - r.current) > 1e-9)
+  })
+}
+
+function syncBody(result) {
+  const sources = (result.sources || [])
+    .map((s) => `<li class="${s.ok ? 'ok' : 'bad'}">${esc(s.name === 'litellm' ? 'LiteLLM' : s.name)}: ${s.ok ? `${s.rows} prices for your models` : esc(s.error || 'failed')}</li>`)
+    .join('')
+  const all = result.rows || []
+  const rows = changedSyncRows(all)
+  const same = all.length - rows.length
+  const impact = result.impact
+    ? `<p class="impact">Last 30 days: <strong>${esc(usd(result.impact.beforeUsd))}</strong> now → <strong>${esc(usd(result.impact.afterUsd))}</strong> with the pre-ticked changes.</p>`
+    : ''
+  const fmt = (v) => (v === null || v === undefined ? '—' : `$${Number(v)}`)
+  // New: the price a ticked row applies (LiteLLM's, else models.dev's); the other source's price
+  // follows when it differs.
+  const proposed = (r) => {
+    const first = r.litellm ?? r.modelsdev
+    const other = r.litellm !== null && r.litellm !== undefined && r.modelsdev !== null && r.modelsdev !== undefined && Math.abs(r.litellm - r.modelsdev) > 1e-9
+      ? `<span class="muted small">models.dev ${esc(fmt(r.modelsdev))}</span>`
+      : ''
+    return `${esc(fmt(first))}${other}`
+  }
+  const table = rows.length
+    ? `<div class="table-wrap"><table class="bd sync"><thead><tr><th></th><th>Price per 1M tokens</th><th>Now</th><th>New</th></tr></thead><tbody>${rows
+        .map((r) => {
+          const id = `sync-${esc(r.key)}`
+          const disabled = r.status === 'overridden' ? ' disabled' : ''
+          const field = FIELD_LABELS[r.field] || r.field
+          return `<tr class="${esc(r.status)}"><td><input type="checkbox" id="${id}" data-key="${esc(r.key)}"${r.ticked ? ' checked' : ''}${disabled} aria-label="Apply ${esc(r.model)} ${esc(field)}"></td><td class="name"><label for="${id}">${esc(r.model)}</label><span class="sub">${esc(field)} <span class="chip-s ${esc(r.status)}">${esc(SYNC_STATUS[r.status] || r.status)}</span></span></td><td>${esc(fmt(r.current))}</td><td class="new">${proposed(r)}</td></tr>`
+        })
+        .join('')}</tbody></table></div>`
+    : '<p class="muted">Your prices match the sources for every model you use.</p>'
+  const matching = same > 0 && rows.length ? `<p class="muted small">${same} more ${same === 1 ? 'price matches' : 'prices match'} what you use now and ${same === 1 ? 'is' : 'are'} not listed.</p>` : ''
+  const note = rows.some((r) => r.status === 'flagged')
+    ? '<p class="muted small">“Check this” means a change of 10× or more, a zero price on a paid model, or a per-token price this plugin doesn’t know yet. These are never pre-ticked.</p>'
+    : ''
+  return `${impact}<ul class="src-list">${sources}</ul>${table}${matching}${note}`
+}
+
 // src/panel/panel.js
 // Panel controller: asks the worker for a Report and renders it. Knows nothing about transcripts.
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { range: '7d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false }
+const state = { view: 'usage', range: '7d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
 
 function money(n) {
   const v = Number(n) || 0
@@ -957,6 +1354,17 @@ async function request(name, input) {
   throw new Error('Orca host is not available.')
 }
 
+// The filters both views share, as the worker's input.
+function filterInput() {
+  const input = { range: state.range }
+  if (state.provider !== 'all') input.providers = [state.provider]
+  if (state.host !== 'all') input.hosts = [state.host]
+  if (state.scope !== 'all') input.scope = state.scope
+  return input
+}
+
+// Loads the report (header, controls, Usage view), then the Breakdown when it is on screen, so a
+// range or filter change updates both.
 async function load(kind = 'usage.report') {
   if (state.busy) {
     // A change that lands mid-request triggers one more load when this one finishes.
@@ -972,12 +1380,9 @@ async function load(kind = 'usage.report') {
     $('skeleton').hidden = false
   }
   try {
-    const input = { range: state.range }
-    if (state.provider !== 'all') input.providers = [state.provider]
-    if (state.host !== 'all') input.hosts = [state.host]
-    if (state.scope !== 'all') input.scope = state.scope
-    state.report = await request(kind, input)
+    state.report = await request(kind, filterInput())
     render()
+    if (state.view === 'breakdown') setTimeout(() => loadBreakdown(), 0)
     $('live').textContent = kind === 'usage.refresh' ? `Refreshed. ${compact(state.report.totals.total)} tokens in range.` : ''
   } catch (err) {
     showStatus(`Couldn't load usage: ${err?.message || err}`, true)
@@ -1124,8 +1529,10 @@ function legendItem(color, label, value) {
 }
 
 function render() {
+  renderView()
   const r = state.report
   if (!r) return
+  renderNote()
   const keys = state.cache ? TOKEN_KEYS : ['input', 'output']
   const t = r.totals
   const shownTotal = keys.reduce((s, k) => s + (t[k] || 0), 0)
@@ -1161,18 +1568,18 @@ function render() {
   if (focusGroup && !$('filters-pop').hidden) $(focusGroup)?.querySelector('[aria-checked="true"]')?.focus()
 
   const empty = t.turns === 0
-  $('status').hidden = !empty
+  $('status').hidden = !empty || state.view === 'breakdown'
   if (empty) {
     $('status').textContent = 'No usage in this range yet. Run Claude Code or Codex and it will appear here.'
     $('status').classList.remove('error')
   }
-  $('content').hidden = false
+  $('content').hidden = state.view === 'breakdown'
 
   const daySpark = sparkline(r.daily.map((d) => keys.reduce((s, k) => s + (d[k] || 0), 0)))
   $('tiles').innerHTML = [
     tile('Tokens', compact(shownTotal), `${compact(t.input)} in · ${compact(t.output)} out`, `<div class="spark-wrap">${daySpark}</div>`),
     tile('Est. cost', money(t.costUsd) + (t.hasUnpriced ? '+' : ''), t.hasUnpriced ? 'some models unpriced' : 'at API list prices'),
-    tile('Today', compact(r.today.total), money(r.today.costUsd)),
+    tile('Today', compact(r.today.total), r.today.costUsd == null ? '—' : money(r.today.costUsd)),
     cacheTile(t),
     tile('Sessions / turns', `${t.sessions.toLocaleString()} / ${t.turns.toLocaleString()}`),
     tile('Streak', `${r.streak.current} day${r.streak.current === 1 ? '' : 's'}`, `longest ${r.streak.longest}`),
@@ -1269,6 +1676,218 @@ function renderBreakdown(r) {
   $('breakdown').innerHTML = head + `<tbody>${body}</tbody>`
 }
 
+// Which view is on screen, and the controls that only apply to Usage.
+function renderView() {
+  const bd = state.view === 'breakdown'
+  for (const b of $('view').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.view === state.view))
+  $('metric').hidden = bd
+  $('sec-cache').hidden = bd
+  $('content').hidden = bd || !state.report
+  $('bd').hidden = !bd
+  if (bd) $('status').hidden = true
+  $('prices').hidden = !state.prices
+  $('prices').innerHTML = priceLine(state.prices)
+}
+
+// A one-time note that 1.2.0 changed how costs are priced. localStorage can be missing or throw
+// (private frames), so the note just shows again in that case.
+function renderNote() {
+  let seen = false
+  try { seen = globalThis.localStorage?.getItem(NOTE_KEY) === '1' } catch {}
+  const el = $('note')
+  if (seen || !el.hidden) return
+  el.innerHTML = 'Prices now come from a per-model catalog with tiers and 1-hour cache writes, so some costs differ from earlier versions. <button class="link-btn" id="note-ok">Got it</button>'
+  el.hidden = false
+}
+
+async function loadBreakdown() {
+  if (state.bdBusy) { state.bdAgain = true; return }
+  state.bdBusy = true
+  $('bd-stale').hidden = true
+  if (!state.bd) {
+    $('bd-status').textContent = 'Splitting your usage by file, command and tool… The first run reads the transcripts in this range and takes a few seconds.'
+    $('bd-status').classList.remove('error')
+    $('bd-status').hidden = false
+  }
+  try {
+    const view = await request('usage.breakdown', { ...filterInput(), ...(state.bdPath.length ? { path: state.bdPath } : {}) })
+    if (view?.loading) {
+      const { done = 0, total = 0 } = view.loading
+      $('bd-status').textContent = `Reading transcripts… ${done.toLocaleString()} of ${total.toLocaleString()} files. This view updates when it's done.`
+      $('bd-status').classList.remove('error')
+      $('bd-status').hidden = false
+      state.bdLoading = true
+      return
+    }
+    state.bdLoading = false
+    state.bd = view
+    state.bdPath = view.path || []
+    renderBreakdownView()
+  } catch (err) {
+    $('bd-status').textContent = `Couldn't build the breakdown: ${err?.message || err}`
+    $('bd-status').classList.add('error')
+    $('bd-status').hidden = false
+  } finally {
+    state.bdBusy = false
+    if (state.bdAgain) {
+      state.bdAgain = false
+      setTimeout(() => loadBreakdown(), 0)
+    }
+  }
+}
+
+function renderBreakdownView() {
+  const v = state.bd
+  if (!v) return
+  $('bd-status').hidden = true
+  $('bd-body').hidden = false
+  $('bd-head').innerHTML = headline(v)
+  const t = tree(v)
+  $('bd-crumbs').innerHTML = t.crumbs
+  $('bd-tree').innerHTML = t.rows
+  $('bd-findings').innerHTML = findings(v)
+  const not = notAnalysed(v)
+  $('bd-not').hidden = !not
+  $('bd-not').innerHTML = not
+  $('bd-foot').textContent = legend(v)
+}
+
+async function loadPrices() {
+  try {
+    state.prices = await request('prices.status')
+  } catch {
+    state.prices = null
+  }
+  renderView()
+}
+
+async function priceAction(action) {
+  if (action === 'sync') return openSync()
+  try {
+    await request(action === 'undo' ? 'prices.undo' : 'prices.reset')
+    $('live').textContent = action === 'undo' ? 'Previous prices restored.' : 'Bundled prices restored.'
+  } catch (err) {
+    showStatus(`Couldn't change prices: ${err?.message || err}`, true)
+  }
+  await loadPrices()
+}
+
+async function openSync() {
+  const dlg = $('sync-dlg')
+  $('sync-body').innerHTML = '<p class="muted">Fetching LiteLLM and models.dev…</p>'
+  $('sync-apply').disabled = true
+  state.sync = null
+  if (!dlg.open) dlg.showModal?.()
+  try {
+    state.sync = await request('prices.sync')
+    $('sync-body').innerHTML = syncBody(state.sync)
+    $('sync-apply').disabled = !changedSyncRows(state.sync.rows).some((r) => r.status !== 'overridden')
+  } catch (err) {
+    $('sync-body').innerHTML = `<p class="status error">Couldn't fetch prices: ${esc(err?.message || err)}</p>`
+  }
+}
+
+async function applySync() {
+  if (!state.sync) return
+  const keys = [...$('sync-body').querySelectorAll('input[type=checkbox][data-key]')].filter((b) => b.checked && !b.disabled).map((b) => b.dataset.key)
+  $('sync-apply').disabled = true
+  try {
+    await request('prices.apply', { diffId: state.sync.diffId, keys })
+    $('sync-dlg').close?.()
+    $('live').textContent = `${keys.length} price${keys.length === 1 ? '' : 's'} applied.`
+    await loadPrices()
+  } catch (err) {
+    const stale = err?.code === 'stale_diff' || /stale_diff|out of date/.test(String(err?.message))
+    $('sync-body').insertAdjacentHTML('afterbegin', `<p class="status error">${esc(stale ? 'Prices changed since this sync. Sync again.' : `Couldn't apply: ${err?.message || err}`)}</p>`)
+    $('sync-apply').disabled = false
+  }
+}
+
+async function openExplain(findingId) {
+  const dlg = $('explain-dlg')
+  $('explain-text').value = 'Building the prompt…'
+  $('explain-size').textContent = ''
+  if (!dlg.open) dlg.showModal?.()
+  try {
+    const res = await request('usage.explain', { ...filterInput(), findingId })
+    $('explain-text').value = res.prompt
+    $('explain-size').textContent = `≈ ${compact(res.estTokens)} tokens for your agent to read it`
+  } catch (err) {
+    $('explain-text').value = `Couldn't build the prompt: ${err?.message || err}`
+  }
+}
+
+// Clipboard access can be blocked in a frame; selecting the text keeps a manual copy one keystroke away.
+async function copyExplain() {
+  const box = $('explain-text')
+  box.focus()
+  box.select()
+  let ok = false
+  try {
+    await navigator.clipboard.writeText(box.value)
+    ok = true
+  } catch {
+    try { ok = document.execCommand('copy') } catch {}
+  }
+  $('explain-copy').textContent = ok ? 'Copied' : 'Press Ctrl+C to copy'
+  setTimeout(() => { $('explain-copy').textContent = 'Copy prompt' }, 2000)
+}
+
+function bindBreakdown() {
+  $('view').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-view]')
+    if (!b || b.dataset.view === state.view) return
+    state.view = b.dataset.view
+    renderView()
+    if (state.view === 'breakdown') loadBreakdown()
+    else if (state.report) render()
+    else load()
+  })
+  $('bd-tree').addEventListener('click', (e) => {
+    const b = e.target.closest('button.node[data-key]')
+    if (!b) return
+    state.bdPath = [...state.bdPath, b.dataset.key].slice(0, 8)
+    loadBreakdown()
+  })
+  $('bd-crumbs').addEventListener('click', (e) => {
+    const b = e.target.closest('button.crumb')
+    if (!b) return
+    state.bdPath = state.bdPath.slice(0, Number(b.dataset.depth) || 0)
+    loadBreakdown()
+  })
+  $('bd-findings').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-explain]')
+    if (b) openExplain(b.dataset.explain)
+  })
+  $('bd-stale').addEventListener('click', () => load())
+  $('prices').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-price]')
+    if (b) priceAction(b.dataset.price)
+  })
+  $('note').addEventListener('click', (e) => {
+    if (!e.target.closest('#note-ok')) return
+    try { globalThis.localStorage?.setItem(NOTE_KEY, '1') } catch {}
+    $('note').hidden = true
+  })
+  for (const id of ['sync-dlg', 'explain-dlg']) {
+    $(id).addEventListener('click', (e) => {
+      if (e.target.closest('[data-close]')) $(id).close?.()
+    })
+  }
+  $('sync-apply').addEventListener('click', applySync)
+  $('explain-copy').addEventListener('click', copyExplain)
+}
+
+// New data while Breakdown is on screen: a loading view refreshes itself; a finished one offers an
+// update instead of reordering under the reader.
+function onChanged() {
+  loadPrices()
+  if (state.view !== 'breakdown') return load()
+  if (state.bdLoading || !state.bd) return loadBreakdown()
+  $('bd-stale').hidden = false
+  state.report = null
+}
+
 function bindTooltip() {
   const tip = $('tip')
   document.addEventListener('pointermove', (e) => {
@@ -1304,7 +1923,7 @@ function bindRadioKeys(group) {
 
 // Only the selected option is in the tab order (roving tabindex).
 function syncRadioTabs() {
-  for (const id of ['ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) {
+  for (const id of ['view', 'ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) {
     const items = [...$(id).querySelectorAll('button[role="radio"]')]
     const checked = items.find((b) => b.getAttribute('aria-checked') === 'true') || items[0]
     for (const b of items) b.tabIndex = b === checked ? 0 : -1
@@ -1312,7 +1931,7 @@ function syncRadioTabs() {
 }
 
 function bindControls() {
-  for (const id of ['ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) bindRadioKeys($(id))
+  for (const id of ['view', 'ranges', 'metric', 'scope', 'providers', 'hosts', 'bd-mode']) bindRadioKeys($(id))
   $('scope').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-scope]')
     if (!b || b.dataset.scope === state.scope) return
@@ -1374,7 +1993,7 @@ function bindControls() {
     render()
   })
   $('refresh').addEventListener('click', () => load('usage.refresh'))
-  host?.plugin?.on?.('usage.changed', () => load())
+  host?.plugin?.on?.('usage.changed', onChanged)
   host?.on?.('theme', () => state.report && render())
   // Charts are drawn at the container's pixel width, so redraw when the panel is resized.
   let lastW = 0
@@ -1383,15 +2002,17 @@ function bindControls() {
     clearTimeout(timer)
     timer = setTimeout(() => {
       const w = document.body?.clientWidth || 0
-      if (state.report && Math.abs(w - lastW) > 8) { lastW = w; render() }
+      if (state.report && state.view === 'usage' && Math.abs(w - lastW) > 8) { lastW = w; render() }
     }, 120)
   })
 }
 
 if (typeof document !== 'undefined' && document.getElementById('app')) {
   bindControls()
+  bindBreakdown()
   bindTooltip()
   load()
+  loadPrices()
 }
 
 })()</script>

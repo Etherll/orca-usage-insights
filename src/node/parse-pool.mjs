@@ -4,8 +4,12 @@
 // scanner parses the file inline instead.
 import { Worker } from 'node:worker_threads';
 
-export function createParsePool(size) {
+// idleMs: threads idle this long exit, so their memory goes back after a scan. Later jobs start
+// new ones.
+export function createParsePool(size, { idleMs = 5_000 } = {}) {
   const idle = [];
+  const retiring = new Set();
+  let idleTimer = null;
   const all = new Set();
   const queue = [];
   let broken = false;
@@ -13,20 +17,26 @@ export function createParsePool(size) {
   const pending = new Map();
 
   function spawn() {
-    const worker = new Worker(new URL('./parse-thread.mjs', import.meta.url));
+    // A small young generation: parse threads make many short-lived strings, and the default
+    // semi-spaces cost tens of MB per thread for no speed gain (measured).
+    const worker = new Worker(new URL('./parse-thread.mjs', import.meta.url), { resourceLimits: { maxYoungGenerationSizeMb: 4 } });
     worker.unref();
-    worker.on('message', ({ id, ok, state, error }) => {
+    worker.on('message', ({ id, ok, state, offset, error }) => {
       const job = pending.get(id);
       pending.delete(id);
       worker.unref();
       idle.push(worker);
       pump();
+      scheduleRetire();
       if (!job) return;
-      if (ok) job.resolve({ state });
+      if (ok) job.resolve({ state, offset });
       else job.reject(new Error(error));
     });
     worker.on('error', (error) => fail(worker, error));
-    worker.on('exit', (code) => code !== 0 && fail(worker, new Error(`parse thread exited ${code}`)));
+    worker.on('exit', (code) => {
+      if (retiring.delete(worker)) return;
+      if (code !== 0) fail(worker, new Error(`parse thread exited ${code}`));
+    });
     all.add(worker);
     return worker;
   }
@@ -42,6 +52,21 @@ export function createParsePool(size) {
       }
     }
     if (all.size === 0) broken = true;
+  }
+
+  // When nothing is queued or running, idle threads exit after idleMs.
+  function scheduleRetire() {
+    clearTimeout(idleTimer);
+    if (queue.length > 0 || pending.size > 0) return;
+    idleTimer = setTimeout(() => {
+      if (queue.length > 0 || pending.size > 0) return;
+      for (const worker of idle.splice(0)) {
+        all.delete(worker);
+        retiring.add(worker);
+        worker.terminate().catch(() => {});
+      }
+    }, idleMs);
+    idleTimer.unref?.();
   }
 
   function pump() {
@@ -62,23 +87,22 @@ export function createParsePool(size) {
       job.worker = worker;
       pending.set(id, job);
       worker.ref();
-      // Copy into a transferable buffer of exactly this size, then hand it over without a copy.
-      const bytes = new Uint8Array(job.buf.byteLength);
-      bytes.set(job.buf);
-      worker.postMessage({ id, kind: job.kind, ctx: job.ctx, bytes }, [bytes.buffer]);
+      worker.postMessage({ id, ...job.spec });
     }
   }
 
   return {
-    parse(buf, kind, ctx) {
+    // spec: { mode, kind, ctx, compressed, markers, path, size }. The thread reads the file.
+    parse(spec) {
       if (broken) return Promise.reject(new Error('parse pool unavailable'));
       return new Promise((resolve, reject) => {
-        queue.push({ buf, kind, ctx, resolve, reject });
+        queue.push({ spec, resolve, reject });
         pump();
       });
     },
     async close() {
       broken = true;
+      clearTimeout(idleTimer);
       for (const job of queue.splice(0)) job.reject(new Error('parse pool closed'));
       await Promise.all([...all].map((w) => w.terminate()));
       all.clear();

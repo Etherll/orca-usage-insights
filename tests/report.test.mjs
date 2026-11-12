@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildReport } from '../src/core/report.mjs';
+import { BUNDLED } from '../src/core/catalog-data.mjs';
+import { buildCatalog } from '../src/core/catalog.mjs';
 
 // Fixed "now" is local 2026-11-03 15:30. Every timestamp is built from local parts, so these
 // assertions hold in any TZ.
@@ -208,10 +210,10 @@ test('unpriced models save nothing in cacheSavingsUsd', () => {
   assert.equal(build([rec(ago(0), { provider: 'codex', model: 'gpt-5-codex', cacheRead: 5_000_000 })]).totals.cacheSavingsUsd, 0);
 
   const mixed = build([
-    rec(ago(0), { model: 'claude-haiku-5', cacheRead: 1_000_000 }),
+    rec(ago(0), { model: 'claude-haiku-5-5', cacheRead: 1_000_000 }),
     rec(ago(0), { provider: 'codex', model: 'gpt-5-codex', cacheRead: 9_000_000 }),
   ]);
-  // Haiku 5 bills input at $0.10 and cache reads at $0.01 per 1M, so 1M reads save $0.09.
+  // Haiku 5.5 bills input at $0.10 and cache reads at $0.01 per 1M, so 1M reads save $0.09.
   assert.ok(Math.abs(mixed.totals.cacheSavingsUsd - 0.09) < 1e-9, String(mixed.totals.cacheSavingsUsd));
 });
 
@@ -419,4 +421,50 @@ test('scope and hosts narrow every output, not only the totals', () => {
   assert.deepEqual(r.streak, { current: 1, longest: 1 });
   assert.deepEqual(r.byHost.map((h) => [h.host, h.total]), [['ssh:box', 101]]);
   assert.deepEqual(r.hosts, ['local', 'ssh:box']);
+});
+
+test('unpricedModels lists unpriced models by tokens, ties by name, in range only', () => {
+  const r = build([
+    rec(ago(0), { provider: 'codex', model: 'gpt-5-codex', input: 100 }),
+    rec(ago(1), { provider: 'codex', model: 'gpt-5-codex', output: 10 }),
+    rec(ago(0), { provider: 'codex', model: 'gpt-5.1-codex-mini', input: 10 }),
+    rec(ago(0), { provider: 'codex', model: 'codex', input: 10 }),
+    rec(ago(30), { provider: 'codex', model: 'old-model', input: 999 }),
+    rec(ago(0), { model: 'claude-opus-5-5', input: 1_000_000 }),
+  ], '7d');
+  assert.deepEqual(r.totals.unpricedModels, [
+    { model: 'gpt-5-codex', turns: 2, tokens: 110 },
+    { model: 'codex', turns: 1, tokens: 10 },
+    { model: 'gpt-5.1-codex-mini', turns: 1, tokens: 10 },
+  ]);
+  assert.deepEqual(build([]).totals.unpricedModels, []);
+});
+
+test('prices names the default catalog version and its newest price date', () => {
+  const r = build([]);
+  assert.match(r.prices.version, /^[0-9a-f]{8}$/);
+  assert.equal(r.prices.asOf, '2026-11-11');
+});
+
+test('a catalog option prices every record and the report names that catalog', () => {
+  const catalog = buildCatalog(BUNDLED, null, { asOf: '2026-12-01', models: { 'claude-opus-5-5': { input: 1 } } });
+  const r = build([rec(ago(0), { model: 'claude-opus-5-5', input: 1_000_000 })], '7d', { catalog });
+  assert.equal(r.totals.costUsd, 1);
+  assert.equal(r.today.costUsd, 1);
+  assert.equal(r.prices.version, catalog.version);
+  assert.notEqual(r.prices.version, build([]).prices.version);
+  assert.equal(r.prices.asOf, '2026-12-01');
+});
+
+test('cacheSavingsUsd uses the catalog it is given', () => {
+  const catalog = buildCatalog(BUNDLED, null, { models: { 'claude-sonnet-4-5': { input: 10, cacheRead: 1 } } });
+  const r = build([rec(ago(0), { model: 'claude-sonnet-4-5', cacheRead: 2_000_000 })], '7d', { catalog });
+  // Sonnet 4.5 has no tiers here, so 2M reads save 2 x ($10 - $1).
+  assert.ok(Math.abs(r.totals.cacheSavingsUsd - 18) < 1e-9, String(r.totals.cacheSavingsUsd));
+});
+
+test('today.costUsd is null when today has no priced turn', () => {
+  assert.equal(build([]).today.costUsd, null);
+  assert.equal(build([rec(ago(1), { model: 'claude-opus-5-5', input: 1 })]).today.costUsd, null);
+  assert.equal(build([rec(ago(0), { provider: 'codex', model: 'gpt-5-codex', input: 1 })]).today.costUsd, null);
 });

@@ -1,5 +1,6 @@
 // Byte-level line filter shared by the scanner and its parse threads.
-import { LINE_MARKERS } from '../core/providers.mjs';
+import { LINE_MARKERS, MARKER_HEADS, PROVIDERS } from '../core/providers.mjs'
+import { CLAUDE_MARKERS, CODEX_MARKERS, SLIM_MIN, parseJson } from '../core/records.mjs'
 
 const LF = 0x0a;
 export const MARKER_BYTES = Object.fromEntries(Object.entries(LINE_MARKERS).map(([kind, list]) => [kind, list.map((m) => Buffer.from(m))]));
@@ -8,6 +9,8 @@ export const MARKER_BYTES = Object.fromEntries(Object.entries(LINE_MARKERS).map(
 // Most transcript bytes are message content on lines with no usage, so this skips decoding them.
 // `end` is just past an LF, so every candidate line ends with an LF before `end`.
 export function markedLines(buf, end, markers) {
+  const head = headOf(markers)
+  if (head > 0) return markedHeads(buf, end, markers, head)
   const starts = []
   for (const marker of markers) {
     let i = buf.indexOf(marker, 0)
@@ -29,4 +32,112 @@ export function markedLines(buf, end, markers) {
     out += buf.toString('utf8', start, stop + 1)
   }
   return out
+}
+
+// The head limit when every marker has one, else 0 (search whole lines).
+function headOf(markers) {
+  let head = 0
+  for (const marker of markers) {
+    const h = MARKER_HEADS[marker.toString()]
+    if (!h) return 0
+    head = Math.max(head, h)
+  }
+  return head
+}
+
+// Like markedLines, but a line counts only when a marker is in its first `head` bytes. One memchr
+// per line and a short search, so long lines cost nothing beyond finding their end.
+function markedHeads(buf, end, markers, head) {
+  let out = ''
+  let start = 0
+  while (start < end) {
+    let stop = buf.indexOf(LF, start)
+    if (stop === -1 || stop >= end) stop = end - 1
+    const view = buf.subarray(start, Math.min(stop, start + head))
+    for (const marker of markers) {
+      if (view.indexOf(marker) !== -1) {
+        out += buf.toString('utf8', start, stop + 1)
+        break
+      }
+    }
+    start = stop + 1
+  }
+  return out
+}
+
+// ---- Usage parsers fed straight from bytes ----
+// The parsers take text (records.mjs is pure JS). Decoding every marked line first costs more than
+// parsing it: Claude assistant lines are mostly message.content, which no kept field comes from.
+// These find and parse lines in the raw bytes and hand the parsed objects to parser.pushObject,
+// with the same results as parser.push(markedLines(...)).
+
+const CR = 0x0d
+const USAGE = Buffer.from(CLAUDE_MARKERS[0])
+const CONTENT = Buffer.from('"content":[')
+const USAGE_OBJ = Buffer.from('"usage":{')
+const STOP = Buffer.from('"stop_reason":')
+const CODEX_HEAD = MARKER_HEADS[CODEX_MARKERS[0]]
+
+/** A parser of the given kind that also takes whole lines as bytes (pushBytes). */
+export function createRecordsConsumer(kind, ctx, state, options) {
+  const parser = PROVIDERS[kind].createParser(ctx, state, options)
+  if (kind === 'claude') parser.pushBytes = (buf) => pushClaudeBytes(buf, parser)
+  else if (kind === 'codex') parser.pushBytes = (buf) => pushCodexBytes(buf, parser)
+  return parser
+}
+
+// Lines holding "usage", found by one search over the chunk, so other lines are never touched.
+function pushClaudeBytes(buf, parser) {
+  const end = buf.length
+  let pos = 0
+  for (;;) {
+    const hit = buf.indexOf(USAGE, pos)
+    if (hit === -1) return
+    const start = hit === 0 ? 0 : buf.lastIndexOf(LF, hit - 1) + 1
+    let lf = buf.indexOf(LF, hit)
+    if (lf === -1) lf = end
+    parser.pushObject(parseClaudeBytes(buf, start, buf[lf - 1] === CR ? lf - 1 : lf))
+    pos = lf + 1
+  }
+}
+
+// parseClaudeLine (records.mjs) on bytes: a long line is parsed with message.content cut out, and
+// only the head and tail around the cut are decoded. The cut points are ASCII, so the decoded
+// pieces equal slices of the decoded line. Length is in UTF-16 units, as in JS: a line of 3x the
+// limit in bytes has at least the limit in units, so only lines in between are decoded to check.
+function parseClaudeBytes(buf, s, e) {
+  const bytes = e - s
+  let text = null
+  if (bytes >= SLIM_MIN && (bytes >= 3 * SLIM_MIN || (text = buf.toString('utf8', s, e)).length >= SLIM_MIN)) {
+    const content = buf.indexOf(CONTENT, s)
+    const usage = buf.lastIndexOf(USAGE_OBJ, e - USAGE_OBJ.length)
+    if (content > s && content < e && usage > s) {
+      const stop = buf.lastIndexOf(STOP, usage)
+      if (stop > content) {
+        const slim = parseJson(`${buf.toString('utf8', s, content)}"content":[],${buf.toString('utf8', stop, e)}`)
+        if (isObject(slim?.message) && isObject(slim.message.usage)) return slim
+      }
+    }
+  }
+  return parseJson(text ?? buf.toString('utf8', s, e))
+}
+
+// Lines with a marker in their first bytes. One memchr per line and a short latin1 head: searching
+// the chunk once per marker measured 6x slower on Codex files, whose lines are long.
+function pushCodexBytes(buf, parser) {
+  const end = buf.length
+  for (let p = 0; p < end; ) {
+    let lf = buf.indexOf(LF, p)
+    if (lf === -1) lf = end
+    const head = buf.toString('latin1', p, Math.min(lf, p + CODEX_HEAD))
+    if (CODEX_MARKERS.some((marker) => head.includes(marker))) {
+      const obj = parseJson(buf.toString('utf8', p, buf[lf - 1] === CR && lf - 1 >= p ? lf - 1 : lf))
+      if (obj) parser.pushObject(obj)
+    }
+    p = lf + 1
+  }
+}
+
+function isObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
