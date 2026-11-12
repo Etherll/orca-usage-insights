@@ -56,7 +56,8 @@ export function buildExplainPrompt(finding, { harnessLabel = 'Claude Code', plat
 function command({ file, offset, compressed, n }, quote) {
   const at = Math.max(0, Math.floor(Number(offset) || 0));
   if (compressed) {
-    const script = 'const[p,o,n,f,z]=process.argv.slice(1);const b=require(z).zstdDecompressSync(require(f).readFileSync(p));console.log(b.subarray(+o,+o+ +n).toString())';
+    // Streams the file and keeps only the bytes in [o, o+n), so a large transcript is never held whole.
+    const script = 'const[p,o,n,f,z]=process.argv.slice(1);(async()=>{const a=+o,b=a+ +n,out=[];let at=0;const s=require(f).createReadStream(p).pipe(require(z).createZstdDecompress());for await(const c of s){const e=at+c.length;if(e>a)out.push(c.subarray(Math.max(0,a-at),Math.min(c.length,b-at)));at=e;if(at>=b)break}console.log(Buffer.concat(out).toString())})()';
     return `node -e ${quote(script)} -- ${quote(file)} ${at} ${n} fs zlib`;
   }
   const script = 'const[p,o,n,f]=process.argv.slice(1);const fs=require(f),b=Buffer.alloc(+n),d=fs.openSync(p);const r=fs.readSync(d,b,0,+n,+o);console.log(b.subarray(0,r).toString())';

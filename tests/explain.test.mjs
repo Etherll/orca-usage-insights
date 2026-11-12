@@ -104,3 +104,18 @@ test('the Codex adapter marks a session whose first prompt, after AGENTS.md and 
   const events = createCodexEvents({ sessionId: 's' }, first.state()).push(user(prompt), 1);
   assert.ok(events.some((e) => e.t === 'explain'));
 });
+
+test('a compressed excerpt deep in a large transcript prints the right bytes', { skip: typeof zlib.zstdCompressSync !== 'function' && 'Node has no zstd' }, async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'explain-big-'));
+  try {
+    const head = 'x'.repeat(300_000) + '\n';
+    const text = `${head}{"wanted":"here"}\n${'y'.repeat(100_000)}\n`;
+    const packed = path.join(dir, 'big.jsonl.zst');
+    await fsp.writeFile(packed, zlib.zstdCompressSync(Buffer.from(text)));
+    const { prompt } = buildExplainPrompt(finding({ evidence: [{ file: packed, offset: head.length, bytes: 17, compressed: true }] }));
+    const cmd = prompt.split('\n').find((l) => l.startsWith('1. ')).slice(3);
+    assert.equal(execFileSync('sh', ['-c', cmd], { encoding: 'utf8' }).trim(), '{"wanted":"here"}');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

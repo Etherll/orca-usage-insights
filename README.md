@@ -89,13 +89,13 @@ Prices are USD per million tokens:
   "v": 1,
   "models": {
     "claude-opus-5-5": { "output": 18 },
-    "my-proxy-model": { "input": 1, "output": 5, "cacheRead": 0.1, "cacheWrite": { "5m": 1.25, "1h": 2 } }
+    "my-proxy-model": { "provider": "anthropic", "input": 1, "output": 5, "cacheRead": 0.1, "cacheWrite": { "5m": 1.25, "1h": 2 } }
   },
   "aliases": { "my-proxy-opus": "claude-opus-5-5" }
 }
 ```
 
-The first entry changes one price of a known model, the second adds a new model, and the alias prices a model name as another. Your file always wins over the bundled and synced prices, and Sync, Undo and Reset never change it. The panel picks up edits on the next refresh and lists any line it couldn't use.
+The first entry changes one price of a known model, the second adds a new model, and the alias prices a model name as another. A new model needs its `provider` unless its name starts with `claude-`: `anthropic` splits cache writes into `5m` and `1h`, and `openai` (the default for other names) takes one `default` rate. Your file always wins over the bundled and synced prices, and Sync, Undo and Reset never change it. The panel picks up edits on the next refresh and lists any line it couldn't use.
 
 ## More machines and folders
 

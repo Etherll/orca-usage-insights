@@ -172,3 +172,13 @@ test('a record without cacheWrite1h prices every cache write at the 5-minute rat
   const built = buildCatalog(BUNDLED);
   assert.ok(Math.abs(requestCost({ model: 'claude-opus-5-5', input: 0, output: 0, cacheRead: 0, cacheWrite: 1_000_000 }, built) - 5) < 1e-9);
 });
+
+test('the overrides example in the README builds without problems', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const readme = await readFile(new URL('../README.md', import.meta.url), 'utf8');
+  const block = readme.match(/```json\n(\{\n  "v": 1,[\s\S]*?)\n```/);
+  assert.ok(block, 'README has the overrides example');
+  const catalog = buildCatalog(BUNDLED, null, JSON.parse(block[1]));
+  assert.deepEqual(catalog.problems, []);
+  assert.ok(catalog.entries.get('my-proxy-model'));
+});
