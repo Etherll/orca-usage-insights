@@ -43,12 +43,13 @@ export function createDigestScanner({
 
   // since: epoch ms. Files last changed before it are not read (state 'old'). A call joins the running
   // scan when it covers the range and the same extra folders, else runs after it.
-  function scan({ extra = { claude: [], codex: [] }, since = 0 } = {}) {
+  // sessions: ids whose files are read even when last changed before `since` (they have turns after it).
+  function scan({ extra = { claude: [], codex: [] }, since = 0, sessions = null } = {}) {
     const folders = JSON.stringify([extra?.claude ?? [], extra?.codex ?? []]);
     if (run && run.since <= since && run.folders === folders) return run.done;
     const before = run?.done.catch(() => {}) ?? null;
     const current = { since, folders, done: null };
-    current.done = (before ? before.then(() => runScan(extra, since)) : runScan(extra, since)).finally(() => {
+    current.done = (before ? before.then(() => runScan(extra, since, sessions)) : runScan(extra, since, sessions)).finally(() => {
       if (run === current) run = null;
     });
     run = current;
@@ -61,7 +62,7 @@ export function createDigestScanner({
     pool = sharedPool;
   }
 
-  async function runScan(extra, since) {
+  async function runScan(extra, since, sessions) {
     if (threads > 0 && !pool && fs === fsp) pool = createParsePool(threads);
     const roots = await resolveRoots({ platform, env, home, realpath: fs.realpath });
     const listing = { errors: 0, failed: [] };
@@ -72,7 +73,7 @@ export function createDigestScanner({
     const lanes = Array.from({ length: Math.min(CONCURRENCY, found.length) }, async () => {
       while (next < found.length) {
         const file = found[next++];
-        statuses.set(file.path, await refresh(file, since).catch(() => 'error'));
+        statuses.set(file.path, await refresh(file, sessions?.has(file.ctx?.sessionId) ? 0 : since).catch(() => 'error'));
         progress.done++;
       }
     });

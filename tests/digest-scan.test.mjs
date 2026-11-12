@@ -240,3 +240,19 @@ test('a .zst past the decompression cap is not decompressed again by a restarted
   await restarted.close?.();
   assert.equal(opens, 1, 'the restarted scanner does not open it again');
 });
+
+test('a file last changed before the range is still digested when Usage has turns of its session in the range', async (t) => {
+  const dir = await home();
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, '.claude', 'projects', 'proj', 'restored.jsonl');
+  await fsp.writeFile(file, await fixture('breakdown-claude.jsonl'));
+  const old = new Date('2020-06-01T00:00:00Z');
+  await fsp.utimes(file, old, old);
+  const since = Date.parse('2026-10-01T00:00:00Z');
+  const make = () => createDigestScanner({ home: dir, env: { HOME: dir }, platform: 'linux', threads: 0 });
+  const skipped = await make().scan({ since });
+  assert.deepEqual(skipped.files.map((f) => f.state), ['old']);
+  const kept = await make().scan({ since, sessions: new Set(['restored']) });
+  assert.deepEqual(kept.files.map((f) => f.state), ['ok']);
+  assert.equal(kept.digests.length, 1);
+});

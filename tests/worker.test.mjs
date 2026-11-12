@@ -933,3 +933,15 @@ test('usage.report builds a new Report after local midnight even when the record
   assert.equal(options.at(-1).now.getDate(), 4);
   await worker.stop();
 });
+
+test('usage.breakdown asks the digest scan for the sessions Usage has turns of in the range', async () => {
+  const mock = mockOrca();
+  const calls = [];
+  const digestScanner = { scan: async (opts) => (calls.push(opts), { digests: [], files: [] }), progress: () => ({ done: 0, total: 0 }), close: async () => {} };
+  const records = [usageRecord({ sessionId: 'recent' }), usageRecord({ sessionId: 'ancient', ts: '2020-01-01T12:00:00.000Z' })];
+  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000, makeDigestScanner: () => digestScanner });
+  await worker.ready;
+  await mock.handlers.get('usage.breakdown')({ range: '30d' });
+  assert.deepEqual([...calls[0].sessions], ['recent']);
+  await worker.stop();
+});

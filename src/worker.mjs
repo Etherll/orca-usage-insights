@@ -143,7 +143,8 @@ export function startWorker(orca, scanner, {
       priceBook.catalog(),
       priceBook.status(),
     ]);
-    const scan = await digestsWithin(waitMs, sinceFor(options.range));
+    const since = sinceFor(options.range);
+    const scan = await digestsWithin(waitMs, since, sessionsSince(gathered.records, since));
     if (!scan) return { loading: digestScanner.progress() };
     const view = analyzeBreakdown({
       records: gathered.records,
@@ -180,17 +181,32 @@ export function startWorker(orca, scanner, {
     return days ? now().getTime() - (days + 1) * 86_400_000 : 0;
   }
 
+  // Sessions with a turn at or after `since`: their files are digested even when their mtime is older
+  // (a restored transcript), so Breakdown covers what Usage counts. Kept per records and cutoff.
+  let sessionsMemo = { records: null, since: -1, ids: null };
+  function sessionsSince(records, since) {
+    if (since <= 0) return null;
+    if (sessionsMemo.records === records && sessionsMemo.since === since) return sessionsMemo.ids;
+    const table = asTable(records);
+    const hit = new Uint8Array(table.names.length);
+    for (let i = 0; i < table.length; i++) if (table.ms[i] >= since) hit[table.sessionId[i]] = 1;
+    const ids = new Set();
+    for (let n = 0; n < hit.length; n++) if (hit[n]) ids.add(table.names[n]);
+    sessionsMemo = { records, since, ids };
+    return ids;
+  }
+
   function viewKey(options) {
     return JSON.stringify([options.range, options.providers ?? null, options.hosts ?? null, options.scope ?? null]);
   }
 
   // null means still running: the caller answers { loading } and usage.changed follows.
-  function digestsWithin(waitMs, since = 0) {
+  function digestsWithin(waitMs, since = 0, sessions = null) {
     digestScanner ??= makeDigestScanner();
     const folders = JSON.stringify([lastExtra.claude ?? [], lastExtra.codex ?? []]);
     if (!digestJob || digestJob.since > since || digestJob.folders !== folders) {
       const job = digestScanner
-        .scan({ extra: lastExtra, since })
+        .scan({ extra: lastExtra, since, sessions })
         .then(
           (result) => (lastDigests = result),
           (error) => {

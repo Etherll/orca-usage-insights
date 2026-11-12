@@ -167,7 +167,7 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
     for (let r = 0; r < d.rowCount; r++) {
       const usd = rowUsd[r];
       if (!(usd > 0)) continue; // unpriced (its records are unpriced too) or free
-      if (kept && !kept[d.rows[r * W + 12] || 0]) continue;
+      if (kept && !kept[d.rowCwd?.[r] ?? 0]) continue;
       const day = rowDay[r];
       if (!inRange(day)) continue;
       const g = session + day;

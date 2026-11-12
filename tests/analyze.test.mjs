@@ -257,11 +257,11 @@ test('packed digests, and digests read back from a shard, give the same view as 
 });
 
 test('a digest with a value that is not a whole 32-bit number keeps it exactly', () => {
-  const rows = [[1, 0, 0, 1, 0, 0, 0, 2 ** 33, 1.5, 0, 0, 7, 0], [2, 0, 0, 1, 0, 0, 0, 3, 4, 5, 6]];
+  const rows = [[1, 0, 0, 1, 0, 0, 0, 2 ** 33, 1.5, 0, 0, 7], [2, 0, 0, 1, 0, 0, 0, 3, 4, 5, 6]];
   const d = packDigest({ rows });
   assert.ok(d.rows instanceof Float64Array);
-  assert.deepEqual([...d.rows.subarray(0, 13)], rows[0]);
-  assert.ok(Number.isNaN(d.rows[24]), 'a missing value is NaN');
+  assert.deepEqual([...d.rows.subarray(0, 12)], rows[0]);
+  assert.ok(Number.isNaN(d.rows[23]), 'a missing value is NaN');
   assert.deepEqual([...decodeDigest(JSON.parse(JSON.stringify(encodeDigest({ rows })))).rows].map(String), [...d.rows].map(String));
 });
 
@@ -351,9 +351,21 @@ test('a session that moves to another worktree is scoped and grouped per request
   assert.deepEqual(top.nodes.map((n) => n.key), ['/w/main']);
 });
 
-test('a shard written before the cwd column decodes with every row in the first cwd', () => {
-  const old = new Uint32Array([1, 0, 0, 1, 0, 0, 0, 5, 6, 7, 8, 9, 2, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4, 5]);
-  const b64 = Buffer.from(old.buffer).toString('base64');
-  const d = decodeDigest({ rows: `u32:${b64}`, rowCount: 2, cwd: '/w' });
-  assert.deepEqual([...d.rows], [1, 0, 0, 1, 0, 0, 0, 5, 6, 7, 8, 9, 0, 2, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4, 5, 0]);
+test('a digest that changed cwd keeps every row cwd through packing and the shard encoding', () => {
+  const fold = createFold({ harness: 'claude', host: 'local' });
+  fold.add({ t: 'meta', cwd: '/w/a', sessionId: 's' });
+  fold.add({ t: 'request', key: 'k0', ts: at(0, 0).toISOString(), model: MODEL, usage: usage(10, 0, 100, 1) });
+  fold.add({ t: 'meta', cwd: '/w/b' });
+  fold.add({ t: 'request', key: 'k1', ts: at(0, 1).toISOString(), model: MODEL, usage: usage(10, 100, 50, 1) });
+  const d = fold.digest();
+  assert.deepEqual(d.cwds, ['/w/a', '/w/b']);
+  assert.ok(d.rows.every((row) => row.length === 12));
+  const back = decodeDigest(JSON.parse(JSON.stringify(encodeDigest(d))));
+  assert.deepEqual(back.rowCwd, d.rowCwd);
+  assert.deepEqual([...new Set(d.rowCwd)].sort(), [0, 1]);
+  // A session that never moved carries no rowCwd.
+  const still = createFold({ harness: 'claude', host: 'local' });
+  still.add({ t: 'meta', cwd: '/w/a', sessionId: 's' });
+  still.add({ t: 'request', key: 'k0', ts: at(0, 0).toISOString(), model: MODEL, usage: usage(10, 0, 100, 1) });
+  assert.equal(still.digest().rowCwd, undefined);
 });
