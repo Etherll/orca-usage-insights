@@ -7,6 +7,7 @@ import { createScanner } from '../src/node/scan.mjs';
 import { zstdAvailable } from '../src/node/zstd.mjs';
 
 const T = '2026-10-01T10:00:00.000Z';
+const extraFolders = (result) => result.folders.filter((f) => f.source === 'extra').map(({ source, latestRecordAt, ...folder }) => folder);
 
 function claudeLine({ id, requestId = 'req', ts = T, output = 10, cwd, sessionId, model = 'claude-sonnet-4-5' }) {
   return JSON.stringify({
@@ -449,7 +450,7 @@ test('cache is written atomically, at most once per 30 s, and its timer is unref
   assert.equal(to, fx.cacheFile);
   assert.notEqual(from, to);
   assert.match(from, /\.tmp$/);
-  assert.equal(JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')).version, 5);
+  assert.equal(JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')).version, 6);
 
   await fsp.appendFile(file, lines(claudeLine({ id: 'm2' })));
   clock += 10_000;
@@ -864,7 +865,7 @@ test('an extra Claude folder that holds projects is read through projects only, 
   const result = await scanner.scan();
   assert.equal(result.records.length, 2, 'the default file and projects/old-proj/old.jsonl; stray.jsonl is not read');
   assert.equal(result.files, 2);
-  assert.deepEqual(result.folders, [{ path: backup, kind: 'claude', state: 'ok', files: 1, records: 1 }]);
+  assert.deepEqual(extraFolders(result), [{ path: backup, kind: 'claude', state: 'ok', files: 1, records: 1 }]);
 });
 
 test('an extra folder without the provider subdir is walked whole for transcripts of its kind', async (t) => {
@@ -879,7 +880,7 @@ test('an extra folder without the provider subdir is walked whole for transcript
   const codex = result.records.toRecords().filter((r) => r.provider === 'codex');
   assert.equal(codex.length, 1);
   assert.equal(codex[0].project, 'x', 'codex project comes from session_meta cwd');
-  assert.deepEqual(result.folders, [{ path: backup, kind: 'codex', state: 'ok', files: 1, records: 1 }]);
+  assert.deepEqual(extraFolders(result), [{ path: backup, kind: 'codex', state: 'ok', files: 1, records: 1 }]);
 });
 
 test('an extra Codex folder with sessions reads sessions and archived_sessions, not loose files', async (t) => {
@@ -894,7 +895,7 @@ test('an extra Codex folder with sessions reads sessions and archived_sessions, 
   scanner.setExtraRoots({ claude: [], codex: [backup] });
   const result = await scanner.scan();
   assert.deepEqual(result.records.toRecords().map((r) => r.output).sort((a, b) => a - b), [5, 6]);
-  assert.deepEqual(result.folders, [{ path: backup, kind: 'codex', state: 'ok', files: 2, records: 2 }]);
+  assert.deepEqual(extraFolders(result), [{ path: backup, kind: 'codex', state: 'ok', files: 2, records: 2 }]);
 });
 
 test('a missing extra folder is a warning with no error and no records', async (t) => {
@@ -906,7 +907,7 @@ test('a missing extra folder is a warning with no error and no records', async (
   const result = await scanner.scan();
   assert.equal(result.errors, 0);
   assert.equal(result.records.length, 1, 'only the default root contributes');
-  assert.deepEqual(result.folders, [{ path: missing, kind: 'claude', state: 'warning', files: 0, records: 0, message: 'Folder not found' }]);
+  assert.deepEqual(extraFolders(result), [{ path: missing, kind: 'claude', state: 'warning', files: 0, records: 0, message: 'Folder not found' }]);
 });
 
 test('an extra folder path that names a file is a warning, not a read error', async (t) => {
@@ -917,7 +918,7 @@ test('an extra folder path that names a file is a warning, not a read error', as
   scanner.setExtraRoots({ claude: [file], codex: [] });
   const result = await scanner.scan();
   assert.equal(result.errors, 0);
-  assert.deepEqual(result.folders, [{ path: file, kind: 'claude', state: 'warning', files: 0, records: 0, message: 'Not a folder' }]);
+  assert.deepEqual(extraFolders(result), [{ path: file, kind: 'claude', state: 'warning', files: 0, records: 0, message: 'Not a folder' }]);
 });
 
 test('an extra folder that is a default root is counted once, through its symlink too', async (t) => {
@@ -936,9 +937,9 @@ test('an extra folder that is a default root is counted once, through its symlin
   const result = await scanner.scan();
   assert.equal(result.records.length, 1, 'the one transcript is counted once');
   assert.equal(result.files, 1);
-  const expected = [['claude', 'ok', 1, 0], ['codex', 'ok', 0, 0]];
-  if (linked) expected.splice(1, 0, ['claude', 'ok', 1, 0]);
-  assert.deepEqual(result.folders.map((f) => [f.kind, f.state, f.files, f.records]), expected);
+  const expected = [['claude', 'ok', 1, 1], ['codex', 'ok', 0, 0]];
+  if (linked) expected.splice(1, 0, ['claude', 'ok', 1, 1]);
+  assert.deepEqual(result.folders.filter((f) => f.source === 'extra').map((f) => [f.kind, f.state, f.files, f.records]), expected);
 });
 
 test('an unchanged extra folder costs one stat per file and no reads on a warm rescan', async (t) => {
@@ -988,7 +989,203 @@ test('removing an extra folder drops its records on the next scan', async (t) =>
   scanner.setExtraRoots({ claude: [], codex: [] });
   const after = await scanner.scan();
   assert.equal(after.records.length, 1);
-  assert.deepEqual(after.folders, []);
+  assert.deepEqual(extraFolders(after), []);
+});
+
+test('defaults, environment homes and Orca accounts union with hardlink and copied-event dedupe', async (t) => {
+  const fx = await fixture(t);
+  const data = path.join(fx.base, 'orca');
+  const defaultHome = path.join(fx.base, '.codex');
+  const account = path.join(data, 'codex-accounts', 'a', 'home');
+  for (const root of [defaultHome, account]) await fsp.mkdir(path.join(root, 'sessions'), { recursive: true });
+  const meta = JSON.stringify({ type: 'session_meta', payload: { id: 'stable-session', cwd: '/w/demo' } });
+  const body = lines(meta, codexTurn('gpt-5-codex'), codexUsage(5));
+  const original = path.join(defaultHome, 'sessions', 'original.jsonl');
+  await fsp.writeFile(original, body);
+  await fsp.link(original, path.join(fx.codex, 'sessions', 'hardlink-env.jsonl'));
+  await fsp.link(original, path.join(account, 'sessions', 'hardlink-account.jsonl'));
+  await fsp.writeFile(path.join(account, 'sessions', 'renamed-copy.jsonl'), body);
+  const rec = recordingFs();
+  const scanner = createScanner({ home: fx.base, env: { ...fx.env, ORCA_USER_DATA_PATH: data }, fs: rec.fs, threads: 0 });
+  const first = await scanner.scan();
+  assert.equal(first.files, 2, 'three hardlinks are one physical file; an actual copy is separate');
+  assert.equal(first.records.length, 1, 'copies with real session/event identity count once');
+  assert.equal(first.records.toRecords()[0].sessionId, 'original', 'records keep the file session id of the first copy');
+  assert.equal(rec.log.opened.length, 2);
+  const managed = first.folders.find((f) => f.path === account);
+  assert.deepEqual([managed.source, managed.files, managed.records, managed.latestRecordAt], ['orca', 2, 1, T]);
+  assert.equal(first.folders.find((f) => f.path === defaultHome).records, 1);
+  rec.log.clear();
+  await scanner.scan({ force: true });
+  assert.equal(rec.log.opened.length, 0, 'hardlink discovery does not force warm transcript rereads');
+  const nextAccount = path.join(data, 'codex-accounts', 'new-account', 'home');
+  await fsp.mkdir(path.join(nextAccount, 'sessions'), { recursive: true });
+  await fsp.writeFile(path.join(nextAccount, 'sessions', 'new.jsonl'), lines(JSON.stringify({ type: 'session_meta', payload: { id: 'other-session' } }), codexUsage(5)));
+  const next = await scanner.scan({ force: true });
+  assert.equal(next.records.length, 2, 'new account contributes even when its token usage is equal');
+  assert.equal(next.folders.find((f) => f.path === nextAccount).records, 1);
+});
+
+test('multiple managed Claude profiles symlinked to the default projects are visible and scanned once', async (t) => {
+  const fx = await fixture(t);
+  const data = path.join(fx.base, 'orca');
+  const roots = [];
+  for (const name of ['one', 'two']) {
+    const root = path.join(data, 'claude-profiles', name, 'home');
+    roots.push(root);
+    await fsp.mkdir(root, { recursive: true });
+    await fsp.symlink(path.join(fx.claude, 'projects'), path.join(root, 'projects'), 'dir');
+  }
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm1' })));
+  const rec = recordingFs();
+  const scanner = createScanner({ env: { ...fx.env, ORCA_USER_DATA_PATH: data }, home: fx.base, fs: rec.fs, threads: 0 });
+  const result = await scanner.scan();
+  assert.equal(result.files, 1);
+  assert.equal(result.records.length, 1);
+  assert.equal(rec.log.opened.length, 1);
+  for (const root of roots) assert.equal(result.folders.find((f) => f.path === root).records, 1);
+});
+
+test('inode zero uses path identity and does not collapse unrelated files', async (t) => {
+  const fx = await fixture(t);
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'one' })));
+  await fsp.writeFile(fx.file('b.jsonl'), lines(claudeLine({ id: 'two' })));
+  const fs = { ...fsp, stat: async (file) => Object.assign(Object.create(await fsp.stat(file)), { ino: 0 }) };
+  const result = await createScanner({ env: fx.env, home: fx.base, fs, threads: 0 }).scan();
+  assert.equal(result.files, 2);
+  assert.equal(result.records.length, 2);
+});
+
+test('Orca discovery failure is diagnosed while another account and explicit folders still scan', async (t) => {
+  const fx = await fixture(t);
+  const data = path.join(fx.base, 'orca');
+  const account = path.join(data, 'codex-accounts', 'ok', 'home');
+  await fsp.mkdir(path.join(account, 'sessions'), { recursive: true });
+  await fsp.writeFile(path.join(account, 'sessions', 'a.jsonl'), lines(codexUsage(2)));
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'one' })));
+  const rec = recordingFs({ readdir: async (dir) => {
+    if (dir === path.join(data, 'claude-profiles')) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+  } });
+  const result = await createScanner({ env: { ...fx.env, ORCA_USER_DATA_PATH: data }, home: fx.base, fs: rec.fs, threads: 0 }).scan();
+  assert.equal(result.records.length, 2);
+  const problem = result.folders.find((f) => f.path === path.join(data, 'claude-profiles'));
+  assert.equal(problem.state, 'warning');
+  assert.match(problem.message, /EACCES/);
+  assert.ok(result.folders.some((f) => f.source === 'default' && f.state === 'empty'));
+});
+
+test('renaming and appending a Codex file preserves usage without keeping its removed cache entry', async (t) => {
+  const fx = await fixture(t);
+  const original = path.join(fx.codex, 'sessions', 'old.jsonl');
+  const renamed = path.join(fx.codex, 'sessions', 'new.jsonl');
+  const meta = JSON.stringify({ type: 'session_meta', payload: { id: 'real-session' } });
+  await fsp.writeFile(original, lines(meta, codexUsage(2)));
+  const scanner = createScanner({ env: fx.env, home: fx.base, threads: 0 });
+  const first = await scanner.scan();
+  await fsp.rename(original, renamed);
+  const nextUsage = JSON.parse(codexUsage(3));
+  nextUsage.timestamp = '2026-10-02T10:00:00.000Z';
+  await fsp.appendFile(renamed, lines(JSON.stringify(nextUsage)));
+  const next = await scanner.scan({ force: true });
+  assert.equal(next.files, 1);
+  assert.equal(next.records.length, 2);
+  assert.equal(next.records.toRecords()[0].key, first.records.toRecords()[0].key);
+  assert.equal(next.folders.find((f) => f.path === fx.codex).latestRecordAt, nextUsage.timestamp);
+});
+
+test('temporary Orca account discovery denial keeps warm usage until recovery or real deletion', async (t) => {
+  const fx = await fixture(t);
+  const data = path.join(fx.base, 'orca');
+  const container = path.join(data, 'codex-accounts');
+  const account = path.join(container, 'one', 'home');
+  await fsp.mkdir(path.join(account, 'sessions'), { recursive: true });
+  await fsp.writeFile(path.join(account, 'sessions', 'a.jsonl'), lines(codexUsage(2)));
+  let denied = false;
+  const rec = recordingFs({ readdir: async (dir) => {
+    if (denied && dir === container) throw Object.assign(new Error('temporary denial'), { code: 'EACCES' });
+  } });
+  const scanner = createScanner({ env: { ...fx.env, ORCA_USER_DATA_PATH: data }, home: fx.base, fs: rec.fs, threads: 0 });
+  const first = await scanner.scan();
+  assert.equal(first.records.length, 1);
+  denied = true;
+  const failed = await scanner.scan({ force: true });
+  assert.equal(failed.records.length, 1, 'discovery failure cannot erase previously scanned usage');
+  assert.equal(failed.errors, 1);
+  const warning = failed.folders.find((f) => f.path === container);
+  assert.deepEqual([warning.state, warning.records, warning.latestRecordAt], ['warning', 1, T]);
+  denied = false;
+  const recovered = await scanner.scan({ force: true });
+  assert.equal(recovered.records.length, 1);
+  assert.equal(recovered.errors, 0);
+  assert.equal(recovered.folders.find((f) => f.path === account).state, 'ok');
+  await fsp.rm(container, { recursive: true });
+  assert.equal((await scanner.scan({ force: true })).records.length, 0, 'real ENOENT drops removed account usage');
+});
+
+test('temporary extra-root stat denial preserves warm records but ENOENT does not', async (t) => {
+  const fx = await fixture(t);
+  const backup = path.join(fx.base, 'backup');
+  await fsp.mkdir(path.join(backup, 'projects', 'p'), { recursive: true });
+  await fsp.writeFile(path.join(backup, 'projects', 'p', 'a.jsonl'), lines(claudeLine({ id: 'one' })));
+  let failure = null;
+  const rec = recordingFs({ stat: async (file) => {
+    if (failure && file === backup) throw Object.assign(new Error('temporary stat failure'), { code: failure });
+  } });
+  const scanner = createScanner({ env: fx.env, home: fx.base, fs: rec.fs, threads: 0 });
+  scanner.setExtraRoots({ claude: [backup] });
+  assert.equal((await scanner.scan()).records.length, 1);
+  failure = 'EACCES';
+  const failed = await scanner.scan({ force: true });
+  assert.equal(failed.records.length, 1);
+  assert.equal(failed.errors, 1);
+  assert.deepEqual(extraFolders(failed), [{ path: backup, kind: 'claude', state: 'warning', files: 0, records: 1, message: 'Cannot open folder (EACCES)' }]);
+  failure = null;
+  assert.equal((await scanner.scan({ force: true })).records.length, 1);
+  failure = 'ENOENT';
+  assert.equal((await scanner.scan({ force: true })).records.length, 0);
+});
+
+test('unsafe, negative and untrusted inode metadata never collapses unrelated files', async (t) => {
+  const fx = await fixture(t);
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'one' })));
+  await fsp.writeFile(fx.file('b.jsonl'), lines(claudeLine({ id: 'two' })));
+  for (const metadata of [
+    { ino: Number.MAX_SAFE_INTEGER + 1, dev: 1, nlink: 2 },
+    { ino: -1, dev: 1, nlink: 2 },
+    { ino: 123, dev: Number.MAX_SAFE_INTEGER + 1, nlink: 2 },
+    { ino: 123, dev: -1, nlink: 2 },
+    { ino: 123, dev: 1, nlink: 1 },
+  ]) {
+    const fs = { ...fsp, stat: async (file) => Object.assign(Object.create(await fsp.stat(file)), metadata) };
+    const result = await createScanner({ env: fx.env, home: fx.base, fs, threads: 0 }).scan();
+    assert.equal(result.files, 2, JSON.stringify(metadata));
+    assert.equal(result.records.length, 2, JSON.stringify(metadata));
+  }
+});
+
+test('exact bigint inode metadata can distinguish files beyond Number precision', async (t) => {
+  const fx = await fixture(t);
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'one' })));
+  await fsp.writeFile(fx.file('b.jsonl'), lines(claudeLine({ id: 'two' })));
+  const fs = { ...fsp, stat: async (file) => Object.assign(Object.create(await fsp.stat(file)), {
+    ino: file.endsWith('a.jsonl') ? 9007199254740992n : 9007199254740993n, dev: 1n, nlink: 2n,
+  }) };
+  const result = await createScanner({ env: fx.env, home: fx.base, fs, threads: 0 }).scan();
+  assert.equal(result.files, 2);
+  assert.equal(result.records.length, 2);
+});
+
+test('a trusted inode replacement with equal mtime and size rereads the file', async (t) => {
+  const fx = await fixture(t);
+  const file = fx.file('a.jsonl');
+  await fsp.writeFile(file, lines(claudeLine({ id: 'one' })));
+  const fs = { ...fsp, stat: async (file) => Object.assign(Object.create(await fsp.stat(file)), { mtimeMs: 1000 }) };
+  const scanner = createScanner({ env: fx.env, home: fx.base, fs, threads: 0 });
+  assert.equal((await scanner.scan()).records.toRecords()[0].key, 'one:req');
+  const replacement = path.join(fx.base, 'replacement.jsonl');
+  await fsp.writeFile(replacement, lines(claudeLine({ id: 'two' })));
+  await fsp.rename(replacement, file);
+  assert.equal((await scanner.scan({ force: true })).records.toRecords()[0].key, 'two:req');
 });
 
 // fixtures/codex.jsonl.zst is codex.jsonl compressed with zlib.zstdCompressSync.
@@ -1027,35 +1224,40 @@ async function writeLegacyCache(fromFile, legacyFile) {
   await fsp.writeFile(legacyFile, JSON.stringify({ version: 4, files }));
 }
 
-test('a previous version cache carries over without reading a transcript, and is left in place', async (t) => {
-  const fx = await fixture(t);
-  const codexFile = path.join(fx.codex, 'sessions', 'rollout-5.jsonl');
-  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm1', cwd: '/w/alpha' }), claudeLine({ id: 'm2', output: 20 })));
-  await fsp.writeFile(codexFile, lines(codexMeta('/w/beta'), codexTurn('gpt-5-codex'), codexUsage(7)));
-  const legacyFile = path.join(path.dirname(fx.cacheFile), 'scan-cache-v4.json');
-  const first = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile });
-  const cold = (await first.scan()).records.toRecords();
-  await first.flush();
-  await writeLegacyCache(fx.cacheFile, legacyFile);
-  const legacyBody = await fsp.readFile(legacyFile, 'utf8');
-  await fsp.rm(fx.cacheFile);
+for (const version of [4, 5]) {
+  test(`a version ${version} cache carries Claude files over unread, rereads Codex files, and is left in place`, async (t) => {
+    const fx = await fixture(t);
+    const codexFile = path.join(fx.codex, 'sessions', 'rollout-5.jsonl');
+    await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm1', cwd: '/w/alpha' }), claudeLine({ id: 'm2', output: 20 })));
+    await fsp.writeFile(codexFile, lines(codexMeta('/w/beta'), codexTurn('gpt-5-codex'), codexUsage(7)));
+    const legacyFile = path.join(path.dirname(fx.cacheFile), `scan-cache-v${version}.json`);
+    const first = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile });
+    await first.scan();
+    await first.flush();
+    if (version === 4) await writeLegacyCache(fx.cacheFile, legacyFile);
+    else await fsp.writeFile(legacyFile, JSON.stringify({ ...JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')), version: 5 }));
+    const legacyBody = await fsp.readFile(legacyFile, 'utf8');
+    await fsp.rm(fx.cacheFile);
 
-  await fsp.appendFile(codexFile, lines(codexUsage(11)));
-  const rec = recordingFs();
-  const migrated = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, legacyCacheFile: legacyFile, fs: rec.fs });
-  const warm = await migrated.scan();
-  assert.deepEqual(rec.log.opened, [codexFile], 'only the grown file is read');
-  assert.equal(rec.log.reads[1].pos, (await fsp.stat(codexFile)).size - Buffer.byteLength(lines(codexUsage(11))), 'the tail starts at the stored offset');
-  assert.deepEqual(warm.records.toRecords(), [...cold, { ...cold[2], output: 11 }]);
-  await migrated.flush();
-  assert.equal(JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')).version, 5);
-  assert.equal(await fsp.readFile(legacyFile, 'utf8'), legacyBody);
+    await fsp.appendFile(codexFile, lines(codexUsage(11)));
+    const fresh = (await createScanner({ env: fx.env, home: fx.base, cacheFile: null }).scan()).records.toRecords();
+    const rec = recordingFs();
+    const missing = path.join(path.dirname(fx.cacheFile), 'scan-cache-missing.json');
+    const migrated = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, legacyCacheFile: [missing, legacyFile], fs: rec.fs });
+    const warm = await migrated.scan();
+    assert.deepEqual(rec.log.opened, [codexFile], 'only the Codex file is read');
+    assert.deepEqual(warm.records.toRecords(), fresh);
+    await migrated.flush();
+    assert.equal(JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8')).version, 6);
+    assert.equal(await fsp.readFile(legacyFile, 'utf8'), legacyBody);
 
-  const rec2 = recordingFs();
-  const restarted = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, legacyCacheFile: legacyFile, fs: rec2.fs });
-  assert.deepEqual((await restarted.scan()).records.toRecords(), warm.records.toRecords());
-  assert.deepEqual(rec2.log.readFile, [fx.cacheFile, `${fx.cacheFile}.journal`], 'the current cache wins; the old one is not read');
-});
+    const rec2 = recordingFs();
+    const restarted = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, legacyCacheFile: legacyFile, fs: rec2.fs });
+    assert.deepEqual((await restarted.scan()).records.toRecords(), warm.records.toRecords());
+    assert.deepEqual(rec2.log.opened, [], 'the current cache covers every file');
+    assert.deepEqual(rec2.log.readFile, [fx.cacheFile, `${fx.cacheFile}.journal`], 'the current cache wins; the old one is not read');
+  });
+}
 
 test('a .zst that decompresses past the cap is not decompressed again after a restart', { skip: !zstdAvailable() && 'Node has no zstd' }, async (t) => {
   const fx = await fixture(t);
@@ -1084,4 +1286,25 @@ test('a .zst that decompresses past the cap is not decompressed again after a re
   assert.deepEqual(rec.log.opened, [], 'nothing is opened, the oversized file included');
   assert.equal(warm.skipped.tooLarge, 1);
   assert.deepEqual(warm.records.toRecords(), cold.records.toRecords());
+});
+
+test('a turned-off root is left out and keeps its cache, so turning it on reads nothing again', async (t) => {
+  const fx = await fixture(t);
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'one' })));
+  await fsp.writeFile(path.join(fx.codex, 'sessions', 'c.jsonl'), lines(codexUsage(4)));
+  const rec = recordingFs();
+  const scanner = createScanner({ env: fx.env, home: fx.base, fs: rec.fs, threads: 0 });
+  assert.equal((await scanner.scan()).records.length, 2);
+  scanner.setExtraRoots({ disabled: [fx.codex] });
+  rec.log.clear();
+  const off = await scanner.scan({ force: true });
+  assert.deepEqual(off.records.toRecords().map((r) => r.provider), ['claude']);
+  const status = off.folders.find((f) => f.path === fx.codex);
+  assert.deepEqual([status.state, status.files, status.records], ['off', 0, 0]);
+  assert.equal(off.errors, 0);
+  scanner.setExtraRoots({ disabled: [] });
+  rec.log.clear();
+  const on = await scanner.scan({ force: true });
+  assert.equal(on.records.length, 2);
+  assert.deepEqual(rec.log.opened, [], 'the cached Codex file is not read again');
 });

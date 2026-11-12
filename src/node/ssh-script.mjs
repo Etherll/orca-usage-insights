@@ -87,11 +87,11 @@ def codex(o):
     t = o.get('type')
     p = o.get('payload') if isinstance(o.get('payload'), dict) else {}
     if t == 'turn_context':
-        return {'type': t, 'timestamp': o.get('timestamp'), 'payload': {'model': p.get('model')}}
+        return {'type': t, 'timestamp': o.get('timestamp'), 'payload': {'model': p.get('model'), 'turn_id': p.get('turn_id')}}
     if t == 'session_meta':
-        return {'type': t, 'timestamp': o.get('timestamp'), 'payload': {'cwd': p.get('cwd')}}
+        return {'type': t, 'timestamp': o.get('timestamp'), 'payload': {'id': p.get('id'), 'cwd': p.get('cwd')}}
     if t == 'event_msg' and p.get('type') == 'token_count':
-        return {'type': t, 'timestamp': o.get('timestamp'), 'payload': {'type': 'token_count', 'info': p.get('info')}}
+        return {'type': t, 'id': o.get('id'), 'timestamp': o.get('timestamp'), 'payload': {'id': p.get('id'), 'type': 'token_count', 'info': p.get('info')}}
     return None
 for job in sys.stdin.read().split('\n'):
     if not job:

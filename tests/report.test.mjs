@@ -70,6 +70,40 @@ test('7d daily is zero-filled, ascending and bounded by the window', () => {
   assert.equal(r.totals.turns, 1);
 });
 
+test('1d covers the local calendar day and preserves calendar and streak history', () => {
+  const records = [
+    rec(new Date(2026, 10, 2, 23, 59, 59, 999), { input: 100, sessionId: 'yesterday' }),
+    rec(new Date(2026, 10, 3, 0, 0, 0), { input: 10, project: 'today' }),
+    rec(NOW, { output: 5, project: 'today' }),
+    rec(new Date(2026, 10, 4, 0, 0, 0), { input: 1000, sessionId: 'tomorrow' }),
+  ];
+  const r = build(records, '1d');
+  assert.equal(r.range, '1d');
+  assert.deepEqual(r.daily.map((d) => d.day), [keyOf(NOW)]);
+  assert.equal(r.daily[0].total, 15);
+  assert.equal(r.totals.total, r.today.total);
+  assert.equal(r.totals.total, 15);
+  assert.equal(r.totals.turns, 2);
+  assert.equal(r.totals.sessions, 1);
+  assert.equal(r.byModel[0].total, 15);
+  assert.deepEqual(r.byProject, [{ project: 'today', input: 10, output: 5, cacheRead: 0, cacheWrite: 0, total: 15, share: 1 }]);
+  assert.equal(r.seriesByProvider[0].daily.length, 1);
+  assert.equal(r.seriesByProvider[0].daily[0].total, 15);
+  assert.deepEqual(r.calendar, build(records).calendar);
+  assert.deepEqual(r.streak, { current: 2, longest: 2 });
+});
+
+test('1d with no usage today has one zero-filled day and no in-range breakdowns', () => {
+  const r = build([rec(ago(1), { input: 50 })], '1d');
+  assert.equal(r.daily.length, 1);
+  assert.equal(r.daily[0].day, keyOf(NOW));
+  assert.equal(r.daily[0].total, 0);
+  assert.equal(r.totals.turns, 0);
+  assert.equal(r.totals.total, 0);
+  assert.deepEqual(r.byModel, []);
+  assert.deepEqual(r.byProject, []);
+});
+
 test('30d and 90d windows span that many days', () => {
   assert.equal(build([], '30d').daily.length, 30);
   assert.equal(build([], '90d').daily.length, 90);
@@ -391,12 +425,12 @@ test('byHost sums each host with its share, sessions and turns, largest first', 
     rec(ago(0), { host: 'local', provider: 'codex', model: 'gpt-5-codex', input: 200_000, sessionId: 'c1' }),
   ]);
   assert.deepEqual(r.byHost, [
-    { host: 'ssh:box', total: 1_000_000, costUsd: 4, share: 2 / 3, sessions: 1, turns: 2 },
-    { host: 'local', total: 500_000, costUsd: 0.9, share: 1 / 3, sessions: 2, turns: 2 },
+    { host: 'ssh:box', input: 1_000_000, output: 0, cacheRead: 0, cacheWrite: 0, total: 1_000_000, costUsd: 4, share: 2 / 3, sessions: 1, turns: 2 },
+    { host: 'local', input: 500_000, output: 0, cacheRead: 0, cacheWrite: 0, total: 500_000, costUsd: 0.9, share: 1 / 3, sessions: 2, turns: 2 },
   ]);
 
   const unpriced = build([rec(ago(0), { host: 'ssh:x', provider: 'codex', model: 'gpt-5-codex', input: 5 })]);
-  assert.deepEqual(unpriced.byHost, [{ host: 'ssh:x', total: 5, costUsd: null, share: 1, sessions: 1, turns: 1 }]);
+  assert.deepEqual(unpriced.byHost, [{ host: 'ssh:x', input: 5, output: 0, cacheRead: 0, cacheWrite: 0, total: 5, costUsd: null, share: 1, sessions: 1, turns: 1 }]);
   assert.deepEqual(build([]).byHost, []);
 });
 
@@ -479,4 +513,60 @@ test('cache savings use the rates the request paid, its long-prompt tier include
   assert.ok(Math.abs(report.totals.cacheSavingsUsd - (300_000 * (tier.input - tier.cacheRead)) / 1e6) < 1e-9);
   const small = buildReport([{ ...record, cacheRead: 100_000 }], { range: '7d', now: new Date('2026-11-12T12:00:00Z'), catalog: DEFAULT_CATALOG });
   assert.ok(Math.abs(small.totals.cacheSavingsUsd - (100_000 * (entry.input - entry.cacheRead)) / 1e6) < 1e-9);
+});
+
+test('custom dates include local boundary days, zero fill, and exclude later history', () => {
+  const r = build([
+    rec(new Date(2026, 9, 31, 23, 59, 59), { input: 100 }),
+    rec(new Date(2026, 10, 1, 0), { input: 2 }),
+    rec(new Date(2026, 10, 3, 23, 59, 59), { input: 3 }),
+  ], 'custom', { startDate: '2026-11-01', endDate: '2026-11-02' });
+  assert.equal(r.startDate, '2026-11-01');
+  assert.equal(r.endDate, '2026-11-02');
+  assert.deepEqual(r.daily.map((d) => d.total), [2, 0]);
+  assert.equal(r.totals.total, 2);
+  assert.equal(r.today.total, 3, 'today keeps its independent time range');
+  assert.equal(r.calendar.at(-1).total, 3);
+  assert.equal(r.seriesByProvider[0].daily.length, 2);
+  assert.deepEqual(r.byDayModel.map((d) => [d.day, d.total]), [['2026-11-01', 2]]);
+});
+
+test('model options follow source scope but survive selected models and dates', () => {
+  const records = [rec(ago(0), { model: 'a', input: 1, cwd: '/w/a' }), rec(ago(20), { model: 'b', input: 9, cwd: '/w/b' }), rec(ago(0), { model: 'other', input: 99, host: 'ssh:x', cwd: '/w' }), rec(ago(0), { model: 'outside', input: 99, cwd: '/else' })];
+  const r = build(records, '1d', { models: ['b'], hosts: ['local'], scope: { roots: ['/w'] } });
+  assert.deepEqual(r.models, ['a', 'b']);
+  assert.equal(r.totals.total, 0);
+  assert.equal(r.today.total, 0);
+  assert.deepEqual(r.byDayModel, []);
+  assert.equal(build(records, 'all', { models: [] }).totals.total, 0);
+});
+
+test('includeCache changes every token aggregate while retaining raw components and costs', () => {
+  const records = [rec(ago(0), { model: 'claude-sonnet-4-5', input: 2, output: 3, cacheRead: 100, cacheWrite: 20 }), rec(ago(1), { model: 'other', input: 5, cacheRead: 500 })];
+  const full = build(records);
+  const r = build(records, '7d', { includeCache: false });
+  assert.equal(r.includeCache, false);
+  assert.equal(r.totals.total, 10);
+  assert.equal(r.totals.cacheRead, 600);
+  assert.equal(r.totals.costUsd, full.totals.costUsd);
+  assert.equal(r.today.total, 5);
+  assert.equal(r.peakDay.total, 5);
+  assert.equal(r.punchCard.reduce((a, b) => a + b, 0), 10);
+  assert.equal(r.calendar.at(-1).total, 5);
+  for (const group of [r.daily, r.byModel, r.byProject, r.byProvider, r.byHost, r.byDayModel]) {
+    assert.equal(group.reduce((s, b) => s + b.total, 0), 10);
+    for (const b of group) assert.equal(b.total, b.input + b.output);
+  }
+  assert.equal(r.seriesByProvider[0].daily.reduce((s, d) => s + d.total, 0), 10);
+  assert.deepEqual(r.byModel.map((m) => m.share), [0.5, 0.5]);
+  assert.deepEqual(r.streak, full.streak);
+});
+
+test('day model rows separate providers and count distinct sessions and turns', () => {
+  const r = build([rec(ago(0), { model: 'shared', input: 2 }), rec(ago(0), { model: 'shared', input: 3 }), rec(ago(0), { model: 'shared', provider: 'codex', input: 9 })], 'custom', { startDate: '2026-11-03', endDate: '2026-11-03' });
+  assert.deepEqual(r.byDayModel.map((d) => [d.provider, d.model, d.total, d.sessions, d.turns]), [['claude', 'shared', 5, 1, 2], ['codex', 'shared', 9, 1, 1]]);
+});
+
+test('pure report validates malformed date and model queries', () => {
+  for (const extra of [{ range: 'custom', startDate: '2026-02-30', endDate: '2026-03-01' }, { range: 'custom', startDate: '2026-11-03', endDate: '2026-11-02' }, { range: 'custom', startDate: '2026-11-03', endDate: '2026-11-04' }, { models: [''] }, { models: null }, { includeCache: null }, { startDate: '2026-11-01' }]) assert.throws(() => buildReport([], { range: '7d', now: NOW, ...extra }));
 });

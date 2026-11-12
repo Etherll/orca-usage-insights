@@ -74,6 +74,15 @@
         "multiline": true,
         "default": "",
         "placeholder": "user@example.com"
+      },
+      {
+        "key": "disabledFolders",
+        "title": "Turned-off transcript folders",
+        "description": "One folder per line. Usage from these folders is left out until you take them off this list. Click a folder in the panel's source list to turn it off or on.",
+        "type": "string",
+        "multiline": true,
+        "default": "",
+        "placeholder": "~/.codex"
       }
     ]
   },

@@ -93,7 +93,8 @@ function claudeExpected(rows) {
 }
 
 function codexExpected(rows) {
-  const anon = `anonymous:codex-sess-1:${rows[30].offset}`;
+  // Keys come from the session_meta id (no turn ids here); the last event has no running total.
+  const anon = '["codex","s","codex-sess-2","gpt-codex-5","2026-11-01T10:00:25.000Z","","50,10,5,0,0",0]';
   return [
     [meta({ cwd: '/home/dev/app' })],
     [meta({ cwd: '/home/dev/other' })], // a later session_meta moves later turns, as in Usage
@@ -101,7 +102,7 @@ function codexExpected(rows) {
     [arrival('injected', T.injected, 29)],
     [arrival('messages', T.messages, 33)],
     [arrival('injected', T.injected, 24)],
-    [request('codex:codex-sess-1:2026-11-01T10:00:01.000Z:1050', at('10:00:01'), 'gpt-codex-5', tokens(700, 50, 300, 120, 0))],
+    [request('["codex","s","codex-sess-2","gpt-codex-5","2026-11-01T10:00:01.000Z","1000,300,50,0,1050","1000,300,50,0,1050"]', at('10:00:01'), 'gpt-codex-5', tokens(700, 50, 300, 120, 0))],
     [],
     [call('call_1', T.gitStatus, 'shell')],
     [arrival('tools', T.gitStatus, 26, { callId: 'call_1' })],
@@ -124,7 +125,7 @@ function codexExpected(rows) {
     [],
     [],
     [],
-    [request('codex:codex-sess-1:2026-11-01T10:00:20.000Z:2220', at('10:00:20'), 'gpt-codex-5', tokens(700, 120, 500, 0, 0))],
+    [request('["codex","s","codex-sess-2","gpt-codex-5","2026-11-01T10:00:20.000Z","2100,900,170,40,2220","1200,500,120,20,1170"]', at('10:00:20'), 'gpt-codex-5', tokens(700, 120, 500, 0, 0))],
     [request(anon, at('10:00:25'), 'gpt-codex-5', tokens(40, 5, 10, 0, 0))],
     [RESET],
     [],

@@ -43,6 +43,8 @@ export function analyzeBreakdown({
   files = NONE,
   catalog,
   range = '7d',
+  startDate,
+  endDate,
   now = new Date(),
   providers,
   hosts,
@@ -50,11 +52,12 @@ export function analyzeBreakdown({
   path = [],
   prices,
 } = {}) {
-  const input = { table: asTable(records), digests, files, catalog, range, now, providers, hosts, scope };
+  const input = { table: asTable(records), digests, files, catalog, range, startDate, endDate, now, providers, hosts, scope };
   const analysis = analysisFor(input);
   const view = {
     generatedAt: now.toISOString(),
     range,
+    ...(range === 'custom' ? { startDate, endDate } : {}),
     prices: prices ?? { version: catalog?.version ?? null, asOf: catalog ? newestAsOf(catalog) : null, overlay: false },
     totals: analysis.totals,
     buckets: analysis.buckets,
@@ -72,7 +75,7 @@ function analysisFor(input) {
   const objects = [input.table, input.digests, input.files, input.catalog];
   if (objects.some((o) => o === null || typeof o !== 'object')) return analyze(input, zone);
   const date = new Date(input.now);
-  const key = JSON.stringify([input.range, date.getFullYear(), date.getMonth(), date.getDate(), zone, input.providers ?? null, input.hosts ?? null, input.scope ?? null]);
+  const key = JSON.stringify([input.range, input.startDate ?? null, input.endDate ?? null, date.getFullYear(), date.getMonth(), date.getDate(), zone, input.providers ?? null, input.hosts ?? null, input.scope ?? null]);
   let map = analyses;
   for (let i = 0; i < objects.length - 1; i++) {
     let next = map.get(objects[i]);
@@ -98,9 +101,9 @@ function timeZone() {
   }
 }
 
-function analyze({ table: records, digests, files, catalog, range, now, providers, hosts, scope }, zone) {
-  const { table, rows, days, count, hostNames, today, startDay } = selectRecords(records, { range, now, providers, hosts, scope });
-  const inRange = (day) => day >= startDay && day <= today;
+function analyze({ table: records, digests, files, catalog, range, startDate, endDate, now, providers, hosts, scope }, zone) {
+  const { table, rows, days, count, hostNames, startDay, endDay } = selectRecords(records, { range, startDate, endDate, now, providers, hosts, scope });
+  const inRange = (day) => day >= startDay && day <= endDay;
   const sessions = sessionIndex();
   const toLocal = localClock();
   const memo = { labels: new Map(), parts: new Map(), ids: new Map() };

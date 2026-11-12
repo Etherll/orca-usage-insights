@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { decodeDigest, encodeDigest, packDigest } from '../core/breakdown/digest-rows.mjs';
 import { createDigestConsumer } from './digest-consumer.mjs';
 import { createParsePool } from './parse-pool.mjs';
-import { resolveRoots } from './paths.mjs';
+import { rootSpecs } from './paths.mjs';
 import { listTranscripts, readTranscript } from './transcript-files.mjs';
 
 const SHARD_VERSION = 3;
@@ -45,7 +45,7 @@ export function createDigestScanner({
   // scan when it covers the range and the same extra folders, else runs after it.
   // sessions: ids whose files are read even when last changed before `since` (they have turns after it).
   function scan({ extra = { claude: [], codex: [] }, since = 0, sessions = null } = {}) {
-    const folders = JSON.stringify([extra?.claude ?? [], extra?.codex ?? []]);
+    const folders = JSON.stringify([extra?.claude ?? [], extra?.codex ?? [], extra?.disabled ?? []]);
     if (run && run.since <= since && run.folders === folders) return run.done;
     const before = run?.done.catch(() => {}) ?? null;
     const current = { since, folders, done: null };
@@ -64,8 +64,8 @@ export function createDigestScanner({
 
   async function runScan(extra, since, sessions) {
     if (threads > 0 && !pool && fs === fsp) pool = createParsePool(threads);
-    const roots = await resolveRoots({ platform, env, home, realpath: fs.realpath });
-    const listing = { errors: 0, failed: [] };
+    const roots = await rootSpecs({ platform, env, home, readdir: fs.readdir });
+    const listing = { errors: 0, failed: [], disabled: [] };
     const { found } = await listTranscripts({ fs, platform, roots, extra, run: listing });
     progress = { done: 0, total: found.length };
     const statuses = new Map();
@@ -82,8 +82,11 @@ export function createDigestScanner({
     const sep = platform === 'win32' ? '\\' : '/';
     const underFailed = (path) => listing.failed.some((dir) => path.startsWith(dir.endsWith(sep) ? dir : dir + sep));
     const kept = [];
+    const underOff = (path) => listing.disabled.some((dir) => path.startsWith(dir.endsWith(sep) ? dir : dir + sep));
     for (const path of [...files.keys()]) {
       if (walked.has(path)) continue;
+      // A turned-off folder keeps its digests for when it is turned on again, but they are not used.
+      if (underOff(path)) continue;
       // A directory that failed to list says nothing about its files: keep their digests.
       if (underFailed(path)) {
         kept.push(path);

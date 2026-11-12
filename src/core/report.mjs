@@ -5,13 +5,18 @@
 import { ratesFor } from './catalog.mjs';
 import { DEFAULT_CATALOG, tableCosts } from './pricing.mjs';
 import { dayKey, selectRecords } from './filters.mjs';
+import { normalizeQuery } from './query.mjs';
 
 const CALENDAR_DAYS = 182;
 const TOP_PROJECTS = 8;
 
-export function buildReport(records, { range, now = new Date(), providers, hosts, scope, catalog = DEFAULT_CATALOG } = {}) {
-  const selected = selectRecords(records, { range, now, providers, hosts, scope });
-  const { table, rows, days, slots, count, hostNames, today, startDay, allProviders, allHosts, rowProviders } = selected;
+// The query is { range, startDate?, endDate?, models?, includeCache? } (query.mjs). Without cache tokens,
+// every total, share and chart counts input and output only; the cache fields still report what was used.
+export function buildReport(records, { now = new Date(), providers, hosts, scope, catalog = DEFAULT_CATALOG, ...query } = {}) {
+  const { range, startDate, endDate, models: selectedModels, includeCache } = normalizeQuery(query, now);
+  const selected = selectRecords(records, { range, startDate, endDate, models: selectedModels, now, providers, hosts, scope });
+  const { table, rows, days, slots, count, hostNames, today, startDay, endDay, allProviders, allHosts, allModels, rowProviders } = selected;
+  const add = (b, input, output, cacheRead, cacheWrite, cost) => addTokens(b, input, output, cacheRead, cacheWrite, cost, includeCache);
   const { costs, entries } = tableCosts(table, catalog);
   const { names } = table;
   const nameOf = (id) => (id < 0 ? undefined : names[id]);
@@ -30,6 +35,8 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
   const providerBuckets = new Map();
   const hostBuckets = new Map();
   const unpricedByModel = new Map(); // model id -> { model, turns, tokens }, in-range records only
+  const dayModels = new Map(); // day -> model id * (names + 1) + provider id + 1 -> bucket with its sessions
+  const sessionStride = names.length + 1;
   const { provider: providerCol, model: modelCol, project: projectCol, sessionId: sessionCol, host: hostCol } = table;
   const { input: inputCol, output: outputCol, cacheRead: readCol, cacheWrite: writeCol } = table;
   for (let k = 0; k < count; k++) {
@@ -42,8 +49,8 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
     const cacheRead = readCol[i];
     const cacheWrite = writeCol[i];
     add(bucket(perDay, day), input, output, cacheRead, cacheWrite, cost);
-    if (day < startDay) continue;
-    const tokens = input + output + cacheRead + cacheWrite;
+    if (day < startDay || day > endDay) continue;
+    const tokens = input + output + (includeCache ? cacheRead + cacheWrite : 0);
     const provider = providerCol[i];
     const model = modelCol[i];
     const sessionId = sessionCol[i];
@@ -70,6 +77,9 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
     add(bucket(providerBuckets, provider), input, output, cacheRead, cacheWrite, cost);
     add(bucket(hostBuckets, host), input, output, cacheRead, cacheWrite, cost);
     add(bucket(getOrSet(perProviderDay, provider, newMap), day), input, output, cacheRead, cacheWrite, cost);
+    const detail = getOrSet(getOrSet(dayModels, day, newMap), model * sessionStride + provider + 1, () => ({ ...blank(), day, model, provider, sessions: new Set() }));
+    add(detail, input, output, cacheRead, cacheWrite, cost);
+    detail.sessions.add(provider * sessionStride + sessionId + 1);
   }
   const providerIds = new Map([...providerBuckets.keys(), ...perProviderDay.keys()].map((id) => [nameOf(id), id]));
 
@@ -77,7 +87,7 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
   const share = (value) => (totals.total > 0 ? value / totals.total : 0);
 
   const daily = [];
-  for (let day = startDay; day <= today; day++) {
+  for (let day = startDay; day <= endDay; day++) {
     const b = dayOf(day);
     daily.push({ day: dayKey(day), input: b.input, output: b.output, cacheRead: b.cacheRead, cacheWrite: b.cacheWrite, total: b.total, costUsd: b.costUsd });
   }
@@ -117,7 +127,7 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
       const byDay = perProviderDay.get(providerIds.get(provider)) ?? new Map();
       const series = [];
       let total = 0;
-      for (let day = startDay; day <= today; day++) {
+      for (let day = startDay; day <= endDay; day++) {
         const b = byDay.get(day) ?? blank();
         series.push({ day: dayKey(day), total: b.total, costUsd: b.costUsd });
         total += b.total;
@@ -130,6 +140,10 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
   return {
     generatedAt: now.toISOString(),
     range,
+    startDate: dayKey(startDay),
+    endDate: dayKey(endDay),
+    includeCache,
+    models: [...allModels].sort(),
     providers: [...allProviders].sort(),
     hosts: sortHosts(allHosts),
     scoped: Boolean(scope),
@@ -152,15 +166,28 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
       // Stricter: cache writes are input that missed the cache, so they count in the denominator.
       cacheHitRate: reads + totals.cacheWrite > 0 ? totals.cacheRead / (reads + totals.cacheWrite) : 0,
     },
-    today: { total: todayBucket.total, costUsd: costOf(todayBucket) },
+    today: { ...tokenFields(todayBucket), costUsd: costOf(todayBucket) },
     daily,
     seriesByProvider,
     calendar,
     punchCard,
+    // Date x model rows, newest day first, then provider and model.
+    byDayModel: [...dayModels]
+      .flatMap(([, byModel]) => [...byModel.values()])
+      .map((b) => ({
+        day: dayKey(b.day),
+        provider: nameOf(b.provider),
+        model: nameOf(b.model),
+        ...tokenFields(b),
+        costUsd: costOf(b),
+        sessions: b.sessions.size,
+        turns: b.pricedTurns + b.unpricedTurns,
+      }))
+      .sort((a, b) => compareText(b.day, a.day) || compareText(a.provider, b.provider) || compareText(a.model, b.model)),
     byModel: [...models]
       .map(([model, b]) => ({
         model: nameOf(model),
-        total: b.total,
+        ...tokenFields(b),
         costUsd: costOf(b),
         share: share(b.total),
         provider: topProvider(tokensByModel.get(model)),
@@ -168,13 +195,13 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
       }))
       .sort(byTotal),
     byProject: [...projects]
-      .map(([project, b]) => ({ project: nameOf(project), total: b.total, share: share(b.total) }))
+      .map(([project, b]) => ({ project: nameOf(project), ...tokenFields(b), share: share(b.total) }))
       .sort(byTotal)
       .slice(0, TOP_PROJECTS),
     byProvider: [...providerBuckets]
       .map(([provider, b]) => ({
         provider: nameOf(provider),
-        total: b.total,
+        ...tokenFields(b),
         costUsd: costOf(b),
         share: share(b.total),
         sessions: sessionsByProvider.get(provider).size,
@@ -184,7 +211,7 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
     byHost: [...hostBuckets]
       .map(([host, b]) => ({
         host,
-        total: b.total,
+        ...tokenFields(b),
         costUsd: costOf(b),
         share: share(b.total),
         sessions: countSessions(sessionsByHost.get(host)),
@@ -224,18 +251,28 @@ function getOrSet(map, key, make) {
   return value;
 }
 
-function add(b, input, output, cacheRead, cacheWrite, cost) {
+function addTokens(b, input, output, cacheRead, cacheWrite, cost, includeCache) {
   b.input += input;
   b.output += output;
   b.cacheRead += cacheRead;
   b.cacheWrite += cacheWrite;
-  b.total += input + output + cacheRead + cacheWrite;
+  b.total += input + output + (includeCache ? cacheRead + cacheWrite : 0);
   if (cost === null) {
     b.unpricedTurns += 1;
   } else {
     b.pricedTurns += 1;
     b.costUsd += cost;
   }
+}
+
+function tokenFields(b) {
+  return { input: b.input, output: b.output, cacheRead: b.cacheRead, cacheWrite: b.cacheWrite, total: b.total };
+}
+
+function compareText(a, b) {
+  const x = String(a ?? '');
+  const y = String(b ?? '');
+  return x < y ? -1 : x > y ? 1 : 0;
 }
 
 // null when every record in the bucket is unpriced; otherwise the sum of the priced records.

@@ -7,7 +7,9 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEMO_SOURCES, DEMO_WORKTREE_ROOTS, demoRecords } from './demo-data.mjs'
+import { DEMO_SOURCES, DEMO_WORKTREE_ROOTS, demoBreakdown, demoRecords } from './demo-data.mjs'
+import { buildReport as buildReportNode } from '../../src/core/report.mjs'
+import { buildExplainPrompt } from '../../src/core/breakdown/explain.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const out = join(root, 'images')
@@ -32,7 +34,7 @@ execFileSync(process.execPath, [join(root, 'scripts', 'build.mjs')], { stdio: 'i
 const panel = readFileSync(join(root, 'panel', 'index.html'), 'utf8')
 const flatten = (src) => src.replace(/^import [^\n]*\n/gm, '').replace(/^export \{[^\n]*\n/gm, '').replace(/^export (?=(const|function|let|class) )/gm, '')
 // Each module runs in its own scope so same-named helpers don't clash; imports read earlier modules. Order matters.
-const CORE = ['bands', 'price-sources', 'catalog-data', 'catalog', 'pricing', 'filters', 'report']
+const CORE = ['bands', 'price-sources', 'catalog-data', 'catalog', 'pricing', 'time', 'table', 'query', 'filters', 'report']
 const core = CORE.map((name) => {
   const src = readFileSync(join(root, 'src', 'core', `${name}.mjs`), 'utf8')
   const imports = [...src.matchAll(/^import \{([^}]*)\} from '\.\/([\w-]+)\.mjs';?$/gm)].map(([, names, from]) => `const {${names}} = __m[${JSON.stringify(from)}];`)
@@ -43,6 +45,9 @@ const core = CORE.map((name) => {
 
 const NOW = new Date(2026, 10, 3, 17, 40)
 const records = demoRecords(NOW)
+// Breakdown is made up over the 30-day demo report; Explain prompts come from the real prompt builder.
+const VIEWS = demoBreakdown(buildReportNode(records, { range: '30d', now: NOW }), NOW)
+const EXPLAINS = Object.fromEntries(VIEWS[''].findings.map((f) => [f.id, { ...buildExplainPrompt(f, { harnessLabel: f.harness === 'codex' ? 'Codex' : 'Claude Code', platform: 'darwin' }), estUsd: null }]))
 
 // The panel page, with a stand-in for the worker that runs the real buildReport over demo data.
 function demoPanel(name, { theme = 'dark', actions = '' } = {}) {
@@ -53,11 +58,16 @@ const RECORDS = ${JSON.stringify(records)};
 const NOW = new Date(${NOW.getTime()});
 const ROOTS = ${JSON.stringify(DEMO_WORKTREE_ROOTS)};
 const SOURCES = ${JSON.stringify(DEMO_SOURCES(NOW.getTime()))};
+const VIEWS = ${JSON.stringify(VIEWS)};
+const EXPLAINS = ${JSON.stringify(EXPLAINS)};
 try { localStorage.setItem('usage-insights.prices-note.1.2.0', '1') } catch {}
 window.__USAGE_PREVIEW__ = async (method, input = {}) => {
   if (method === 'prices.status') return { version: 'demo', asOf: '2026-11-11', overlay: null, canUndo: false, overrides: null };
-  const opts = { range: input.range || '7d', now: NOW, providers: input.providers, hosts: input.hosts };
-  if (input.scope === 'worktrees') opts.scope = { roots: ROOTS };
+  if (method === 'usage.breakdown') return VIEWS[(input.path || []).join('/')] || VIEWS[''];
+  if (method === 'usage.explain') return EXPLAINS[input.findingId];
+  const { scope, path, findingId, ...query } = input;
+  const opts = { range: '7d', ...query, now: NOW };
+  if (scope === 'worktrees') opts.scope = { roots: ROOTS };
   const report = buildReport(RECORDS, opts);
   report.generatedAt = NOW.toISOString();
   report.sources = SOURCES.map((s) => ({ ...s, records: RECORDS.filter((r) => r.host === s.id).length }));
@@ -68,6 +78,8 @@ Date.now = () => NOW.getTime();
   const html = panel
     .replace('<html lang="en">', `<html lang="en" class="${theme}">`)
     .replace('<script>', `${shim}<script>`)
+    // Headless virtual time can freeze a CSS transition halfway, leaving a faded highlight in the shot.
+    .replace('</head>', '<style>*,*::before,*::after{transition:none!important;animation:none!important}</style></head>')
     .replace('</body>', `<script>${actions}</script></body>`)
   const file = join(work, `${name}.html`)
   writeFileSync(file, html)
@@ -163,6 +175,16 @@ shots.push(frame('screenshot-sidebar', [
   { file: demoPanel('side-dark', {}), w: 420, h: 900, theme: 'dark' },
   { file: demoPanel('side-light', { theme: 'light', actions: scrollTo('#breakdown', 800) }), w: 420, h: 900, theme: 'light' },
 ]))
+
+// 6. Breakdown: where the spend went, drilled into one project's src folder.
+const atlas = '/Users/sam/code/atlas-web'
+const blur = (ms) => `setTimeout(() => document.activeElement?.blur?.(), ${ms});`
+const breakdown = click('[data-range="30d"]') + click('[data-view=breakdown]', 600)
+shots.push(frame('screenshot-breakdown', [{ file: demoPanel('breakdown', { actions: breakdown + click(`button.node[data-key="${atlas}"]`, 1000) + click('button.node[data-key="src"]', 1400) + blur(1800) }), w: 1440, h: 880 }]))
+// 7. Patterns worth a look.
+shots.push(frame('screenshot-patterns', [{ file: demoPanel('patterns', { actions: breakdown + `setTimeout(() => { const el = document.getElementById('bd-find-title'); window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 24) }, 1100);` + blur(1300) }), w: 1440, h: 880 }]))
+// 8. The Explain prompt for one pattern.
+shots.push(frame('screenshot-explain', [{ file: demoPanel('explain', { actions: breakdown + click('[data-explain="large-results:demo1"]', 1100) + blur(1500) }), w: 1440, h: 880 }]))
 
 // Icon: the pixel skyline on a rounded square.
 const art = flatten(readFileSync(join(root, 'src/panel/art.mjs'), 'utf8'))

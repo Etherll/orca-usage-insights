@@ -12,27 +12,59 @@ export function homeDir({ platform = process.platform, env = process.env, home =
   return (platform === 'win32' ? nonEmpty(env.USERPROFILE) : undefined) ?? nonEmpty(env.HOME) ?? home;
 }
 
-// Returns realpaths of the roots that exist. Missing roots (ENOENT, ENOTDIR) have nothing to scan,
-// so they are dropped rather than counted as errors.
-export async function resolveRoots({
+// Only Orca's known account containers are enumerated; credentials and other home files
+// are never opened. Keep candidates (including absent defaults) for scanner diagnostics.
+export async function rootSpecs({
   platform = process.platform,
   env = process.env,
   home = os.homedir(),
-  realpath = fsp.realpath,
+  readdir = fsp.readdir,
 } = {}) {
   const p = pathFor(platform);
   const base = homeDir({ platform, env, home });
-  const configured = splitList(env.CLAUDE_CONFIG_DIR);
-  const claude = configured.length > 0
-    ? configured
-    : [
-        p.join(base, '.claude'),
-        p.join(nonEmpty(env.XDG_CONFIG_HOME) ?? p.join(base, '.config'), 'claude'),
-      ];
-  const codex = [nonEmpty(env.CODEX_HOME) ?? p.join(base, '.codex')];
+  const specs = [
+    { path: p.join(base, '.claude'), kind: 'claude', source: 'default' },
+    { path: p.join(nonEmpty(env.XDG_CONFIG_HOME) ?? p.join(base, '.config'), 'claude'), kind: 'claude', source: 'default' },
+    { path: p.join(base, '.codex'), kind: 'codex', source: 'default' },
+    ...splitList(env.CLAUDE_CONFIG_DIR).map((path) => ({ path, kind: 'claude', source: 'environment' })),
+    ...(nonEmpty(env.CODEX_HOME) ? [{ path: nonEmpty(env.CODEX_HOME), kind: 'codex', source: 'environment' }] : []),
+  ];
+  const userData = nonEmpty(env.ORCA_USER_DATA_PATH) ?? (platform === 'darwin'
+    ? p.join(base, 'Library', 'Application Support', 'orca')
+    : platform === 'win32'
+      ? p.join(nonEmpty(env.APPDATA) ?? p.join(base, 'AppData', 'Roaming'), 'orca')
+      : p.join(nonEmpty(env.XDG_CONFIG_HOME) ?? p.join(base, '.config'), 'orca'));
+  for (const [kind, container] of [['claude', 'claude-profiles'], ['codex', 'codex-accounts']]) {
+    const dir = p.join(userData, container);
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {
+        specs.push({ path: dir, kind, source: 'orca', message: `Cannot discover accounts (${error?.code ?? 'error'})` });
+      }
+      continue;
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.isDirectory() || entry.isSymbolicLink()) specs.push({ path: p.join(dir, entry.name, 'home'), kind, source: 'orca' });
+    }
+  }
+  const seen = new Set();
+  return specs.filter((spec) => {
+    const key = `${spec.kind}:${platform === 'win32' ? spec.path.toLowerCase() : spec.path}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// Environment roots supplement the defaults. Resolve aliases for callers needing just roots.
+export async function resolveRoots(options = {}) {
+  const { platform = process.platform, realpath = fsp.realpath } = options;
+  const specs = await rootSpecs(options);
   return {
-    claude: await existingRoots(claude, platform, realpath),
-    codex: await existingRoots(codex, platform, realpath),
+    claude: await existingRoots(specs.filter((s) => s.kind === 'claude').map((s) => s.path), platform, realpath),
+    codex: await existingRoots(specs.filter((s) => s.kind === 'codex').map((s) => s.path), platform, realpath),
   };
 }
 

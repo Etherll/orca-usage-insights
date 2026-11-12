@@ -9,20 +9,20 @@ import { NameDict } from '../core/table.mjs';
 import { PROVIDERS } from '../core/providers.mjs';
 import { MARKER_BYTES, createRecordsConsumer, markedLines } from './lines.mjs';
 import { createParsePool } from './parse-pool.mjs';
-import { pathFor, resolveRoots } from './paths.mjs';
+import { pathFor, rootSpecs } from './paths.mjs';
 import { listTranscripts, readTranscript } from './transcript-files.mjs';
 
 export { markedLines };
 
-const CACHE_VERSION = 5;
-// The pre-columns cache, read when there is no current one; parsers convert its states, so no file is reread.
-const LEGACY_CACHE_VERSION = 4;
+const CACHE_VERSION = 6;
+// Earlier caches, read when there is no current one. Their Claude entries carry over unread (parsers convert
+// pre-columns states); Codex files are read again, as their keys predate turn-based identity.
+const LEGACY_CACHE_VERSIONS = new Set([4, 5]);
 const REUSE_MS = 5_000;
 const SAVE_EVERY_MS = 30_000;
 // Files read whole for the first time go to parse threads when they are at most this big.
 // Compressed files over this size are skipped: they are never read whole on the calling thread.
 const THREAD_MAX_BYTES = 64 << 20;
-const STAT_LIMIT = 64;
 // Saves append changed files to a journal. The whole cache is rewritten (journal emptied) on the first
 // save, after reset, when more files changed than this, or once the journal is this big.
 const JOURNAL_MAX_FILES = 512;
@@ -35,7 +35,7 @@ export function createScanner({
   home = os.homedir(),
   fs = fsp,
   cacheFile,
-  legacyCacheFile = null,
+  legacyCacheFile = null, // a path or a list of paths, newest first
   concurrency = 8,
   // Threads that parse files read whole for the first time (first open, rewritten files).
   // 0 parses on the calling thread. Tail reads always parse inline: they are small.
@@ -52,12 +52,13 @@ export function createScanner({
   // Every file's table interns into one dictionary, so the store copies their columns in bulk.
   const names = new NameDict();
   let store = createRecordStore({ names });
-  let extra = { claude: [], codex: [] }; // absolute folders from settings, see setExtraRoots
-  let extraKey = '[[],[]]';
+  let extra = { claude: [], codex: [], disabled: [] }; // folders from settings, see setExtraRoots
+  let extraKey = '[[],[],[]]';
   let rootsGen = 0;
   let dirty = false;
   const touched = new Set(); // paths read or dropped since the last save
   const oversized = new Map(); // path -> key of a compressed file that decompressed past the cap
+  const folderMemo = new Map(); // root id -> its last counts, see folderCounts
   const journalFile = cacheFile ? `${cacheFile}.journal` : null;
   let baseGen = null; // gen of the cache file the journal extends; null: the next save rewrites it
   let journalBytes = 0;
@@ -70,15 +71,17 @@ export function createScanner({
 
   return { scan, reset, flush, close: () => pool?.close(), setExtraRoots, pool: () => pool };
 
-  // Extra folders are read next to the default roots. A change drops the reuse window, and a run
-  // that started with the old folders finishes before a new one starts. Same folders: no-op.
+  // Extra folders are read next to the default roots; `disabled` lists roots and folders turned off. A
+  // change drops the reuse window, and a run that started with the old folders finishes before a new one
+  // starts. Same folders: no-op.
   function setExtraRoots(next) {
     const claude = listOfStrings(next?.claude);
     const codex = listOfStrings(next?.codex);
-    const key = JSON.stringify([claude, codex]);
+    const disabled = listOfStrings(next?.disabled);
+    const key = JSON.stringify([claude, codex, disabled]);
     if (key === extraKey) return;
     extraKey = key;
-    extra = { claude, codex };
+    extra = { claude, codex, disabled };
     rootsGen++;
     last = null;
   }
@@ -134,41 +137,45 @@ export function createScanner({
       loaded = true;
       await loadCache(map);
     }
-    const roots = await resolveRoots({ platform, env, home, realpath: fs.realpath });
-    const run = { map, errors: 0, changed: false, failed: [], skipped: { zstd: 0, tooLarge: 0 } };
-    const { found, owners, folders } = await listTranscripts({ fs, platform, roots, extra: folderSpecs, run });
+    const roots = await rootSpecs({ platform, env, home, readdir: fs.readdir });
+    const run = { map, errors: 0, changed: false, failed: [], disabled: [], skipped: { zstd: 0, tooLarge: 0 } };
+    const { found, folders, stats } = await listTranscripts({ fs, platform, roots, extra: folderSpecs, run });
     // Largest files first (a .zst byte costs several plain ones), so no big file starts last while threads idle.
-    const stats = new Map();
-    await mapLimit(found, STAT_LIMIT, async (file) => {
-      try {
-        stats.set(file.path, await fs.stat(file.path));
-      } catch {}
-    });
     const weight = (file) => (stats.get(file.path)?.size ?? 0) * (file.compressed ? 7 : 1);
     const order = [...found].sort((a, b) => weight(b) - weight(a));
     await mapLimit(order, limit, (file) =>
       refreshFile(run, file, stats.get(file.path)).catch((error) => countFileError(run, file.path, error)),
     );
     const walked = new Set(found.map((file) => file.path));
+    // Cached files under a turned-off folder stay cached, so turning it on again reads only what changed.
+    const off = (path) => !walked.has(path) && underAny(run.disabled, path, p.sep);
     for (const path of [...map.keys()]) {
       // A directory that failed to read says nothing about its files, so their cache entries stay.
-      if (!walked.has(path) && !underAny(run.failed, path, p.sep)) drop(run, path);
+      if (!walked.has(path) && !underAny(run.failed, path, p.sep) && !off(path)) drop(run, path);
     }
     const ordered = new Map();
     for (const file of found) if (map.has(file.path)) ordered.set(file.path, map.get(file.path));
     for (const [path, entry] of map) if (!ordered.has(path)) ordered.set(path, entry);
     const sources = [];
     for (const [path, entry] of ordered) {
+      if (off(path)) continue;
       if (!ensureParser(entry)) {
         drop(run, path);
         continue;
       }
-      const table = entry.parser.table();
-      sources.push({ id: path, table });
-      const folder = owners.get(path);
-      if (folder) folder.records += table.length;
+      sources.push({ id: path, table: entry.parser.table() });
     }
     const records = store.update(sources);
+    // Each root counts every file it reaches, shared ones included, and the cached files under a dir of it
+    // that failed to list.
+    const tables = new Map(sources.map(({ id, table }) => [id, table]));
+    const statuses = folders.map((folder) => {
+      const paths = new Set(folder.paths);
+      const failed = run.failed.filter((dir) => folder.dirs.includes(dir) || underAny(folder.dirs, dir, p.sep));
+      if (failed.length > 0) for (const path of tables.keys()) if (underAny(failed, path, p.sep)) paths.add(path);
+      const { rows, latest } = folderCounts(folder, [...paths].map((path) => tables.get(path)).filter(Boolean));
+      return publicFolder({ ...folder, files: folder.paths.size, records: rows, latestRecordAt: latest > -Infinity ? new Date(latest).toISOString() : null });
+    });
     return {
       records,
       sources,
@@ -176,14 +183,48 @@ export function createScanner({
       files: found.length,
       errors: run.errors,
       changed: run.changed,
-      folders: folders.map(publicFolder),
+      folders: statuses,
       skipped: run.skipped,
     };
   }
 
+  // Turns (rows with the same key count once) and the newest timestamp across a root's files. Kept per root
+  // while its tables are unchanged, so a quiet poll costs one comparison per file.
+  function folderCounts(folder, list) {
+    const id = `${folder.kind}\u0000${folder.source}\u0000${folder.path}`;
+    const memo = folderMemo.get(id);
+    if (memo && memo.list.length === list.length && memo.list.every((table, i) => table === list[i] && memo.versions[i] === table.version && memo.lengths[i] === table.length)) {
+      return memo.counts;
+    }
+    const keys = new Set();
+    let rows = 0;
+    let latest = -Infinity;
+    for (const table of list) {
+      for (let i = 0; i < table.length; i++) {
+        const key = table.keys[i];
+        if (key !== undefined) {
+          if (keys.has(key)) continue;
+          keys.add(key);
+        }
+        rows++;
+        if (table.ms[i] > latest) latest = table.ms[i];
+      }
+    }
+    const counts = { rows, latest };
+    folderMemo.set(id, { list, versions: list.map((t) => t.version), lengths: list.map((t) => t.length), counts });
+    return counts;
+  }
+
   async function refreshFile(run, file, stat) {
     const entry = run.map.get(file.path);
-    const prior = entry?.kind === file.kind && ensureParser(entry) ? entry : undefined;
+    // A file replaced under the same name (a new inode) is read whole, even with the same mtime and size.
+    const sameFile = !entry?.fileId || !file.fileId || entry.fileId === file.fileId;
+    const prior = entry?.kind === file.kind && sameFile && ensureParser(entry) ? entry : undefined;
+    if (entry && file.fileId && entry.fileId !== file.fileId && sameFile) {
+      entry.fileId = file.fileId;
+      touched.add(file.path);
+      dirty = true;
+    }
     const result = await readTranscript({
       fs,
       file,
@@ -225,6 +266,7 @@ export function createScanner({
           offset: result.offset,
           kind: file.kind,
           ctx: file.ctx,
+          fileId: file.fileId ?? null,
           parser: result.consumer,
           state: result.state,
         });
@@ -297,14 +339,18 @@ export function createScanner({
     journalTorn = text !== '' && !text.endsWith('\n');
   }
 
-  // The next save writes the current cache file in full; the old one stays for a downgrade.
+  // The first legacy file that loads is used. The next save writes the current cache file in full; the
+  // old one stays for a downgrade.
   async function loadLegacy(map) {
-    const raw = await readJson(legacyCacheFile);
-    if (raw?.version !== LEGACY_CACHE_VERSION || !isObject(raw.files)) return;
-    for (const [path, entry] of Object.entries(raw.files)) {
-      if (isCacheEntry(entry)) map.set(path, fromCache(entry));
+    for (const file of [legacyCacheFile].flat()) {
+      const raw = await readJson(file);
+      if (!LEGACY_CACHE_VERSIONS.has(raw?.version) || !isObject(raw.files)) continue;
+      for (const [path, entry] of Object.entries(raw.files)) {
+        if (isCacheEntry(entry) && entry.kind !== 'codex') map.set(path, fromCache(entry));
+      }
+      if (map.size > 0) dirty = true;
+      return;
     }
-    if (map.size > 0) dirty = true;
   }
 
   async function readJson(file) {
@@ -409,20 +455,21 @@ function nextGen(previous) {
 }
 
 function fromCache(entry) {
-  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, state: entry.state, parser: null };
+  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, fileId: typeof entry.fileId === 'string' ? entry.fileId : null, state: entry.state, parser: null };
 }
 
 function toCache(entry) {
-  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, state: entry.parser ? entry.parser.state() : entry.state };
+  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, fileId: entry.fileId ?? null, state: entry.parser ? entry.parser.state() : entry.state };
 }
 
 function listOfStrings(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item !== '') : [];
 }
 
-function publicFolder({ path, kind, state, files, records, message }) {
-  return message ? { path, kind, state, files, records, message } : { path, kind, state, files, records };
+function publicFolder({ path, kind, source, state, files, records, latestRecordAt, message }) {
+  return { path, kind, source, state, files, records, latestRecordAt, ...(message ? { message } : {}) };
 }
+
 
 function noop() {}
 

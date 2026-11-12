@@ -2,10 +2,11 @@
 import { stackedBars, calendarHeatmap, punchCard, donut, hBars, sparkline, areaTrend, segmentBar, providerColor, compact, esc, TOKEN_KEYS, TOKEN_LABELS, TOKEN_COLORS, PROVIDER_LABELS } from './charts.mjs'
 import { pixelBanner } from './art.mjs'
 import { headline, tree, findings, notAnalysed, legend, priceLine, syncBody, changedSyncRows } from './breakdown.js'
+import { normalizeQuery, localDay, dayKey, MIN_USAGE_DATE } from '../core/query.mjs'
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { view: 'usage', range: '7d', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+const state = { view: 'usage', range: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
 const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
 
 function money(n) {
@@ -31,8 +32,12 @@ async function request(name, input) {
   throw new Error('Orca host is not available.')
 }
 
-function filterInput() {
-  const input = { range: state.range }
+// Breakdown splits cost, so it takes the dates but not the model or cache-token options.
+function filterInput({ usage = false } = {}) {
+  const dates = state.range === 'custom' ? { startDate: state.startDate, endDate: state.endDate } : {}
+  const input = usage
+    ? normalizeQuery({ range: state.range, ...dates, includeCache: state.cache, ...(state.models === null ? {} : { models: state.models }) })
+    : { range: state.range, ...dates }
   if (state.provider !== 'all') input.providers = [state.provider]
   if (state.host !== 'all') input.hosts = [state.host]
   if (state.scope !== 'all') input.scope = state.scope
@@ -54,7 +59,7 @@ async function load(kind = 'usage.report') {
     $('skeleton').hidden = false
   }
   try {
-    state.report = await request(kind, filterInput())
+    state.report = await request(kind, filterInput({ usage: true }))
     render()
     if (state.view === 'breakdown') setTimeout(() => loadBreakdown(), 0)
     $('live').textContent = kind === 'usage.refresh' ? `Refreshed. ${compact(state.report.totals.total)} tokens in range.` : ''
@@ -98,6 +103,7 @@ function cacheTile(t) {
   const tip = esc(JSON.stringify({
     title: 'Cache',
     rows: [
+      ['', 'As recorded, whether or not totals include cache tokens'],
       ['Hit rate', pct1(hit)],
       ['', 'read ÷ (read + write + uncached)'],
       ['Reuse', pct1(t.cacheReuseRate)],
@@ -119,7 +125,12 @@ function activeFilters() {
   if (state.scope !== 'all') out.push({ key: 'scope', label: 'Worktrees only' })
   if (state.provider !== 'all') out.push({ key: 'provider', label: PROVIDER_LABELS[state.provider] || state.provider })
   if (state.host !== 'all') out.push({ key: 'host', label: hostLabel(state.host) })
-  if (!state.cache) out.push({ key: 'cache', label: 'No cache tokens' })
+  if (state.range === 'custom') out.push({ key: 'range', label: state.startDate === state.endDate ? state.startDate : `${state.startDate} – ${state.endDate}` })
+  // Breakdown splits cost by what it went on, so the model and cache-token options don't apply there.
+  if (state.view !== 'breakdown') {
+    if (state.models !== null) out.push({ key: 'models', label: state.models.length ? `Models: ${state.models.join(', ')}` : 'No models selected' })
+    if (!state.cache) out.push({ key: 'cache', label: 'No cache tokens' })
+  }
   return out
 }
 
@@ -132,15 +143,42 @@ function renderChips() {
   $('filters-btn').setAttribute('aria-label', list.length ? `Filters, ${list.length} active` : 'Filters')
 }
 
-// Clears one filter (or all), reloading only when the request changes.
+// Clears one filter (or all). Every filter is part of the worker query, the cache-token option included.
 function clearFilter(key) {
-  const before = `${state.scope}|${state.provider}|${state.host}`
   if (key === 'scope' || key === 'all') state.scope = 'all'
   if (key === 'provider' || key === 'all') state.provider = 'all'
   if (key === 'host' || key === 'all') state.host = 'all'
   if (key === 'cache' || key === 'all') state.cache = true
-  if (`${state.scope}|${state.provider}|${state.host}` !== before) load()
-  else render()
+  if (key === 'models' || key === 'all') {
+    state.models = null
+    state.modelSearch = ''
+    $('model-search').value = ''
+  }
+  if (key === 'range' || (key === 'all' && state.range === 'custom')) {
+    state.range = '7d'
+    $('custom-range').hidden = true
+    $('date-error').hidden = true
+  }
+  load()
+}
+
+// The menu sits under its button, moved left to stay on screen, and opens upward when there is more room
+// above. It scrolls inside the height it gets. Recomputed on open, render and resize.
+function positionMenu() {
+  const pop = $('filters-pop')
+  if (pop.hidden) return
+  const anchor = $('filters-btn').getBoundingClientRect()
+  const left = anchor.left || 0
+  const viewportWidth = window.innerWidth || 800
+  const viewportHeight = window.innerHeight || 600
+  const width = pop.getBoundingClientRect().width
+  pop.style.left = `${Math.max(8 - left, Math.min(0, viewportWidth - left - width - 8))}px`
+  const below = Math.max(0, viewportHeight - (anchor.bottom || 0) - 14)
+  const above = Math.max(0, (anchor.top || 0) - 14)
+  const openAbove = below < 180 && above > below
+  pop.style.top = openAbove ? 'auto' : 'calc(100% + 6px)'
+  pop.style.bottom = openAbove ? 'calc(100% + 6px)' : 'auto'
+  pop.style.maxHeight = `${Math.min(680, openAbove ? above : below)}px`
 }
 
 function setMenu(open) {
@@ -149,6 +187,7 @@ function setMenu(open) {
   if (open === !pop.hidden) return
   pop.hidden = !open
   btn.setAttribute('aria-expanded', String(open))
+  if (open) positionMenu()
   if (open) (pop.querySelector('.opt-list [aria-checked="true"]') || pop.querySelector('button, input'))?.focus()
   else btn.focus()
 }
@@ -171,31 +210,112 @@ const SOURCE_ICONS = {
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   ssh: '<rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/>',
 }
-const STATE_WORDS = { ok: 'Up to date', warning: 'Warning', error: 'Error', loading: 'Loading…' }
+const STATE_WORDS = { empty: 'No transcripts', off: 'Turned off', ok: 'Up to date', warning: 'Warning', error: 'Error', loading: 'Loading…' }
 
-// One pill per source (this machine, each extra folder, each SSH host): state, size, freshness.
-// Errors and warnings show their message on hover and to screen readers.
+// Labels name the transcript root; they never claim which subscription or account a history belongs to.
+function sourceLabel(source) {
+  if (source.kind !== 'folder') return source.label
+  const provider = source.provider === 'claude' ? 'Claude' : PROVIDER_LABELS[source.provider] || source.provider || 'Transcripts'
+  const parts = String(source.path || source.label || '').split(/[\\/]+/).filter(Boolean)
+  const name = parts.at(-1) || 'root'
+  const type = { orca: 'Orca root', default: 'Default', environment: 'Env root', extra: 'Folder' }[source.source] || 'Folder'
+  let id = name
+  if (source.source === 'orca') id = (name === 'home' ? parts.at(-2) || name : name).slice(0, 8)
+  else if (name === 'home' || name === 'claude' || name === 'codex') id = parts.slice(-2).join('/')
+  return `${provider} · ${type} · ${id}`
+}
+
+// One pill per source (this machine, each SSH host, each root or folder with a problem): state, size,
+// freshness. Healthy and turned-off roots fold into a details list. A folder's pill is a button that turns
+// it off or on. Errors and warnings show their message on hover and to screen readers.
 function renderSources(r) {
   const list = r.sources || []
   const el = $('sources')
-  const multi = list.length > 1 || list.some((s) => s.state !== 'ok')
+  const folders = list.filter((s) => s.kind === 'folder')
+  const multi = list.some((s) => s.kind === 'ssh' || (s.kind === 'folder' && s.source === 'extra')) || list.some((s) => !['ok', 'empty', 'off'].includes(s.state))
+  const wasOpen = el.querySelector('details')?.open || false
   el.hidden = !list.length
   if (!list.length) return
-  const pills = list.map((s) => {
+  const pill = (s) => {
     const state = STATE_WORDS[s.state] ? s.state : 'ok'
-    const meta = state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
-    const detail = [STATE_WORDS[state], s.message, s.files !== undefined ? `${s.files} files` : '', s.ms ? `scanned in ${s.ms} ms` : ''].filter(Boolean).join(' · ')
+    const meta = state === 'off' ? 'turned off' : state === 'empty' ? 'no transcripts' : state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
+    const detail = [s.path || '', s.source ? `Source: ${s.source}` : '', STATE_WORDS[state], s.message, s.files !== undefined ? `${s.files} files` : '', s.ms ? `scanned in ${s.ms} ms` : '', s.latestRecordAt ? `Latest recorded usage: ${new Date(s.latestRecordAt).toLocaleString()}` : ''].filter(Boolean).join(' · ')
     const icon = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SOURCE_ICONS[s.kind] || SOURCE_ICONS.local}</svg>`
-    return `<span class="src ${state}" title="${esc(detail)}" aria-label="${esc(`${s.label}: ${detail}`)}">${icon}<span class="state" aria-hidden="true"></span><span class="name">${esc(s.label)}</span><span class="meta">${esc(meta)}</span></span>`
-  })
-  const hint = multi ? '' : '<span class="hint">Add folders or SSH hosts in Settings → Plugins → Usage Insights.</span>'
-  el.innerHTML = pills.join('') + hint
+    const label = sourceLabel(s)
+    const inner = `${icon}<span class="state" aria-hidden="true"></span><span class="name">${esc(label)}</span><span class="meta">${esc(meta)}</span>`
+    if (s.kind === 'folder' && s.path) {
+      const on = state !== 'off'
+      const action = on ? 'Click to leave this folder out' : 'Click to count this folder again'
+      return `<button type="button" class="src ${state}" data-source-path="${esc(s.path)}" aria-pressed="${on}" title="${esc(`${detail} · ${action}`)}" aria-label="${esc(`${label}: ${detail}. ${action}`)}">${inner}</button>`
+    }
+    return `<span class="src ${state}" title="${esc(detail)}" aria-label="${esc(`${label}: ${detail}`)}">${inner}</span>`
+  }
+  const healthy = folders.filter((s) => ['ok', 'empty', 'off'].includes(s.state))
+  const prominent = list.filter((s) => !healthy.includes(s))
+  const warnings = folders.length - healthy.length
+  const off = folders.filter((s) => s.state === 'off').length
+  const roots = healthy.length ? `<details class="source-details"${wasOpen ? ' open' : ''}><summary>${folders.length} local ${folders.length === 1 ? 'source' : 'sources'}${off ? ` · ${off} off` : ''}${warnings ? ` · ${warnings} ${warnings === 1 ? 'warning' : 'warnings'}` : ''}</summary><div class="source-roots">${healthy.map(pill).join('')}</div></details>` : ''
+  const hint = multi ? '' : '<span class="hint">Click a folder to leave it out. Add folders or SSH hosts in Settings → Plugins → Usage Insights.</span>'
+  el.innerHTML = prominent.map(pill).join('') + roots + hint
   const problems = list.filter((s) => s.state === 'error' || s.state === 'warning')
   const notes = []
   if (r.scopeError) notes.push(`${r.scopeError.replace(/\.?$/, '.')} Showing all usage instead.`)
-  for (const s of problems) notes.push(`${s.label}: ${s.message || STATE_WORDS[s.state]}`)
+  for (const s of problems) notes.push(`${sourceLabel(s)}: ${s.message || STATE_WORDS[s.state]}`)
   $('notice').hidden = !notes.length
   $('notice').textContent = notes.join('  ·  ')
+}
+
+// The model list keeps a selected model that the current filters no longer have, so it can be unticked.
+function renderModels(r) {
+  const choices = [...new Set([...(r.models || (r.byModel || []).map((m) => m.model)), ...(state.models || [])])].sort()
+  const query = state.modelSearch.trim().toLowerCase()
+  const shown = choices.filter((model) => model.toLowerCase().includes(query))
+  const focusedModel = document.activeElement?.dataset?.model
+  $('models-all').setAttribute('aria-pressed', String(state.models === null))
+  $('models').innerHTML = shown.length ? shown.map((model) => `<label class="model-option"><input type="checkbox" data-model="${esc(model)}"${state.models === null || state.models.includes(model) ? ' checked' : ''}><span>${esc(model)}</span></label>`).join('') : '<p class="muted model-empty">No matching models.</p>'
+  if (focusedModel) [...$('models').querySelectorAll('input')].find((el) => el.dataset.model === focusedModel)?.focus()
+}
+
+function applyDates() {
+  const startDate = $('start-date').value
+  const endDate = $('end-date').value
+  try {
+    normalizeQuery({ range: 'custom', startDate, endDate })
+  } catch (err) {
+    $('date-error').textContent = `Pick a start date on or after ${MIN_USAGE_DATE} and an end date no later than today, with the start on or before the end (${err.message}).`
+    $('date-error').hidden = false
+    $('start-date').setAttribute('aria-invalid', 'true')
+    $('end-date').setAttribute('aria-invalid', 'true')
+    return
+  }
+  $('date-error').hidden = true
+  $('start-date').setAttribute('aria-invalid', 'false')
+  $('end-date').setAttribute('aria-invalid', 'false')
+  state.range = 'custom'
+  state.startDate = startDate
+  state.endDate = endDate
+  load()
+}
+
+function timeZoneName() {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'local time' } catch { return 'local time' }
+}
+
+// The worker keeps the turned-off list in its settings; the report is then reloaded without the folder.
+async function toggleSource(button) {
+  if (!button || button.disabled) return
+  const path = button.dataset.sourcePath
+  const enabled = button.getAttribute('aria-pressed') !== 'true'
+  button.disabled = true
+  try {
+    await request('sources.toggle', { path, enabled })
+    $('live').textContent = enabled ? 'Folder counted again.' : 'Folder left out.'
+    await load()
+    if (state.view === 'breakdown') loadBreakdown()
+  } catch (err) {
+    showStatus(`Couldn't change the folder: ${err?.message || err}`, true)
+    button.disabled = false
+  }
 }
 
 function legendItem(color, label, value) {
@@ -207,7 +327,8 @@ export function render() {
   const r = state.report
   if (!r) return
   renderNote()
-  const keys = state.cache ? TOKEN_KEYS : ['input', 'output']
+  const includeCache = r.includeCache ?? state.cache
+  const keys = includeCache ? TOKEN_KEYS : ['input', 'output']
   const t = r.totals
   const shownTotal = keys.reduce((s, k) => s + (t[k] || 0), 0)
   const widthOf = (id, min = 280) => Math.max(min, Math.round($(id).clientWidth || 0))
@@ -218,6 +339,11 @@ export function render() {
   $('banner').innerHTML = pixelBanner(r, { h: 34, w: Math.max(80, Math.min(400, Math.round((34 * bw) / bh))) })
   $('updated').textContent = `Updated ${new Date(r.generatedAt).toLocaleString()}`
   $('hero-total').textContent = compact(shownTotal)
+  $('hero-total').title = `${shownTotal.toLocaleString('en-US')} tokens`
+  const zone = timeZoneName()
+  const span = r.startDate && r.endDate ? (r.startDate === r.endDate ? r.startDate : `${r.startDate} – ${r.endDate}`) : 'All history'
+  $('selection-summary').textContent = `${span} · ${zone} · ${includeCache ? 'Includes cache tokens' : 'Excludes cache tokens'} · all accounts combined`
+  $('date-hint').textContent = `Inclusive local dates (${zone}). Use the same date for one day.`
   $('hero-sub').textContent = `tokens · ${money(t.costUsd)}${t.hasUnpriced ? '+' : ''} est.`
 
   // Controls reflect state.
@@ -238,13 +364,14 @@ export function render() {
   $('providers').innerHTML = showProviders ? ['all', ...providers].map((p) => opt('provider', p, p === 'all' ? 'All providers' : PROVIDER_LABELS[p] || p, p === state.provider)).join('') : ''
   for (const b of $('scope').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.scope === state.scope))
   $('cache').checked = state.cache
+  renderModels(r)
   renderChips()
   if (focusGroup && !$('filters-pop').hidden) $(focusGroup)?.querySelector('[aria-checked="true"]')?.focus()
 
   const empty = t.turns === 0
   $('status').hidden = !empty || state.view === 'breakdown'
   if (empty) {
-    $('status').textContent = 'No usage in this range yet. Run Claude Code or Codex and it will appear here.'
+    $('status').textContent = 'No recorded usage matches these dates and filters. Try another range, choose All models, or reset the filters.'
     $('status').classList.remove('error')
   }
   $('content').hidden = state.view === 'breakdown'
@@ -265,7 +392,7 @@ export function render() {
     $('daily').innerHTML = stackedBars(r.daily, { keys: ['costUsd'], colors: { costUsd: 'var(--s1)' }, labels: { costUsd: 'Cost' }, fmt: money, width: widthOf('daily'), height: 190 })
     $('daily-legend').innerHTML = legendItem('var(--s1)', 'Cost', money(t.costUsd))
   } else {
-    $('daily-sub').textContent = state.cache ? 'Input, output, cache read and cache write by day.' : 'Input and output by day (cache hidden).'
+    $('daily-sub').textContent = includeCache ? 'Input, output, cache read and cache write by day.' : 'Input and output by day (cache tokens left out of every total).'
     $('daily').innerHTML = stackedBars(r.daily, { keys, width: widthOf('daily'), height: 190 })
     $('daily-legend').innerHTML = keys.map((k) => legendItem(TOKEN_COLORS[k], TOKEN_LABELS[k], compact(t[k]))).join('')
   }
@@ -273,6 +400,7 @@ export function render() {
   renderBreakdown(r)
   renderSources(r)
   syncRadioTabs()
+  positionMenu()
 
   $('peak').textContent = r.peakDay ? `Best: ${prettyDay(r.peakDay.day)} · ${compact(r.peakDay.total)}` : ''
   $('calendar').innerHTML = calendarHeatmap(r.calendar)
@@ -311,42 +439,74 @@ function renderOverview(r, keys, widthOf) {
   $('trend').innerHTML = areaTrend(series, { metric: isCost ? 'costUsd' : 'total', fmt, axisFmt: isCost ? (v) => '$' + compact(v) : compact, width: widthOf('trend'), height: 210 })
   const cells = [
     ['Processed tokens', compact(t.total)],
-    ['Cached input', compact(t.cacheRead)],
+    ...(keys.includes('cacheRead') ? [['Cache read', compact(t.cacheRead)], ['Cache write', compact(t.cacheWrite)]] : []),
     ['Uncached input', compact(t.input)],
     ['Output', compact(t.output)],
     ['Cache savings', t.cacheSavingsUsd === undefined ? '—' : money(t.cacheSavingsUsd)],
   ]
   $('totals').innerHTML = cells.map(([k, v]) => `<div><span>${esc(k)}</span><strong>${esc(v)}</strong></div>`).join('')
-  const segs = TOKEN_KEYS.map((k) => ({ label: TOKEN_LABELS[k], value: t[k] || 0, color: TOKEN_COLORS[k] }))
+  const segs = keys.map((k) => ({ label: TOKEN_LABELS[k], value: t[k] || 0, color: TOKEN_COLORS[k] }))
   $('typebar').innerHTML = segmentBar(segs, { width: widthOf('typebar'), id: 'typebar' })
   $('type-legend').innerHTML = segs.map((s) => legendItem(s.color, s.label, compact(s.value))).join('')
 }
 
-// Ranked table by model or by day. The thin line under each name is its share of the largest row.
+// Ranked table by model or by day, or every date x model pair with exact counts. The thin line under each
+// name is its share of the largest row.
 function renderBreakdown(r) {
   const isCost = state.metric === 'cost'
   const byModel = state.breakdown === 'model'
+  const detailed = state.breakdown === 'day-model'
+  const includeCache = r.includeCache ?? state.cache
+  const exact = (n) => Number(n || 0).toLocaleString('en-US')
+  const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+  const modelCompare = (a, b) => text(String(a.model ?? a.name ?? ''), String(b.model ?? b.name ?? '')) || text(String(a.provider ?? ''), String(b.provider ?? ''))
+  const dateCompare = (a, b) => text(String(a.day ?? ''), String(b.day ?? ''))
+  const sortRows = (rows) => {
+    if (state.sort === 'date-desc') rows.sort((a, b) => dateCompare(b, a) || modelCompare(a, b))
+    else if (state.sort === 'date-asc') rows.sort((a, b) => dateCompare(a, b) || modelCompare(a, b))
+    else if (state.sort === 'model-asc') rows.sort((a, b) => modelCompare(a, b) || dateCompare(b, a))
+    else if (state.sort === 'tokens-desc') rows.sort((a, b) => b.tokens - a.tokens || modelCompare(a, b))
+    else if (state.sort === 'tokens-asc') rows.sort((a, b) => a.tokens - b.tokens || modelCompare(a, b))
+    else if (detailed) rows.sort((a, b) => dateCompare(b, a) || modelCompare(a, b))
+    else if (isCost) rows.sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1))
+    return rows
+  }
+  $('rank-sort').value = state.sort
+  $('rank-note').textContent = detailed
+    ? `Exact token counts as recorded. Total ${includeCache ? 'includes' : 'excludes'} cache tokens.`
+    : `Totals ${includeCache ? 'include' : 'exclude'} cache tokens. Hover a token count for its exact value.`
+  $('breakdown').classList.toggle('detail', detailed)
+  if (detailed) {
+    const rows = sortRows((r.byDayModel || []).map((row) => ({ ...row, tokens: row.total })))
+    const columns = ['Date', 'Provider', 'Model', 'Input', 'Output', 'Cache read', 'Cache write', 'Total', 'Cost']
+    const head = `<thead><tr>${columns.map((label) => `<th scope="col">${label}</th>`).join('')}</tr></thead>`
+    const body = rows.length
+      ? rows.map((row) => `<tr><td>${esc(row.day)}</td><td>${esc(PROVIDER_LABELS[row.provider] || row.provider)}</td><td>${esc(row.model)}</td>${['input', 'output', 'cacheRead', 'cacheWrite', 'total'].map((key) => `<td>${esc(exact(row[key]))}</td>`).join('')}<td${row.costUsd == null ? ' class="muted"' : ''}>${row.costUsd == null ? '—' : money(row.costUsd)}</td></tr>`).join('')
+      : `<tr><td colspan="${columns.length}" class="muted">No recorded usage matches these dates and filters.</td></tr>`
+    $('breakdown').innerHTML = head + `<tbody>${body}</tbody>`
+    return
+  }
   const providers = r.byProvider || []
   const colorOf = (p) => providerColor(p, Math.max(0, providers.findIndex((x) => x.provider === p)))
   const total = r.totals.total || 0
   let rows
   if (byModel) {
-    rows = (r.byModel || []).map((m) => ({ name: m.model, provider: m.provider, cost: m.costUsd, tokens: m.total, share: m.share }))
+    rows = (r.byModel || []).map((m) => ({ name: m.model, model: m.model, provider: m.provider, cost: m.costUsd, tokens: m.total, share: m.share }))
   } else {
-    rows = [...r.daily].reverse().filter((d) => d.total > 0).map((d) => ({ name: prettyDay(d.day), cost: d.costUsd, tokens: d.total, share: total ? d.total / total : 0 }))
+    rows = [...r.daily].reverse().filter((d) => d.total > 0).map((d) => ({ name: prettyDay(d.day), day: d.day, cost: d.costUsd, tokens: d.total, share: total ? d.total / total : 0 }))
   }
-  if (isCost) rows.sort((a, b) => (b.cost ?? -1) - (a.cost ?? -1))
+  sortRows(rows)
   const key = (x) => (isCost ? x.cost ?? 0 : x.tokens)
   const top = Math.max(0, ...rows.map(key))
-  const head = `<thead><tr><th>#</th><th>${byModel ? 'Model' : 'Day'}</th><th>Cost</th><th>Share</th><th>Tokens</th></tr></thead>`
+  const head = `<thead><tr><th scope="col">#</th><th scope="col">${byModel ? 'Model' : 'Day'}</th><th scope="col">Cost</th><th scope="col">Share</th><th scope="col">Tokens</th></tr></thead>`
   const body = rows.length
     ? rows.map((x, i) => {
         const color = byModel ? colorOf(x.provider) : 'var(--s1)'
         const width = top > 0 ? Math.max(2, (key(x) / top) * 100) : 0
         const dot = byModel && x.provider ? `<span class="sw" style="background:${color}"></span>` : ''
-        return `<tr><td class="rank">${i + 1}</td><td class="name"><span class="nm">${dot}${esc(x.name)}</span><span class="share-line" style="width:${width.toFixed(1)}%;background:${color}"></span></td><td${x.cost == null ? ' class="muted"' : ''}>${x.cost == null ? '—' : money(x.cost)}</td><td class="muted">${x.share < 0.001 && x.share > 0 ? '&lt;0.1%' : (x.share * 100).toFixed(1) + '%'}</td><td>${esc(compact(x.tokens))}</td></tr>`
+        return `<tr><td class="rank">${i + 1}</td><td class="name"><span class="nm">${dot}${esc(x.name)}</span><span class="share-line" style="width:${width.toFixed(1)}%;background:${color}"></span></td><td${x.cost == null ? ' class="muted"' : ''}>${x.cost == null ? '—' : money(x.cost)}</td><td class="muted">${x.share < 0.001 && x.share > 0 ? '&lt;0.1%' : (x.share * 100).toFixed(1) + '%'}</td><td title="${esc(exact(x.tokens))} tokens">${esc(compact(x.tokens))}</td></tr>`
       }).join('')
-    : `<tr><td colspan="5" class="muted" style="text-align:center">No usage in this range.</td></tr>`
+    : `<tr><td colspan="5" class="muted" style="text-align:center">No recorded usage matches these dates and filters.</td></tr>`
   $('breakdown').innerHTML = head + `<tbody>${body}</tbody>`
 }
 
@@ -355,6 +515,9 @@ function renderView() {
   for (const b of $('view').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.view === state.view))
   $('metric').hidden = bd
   $('sec-cache').hidden = bd
+  $('sec-models').hidden = bd
+  $('selection-summary').hidden = bd
+  renderChips()
   $('content').hidden = bd || !state.report
   $('bd').hidden = !bd
   if (bd) $('status').hidden = true
@@ -617,9 +780,52 @@ function bindControls() {
   })
   $('ranges').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-range]')
-    if (!b || b.dataset.range === state.range) return
+    if (!b) return
+    if (b.dataset.range === 'custom') {
+      // Custom opens the date fields; the range changes on Apply.
+      $('custom-range').hidden = false
+      if (!$('start-date').value) $('start-date').value = state.startDate || state.report?.startDate || dayKey(localDay())
+      if (!$('end-date').value) $('end-date').value = state.endDate || state.report?.endDate || dayKey(localDay())
+      $('start-date').focus()
+      return
+    }
+    $('custom-range').hidden = true
+    $('date-error').hidden = true
+    if (b.dataset.range === state.range) return
     state.range = b.dataset.range
     load()
+  })
+  $('date-apply').addEventListener('click', applyDates)
+  for (const id of ['start-date', 'end-date']) {
+    $(id).min = MIN_USAGE_DATE
+    $(id).max = dayKey(localDay())
+    $(id).addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return
+      e.preventDefault()
+      applyDates()
+    })
+  }
+  $('model-search').addEventListener('input', (e) => {
+    state.modelSearch = e.target.value
+    if (state.report) renderModels(state.report)
+  })
+  $('models-all').addEventListener('click', () => {
+    if (state.models === null) return
+    state.models = null
+    load()
+  })
+  $('models').addEventListener('change', (e) => {
+    const model = e.target.dataset?.model
+    if (!model) return
+    const selected = new Set(state.models === null ? state.report?.models || (state.report?.byModel || []).map((m) => m.model) : state.models)
+    if (e.target.checked) selected.add(model)
+    else selected.delete(model)
+    state.models = [...selected].sort()
+    load()
+  })
+  $('rank-sort').addEventListener('change', (e) => {
+    state.sort = e.target.value
+    if (state.report) renderBreakdown(state.report)
   })
   $('providers').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-provider]')
@@ -661,15 +867,17 @@ function bindControls() {
   })
   $('cache').addEventListener('change', (e) => {
     state.cache = e.target.checked
-    render()
+    load()
   })
   $('refresh').addEventListener('click', () => load('usage.refresh'))
+  $('sources').addEventListener('click', (e) => toggleSource(e.target.closest?.('button[data-source-path]')))
   host?.plugin?.on?.('usage.changed', onChanged)
   host?.on?.('theme', () => state.report && render())
   // Charts are drawn at the container's pixel width, so redraw when the panel is resized.
   let lastW = 0
   let timer = 0
   globalThis.addEventListener?.('resize', () => {
+    positionMenu()
     clearTimeout(timer)
     timer = setTimeout(() => {
       const w = document.body?.clientWidth || 0

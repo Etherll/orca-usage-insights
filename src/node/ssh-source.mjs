@@ -9,9 +9,10 @@ import { createRecordStore } from '../core/record-store.mjs';
 import { NameDict } from '../core/table.mjs';
 import { LIST_SCRIPT, createReadParser, parseListing, readScript } from './ssh-script.mjs';
 
-const CACHE_VERSION = 4;
-// Version 3 held parser states as packed rows; the parsers convert them when restored.
-const LEGACY_CACHE_VERSION = 3;
+const CACHE_VERSION = 5;
+// Version 3 held parser states as packed rows; the parsers convert them when restored. Codex entries from
+// versions before 5 are read again: their keys predate turn-based identity.
+const LEGACY_CACHE_VERSIONS = new Set([3, 4]);
 const SAVE_EVERY_MS = 30_000;
 
 export function sshArgs(host) {
@@ -275,13 +276,15 @@ export function createSshSource({
     if (!cacheFile) return;
     try {
       const raw = JSON.parse(await fs.readFile(cacheFile, 'utf8'));
-      if ((raw?.version !== CACHE_VERSION && raw?.version !== LEGACY_CACHE_VERSION) || raw.host !== host || typeof raw.files !== 'object' || raw.files === null) return;
+      const legacy = LEGACY_CACHE_VERSIONS.has(raw?.version);
+      if ((raw?.version !== CACHE_VERSION && !legacy) || raw.host !== host || typeof raw.files !== 'object' || raw.files === null) return;
       for (const [p, e] of Object.entries(raw.files)) {
         if (!e || (e.kind !== 'claude' && e.kind !== 'codex') || !Number.isSafeInteger(e.offset) || e.offset < 0 || !e.state || typeof e.state !== 'object') continue;
+        if (legacy && e.kind === 'codex') continue;
         files.set(p, { key: typeof e.key === 'string' ? e.key : null, offset: e.offset, kind: e.kind, ctx: { ...e.ctx, host: id }, state: e.state, parser: null });
       }
       if (files.size) status = { ...status, records: 0 };
-      if (raw.version === LEGACY_CACHE_VERSION && files.size) markDirty();
+      if (legacy) markDirty();
     } catch {
       // No cache or unreadable: start fresh.
     }
