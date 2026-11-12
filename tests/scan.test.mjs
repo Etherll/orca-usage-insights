@@ -1056,3 +1056,32 @@ test('a previous version cache carries over without reading a transcript, and is
   assert.deepEqual((await restarted.scan()).records.toRecords(), warm.records.toRecords());
   assert.deepEqual(rec2.log.readFile, [fx.cacheFile, `${fx.cacheFile}.journal`], 'the current cache wins; the old one is not read');
 });
+
+test('a .zst that decompresses past the cap is not decompressed again after a restart', { skip: !zstdAvailable() && 'Node has no zstd' }, async (t) => {
+  const fx = await fixture(t);
+  const { zstdCompressSync } = await import('node:zlib');
+  const { TOO_LARGE } = await import('../src/node/zstd.mjs');
+  const big = path.join(fx.codex, 'sessions', 'rollout-big.jsonl.zst');
+  await fsp.writeFile(big, zstdCompressSync(Buffer.from('\n')));
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm1', cwd: '/w/alpha' })));
+  // Reading the file fails the way decompressing past the 768 MiB cap does.
+  const capped = {
+    ...fsp,
+    async open(file, flags) {
+      const handle = await fsp.open(file, flags);
+      if (file !== big) return handle;
+      return { read: async () => { throw new Error(TOO_LARGE); }, close: () => handle.close() };
+    },
+  };
+  const first = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, fs: capped, threads: 0 });
+  const cold = await first.scan();
+  assert.equal(cold.skipped.tooLarge, 1);
+  await first.flush();
+
+  const rec = recordingFs();
+  const restarted = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, fs: rec.fs, threads: 0 });
+  const warm = await restarted.scan();
+  assert.deepEqual(rec.log.opened, [], 'nothing is opened, the oversized file included');
+  assert.equal(warm.skipped.tooLarge, 1);
+  assert.deepEqual(warm.records.toRecords(), cold.records.toRecords());
+});

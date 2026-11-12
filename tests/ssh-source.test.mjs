@@ -255,3 +255,37 @@ test('a display name replaces the address in ids, labels and error messages', as
   assert.ok(!r.status.message.includes(host), r.status.message);
   assert.match(r.status.message, /aws/);
 });
+
+test('a file rewritten in place at a larger size is read from the start, not tailed', { skip: isWin }, async (t) => {
+  const fx = await fixture(t);
+  const file = path.join(fx.proj, 's1.jsonl');
+  await fsp.writeFile(file, claudeLine('m1') + '\n');
+  const { source } = localSource(fx.home);
+  assert.equal((await source.scan()).records.length, 1);
+  // Different, longer content: the byte before the old offset is no longer an LF.
+  await fsp.writeFile(file, claudeLine('rewritten-1') + '\n' + claudeLine('rewritten-2') + '\n');
+  const later = new Date(Date.now() + 5000);
+  await fsp.utimes(file, later, later);
+  await source.scan({ force: true });
+  const keys = (await source.scan({ force: true })).records.toRecords().map((r) => r.key).sort();
+  assert.ok(keys.length === 2 && keys.every((k) => k.startsWith('rewritten')), keys.join(', '));
+});
+
+test('the shell fallback also reports a rewritten file instead of tailing it', { skip: isWin }, async (t) => {
+  const { readScript } = await import('../src/node/ssh-script.mjs');
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'ssh-rewrite-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'r.jsonl');
+  await fsp.writeFile(file, 'abcdefgh\nmore\n');
+  const script = readScript([{ path: file, kind: 'claude', offset: 5, size: 14 }, { path: file, kind: 'claude', offset: 9, size: 14 }]).replace('if command -v python3 >/dev/null 2>&1; then', 'if false; then');
+  const out = await new Promise((resolve, reject) => {
+    const child = spawn('sh', ['-s']);
+    let text = '';
+    child.stdout.on('data', (d) => (text += d));
+    child.on('error', reject);
+    child.on('close', () => resolve(text));
+    child.stdin.end(script);
+  });
+  const done = out.split('\n').filter((l) => l.startsWith('\u001eN'));
+  assert.deepEqual(done, ['\u001eN\t-1', '\u001eN\t5']);
+});

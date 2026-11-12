@@ -362,7 +362,8 @@ function treePath(root, project, [key, label, kind], memo) {
       chain.push(node);
     });
   } else if (GROUPS[kind]) {
-    const group = child(projectNode, GROUPS[kind], GROUPS[kind], 'group');
+    // Namespaced, so a top-level folder named like the group stays a separate node.
+    const group = child(projectNode, `group:${GROUPS[kind]}`, GROUPS[kind], 'group');
     chain.push(group, child(group, key, label, kind));
   } else {
     chain.push(child(projectNode, key, label, kind));

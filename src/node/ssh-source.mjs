@@ -97,7 +97,7 @@ export function createSshSource({
         // Same rule as the local scanner: a grown file is read from its stored offset; anything
         // else (new, shrunk, rewritten) is read from the start with a fresh parser.
         // A tail needs the entry's parser now: lines arrive before collect() would build it.
-        const tail = entry && entry.kind === file.kind && file.size >= entry.offset && entry.key !== null && ensureParser(entry);
+        const tail = entry && entry.kind === file.kind && file.size >= entry.offset && grew(entry.key, file.key) && ensureParser(entry);
         const target = tail ? entry : freshEntry(file);
         if (!tail) files.set(file.path, target);
         target.pendingKey = file.key;
@@ -145,7 +145,7 @@ export function createSshSource({
         const entry = files.get(p);
         if (!entry) return;
         if (bytes < 0) {
-          // Shrank, vanished or unreadable since the listing: read it whole on the next scan.
+          // Shrank, rewritten, vanished or unreadable since the listing: read it whole on the next scan.
           files.set(p, { ...freshEntry({ path: p, kind: entry.kind }) });
           return;
         }
@@ -347,4 +347,13 @@ export function explain(error) {
   if (/Host key verification failed/i.test(msg)) return 'Host key not trusted yet. Connect once with ssh in a terminal to accept it.';
   if (/Connection (timed out|refused)|ETIMEDOUT|No route to host/i.test(msg)) return `Could not connect: ${msg}`;
   return msg;
+}
+
+// Keys are `size:mtime`, as the local scanner's canTail: only a file that grew, with an mtime no older,
+// may be an append. The remote read also checks the byte before the offset is LF.
+function grew(prevKey, key) {
+  if (typeof prevKey !== 'string') return false;
+  const [prevSize, prevMtime] = prevKey.split(':').map(Number);
+  const [size, mtime] = String(key).split(':').map(Number);
+  return [prevSize, prevMtime, size, mtime].every(Number.isFinite) && size > prevSize && mtime >= prevMtime;
 }

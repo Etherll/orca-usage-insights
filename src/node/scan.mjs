@@ -196,8 +196,14 @@ export function createScanner({
       maxWholeBytes: THREAD_MAX_BYTES,
       oversizedKey: oversized.get(file.path) ?? null,
     });
-    if (result.status === 'skipped' && result.reason === 'too-large' && result.key) oversized.set(file.path, result.key);
-    else oversized.delete(file.path);
+    if (result.status === 'skipped' && result.reason === 'too-large' && result.key) {
+      // Saved too, so a restart doesn't decompress it up to the cap again.
+      if (oversized.get(file.path) !== result.key) {
+        oversized.set(file.path, result.key);
+        touched.add(file.path);
+        dirty = true;
+      }
+    } else oversized.delete(file.path);
     switch (result.status) {
       case 'unchanged':
         return;
@@ -265,6 +271,9 @@ export function createScanner({
     for (const [path, entry] of Object.entries(raw.files)) {
       if (isCacheEntry(entry)) map.set(path, fromCache(entry));
     }
+    if (isObject(raw.oversized)) {
+      for (const [path, key] of Object.entries(raw.oversized)) if (typeof key === 'string') oversized.set(path, key);
+    }
     if (!Number.isSafeInteger(raw.gen)) return;
     let text = '';
     try {
@@ -280,6 +289,8 @@ export function createScanner({
       if (!Array.isArray(item) || item[0] !== raw.gen || typeof item[1] !== 'string') continue;
       if (item[2] === null) map.delete(item[1]);
       else if (isCacheEntry(item[2])) map.set(item[1], fromCache(item[2]));
+      if (typeof item[3] === 'string') oversized.set(item[1], item[3]);
+      else oversized.delete(item[1]);
     }
     baseGen = raw.gen;
     journalBytes = text.length;
@@ -342,7 +353,9 @@ export function createScanner({
     let text = journalTorn ? '\n' : '';
     for (const path of paths) {
       const entry = files.get(path);
-      text += `${JSON.stringify([baseGen, path, entry ? toCache(entry) : null])}\n`;
+      const line = [baseGen, path, entry ? toCache(entry) : null];
+      if (oversized.has(path)) line.push(oversized.get(path));
+      text += `${JSON.stringify(line)}\n`;
     }
     try {
       await fs.appendFile(journalFile, text);
@@ -362,7 +375,8 @@ export function createScanner({
     const tmp = `${cacheFile}.${process.pid}.tmp`;
     await fs.mkdir(p.dirname(cacheFile), { recursive: true });
     try {
-      await fs.writeFile(tmp, pieces(`{"version":${CACHE_VERSION},"gen":${gen},"files":{`, parts, '}}'));
+      const skips = JSON.stringify(Object.fromEntries(oversized));
+      await fs.writeFile(tmp, pieces(`{"version":${CACHE_VERSION},"gen":${gen},"oversized":${skips},"files":{`, parts, '}}'));
       await fs.rename(tmp, cacheFile);
     } catch (error) {
       await fs.unlink(tmp).catch(() => {});

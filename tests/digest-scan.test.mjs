@@ -211,3 +211,32 @@ test('a scan with other extra folders does not join the running one', async () =
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('a .zst past the decompression cap is not decompressed again by a restarted digest scanner', { skip: zstdSkip }, async (t) => {
+  const { TOO_LARGE } = await import('../src/node/zstd.mjs');
+  const dir = await home();
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const big = path.join(dir, '.codex', 'sessions', '2026', '11', '03', 'rollout-big.jsonl.zst');
+  await fsp.writeFile(big, zlib.zstdCompressSync(Buffer.from('\n')));
+  const cacheDir = path.join(dir, 'digests');
+  // Reading the file fails the way decompressing past the 768 MiB cap does; opens are counted.
+  let opens = 0;
+  const capped = {
+    ...fsp,
+    async open(file, flags) {
+      const handle = await fsp.open(file, flags);
+      if (file !== big) return handle;
+      opens++;
+      return { read: async () => { throw new Error(TOO_LARGE); }, close: () => handle.close() };
+    },
+  };
+  const make = () => createDigestScanner({ cacheDir, home: dir, env: { HOME: dir }, platform: 'linux', threads: 0, fs: capped });
+  const first = make();
+  assert.deepEqual((await first.scan()).files.map((f) => f.state), ['too-large']);
+  await first.close?.();
+  assert.equal(opens, 1);
+  const restarted = make();
+  assert.deepEqual((await restarted.scan()).files.map((f) => f.state), ['too-large']);
+  await restarted.close?.();
+  assert.equal(opens, 1, 'the restarted scanner does not open it again');
+});

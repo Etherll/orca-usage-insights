@@ -308,3 +308,19 @@ test('a view whose findings span many days is cut to fit, without changing the c
   assert.ok(view.findings.length > 0 && view.findings.every((f) => f.daily.length <= 90));
   assert.equal(analyzeBreakdown(input).findings[0].daily.length, 90);
 });
+
+test('a top-level folder named like a group stays separate from the group', () => {
+  const s = session({
+    turns: [
+      { usage: usage(10, 0, 20_000, 10) },
+      { arrivals: [{ target: file('(commands)/a.mjs'), chars: 40_000 }], usage: usage(10, 20_000, 10_000, 10) },
+      { arrivals: [{ target: { key: 'command:git', label: 'git', kind: 'command' }, chars: 40_000 }], usage: usage(10, 30_000, 10_000, 10) },
+    ],
+  });
+  const proj = analyzeBreakdown({ records: s.records, digests: [s.digest], range: '7d', now: NOW, catalog, path: ['/w/proj'] });
+  const named = proj.nodes.filter((n) => n.label === '(commands)');
+  assert.deepEqual(named.map((n) => n.kind).sort(), ['folder', 'group']);
+  const folder = named.find((n) => n.kind === 'folder');
+  const inside = analyzeBreakdown({ records: s.records, digests: [s.digest], range: '7d', now: NOW, catalog, path: ['/w/proj', folder.key] });
+  assert.deepEqual(inside.nodes.map((n) => [n.key, n.kind]), [['a.mjs', 'file']]);
+});

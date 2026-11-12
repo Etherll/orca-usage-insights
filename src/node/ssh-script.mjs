@@ -104,6 +104,12 @@ for job in sys.stdin.read().split('\n'):
             w((RS + 'N\t-1\n').encode())
             continue
         with open(path, 'rb') as f:
+            # A stored offset always follows an LF; any other byte means the file was rewritten.
+            if off > 0:
+                f.seek(off - 1)
+                if f.read(1) != b'\n':
+                    w((RS + 'N\t-1\n').encode())
+                    continue
             f.seek(off)
             data = f.read(max(0, sz - off))
     except OSError:
@@ -145,6 +151,7 @@ export function readScript(jobs) {
     "  cur=$(wc -c < \"$p\" 2>/dev/null | tr -d ' ') || cur=0",
     "  if [ -z \"$cur\" ] || [ \"$cur\" -lt \"$sz\" ]; then printf '\\036N\\t-1\\n'; return; fi",
     "  if [ \"$n\" -le 0 ]; then printf '\\036N\\t0\\n'; return; fi",
+    "  if [ \"$off\" -gt 0 ] && [ \"$(tail -c +\"$off\" \"$p\" 2>/dev/null | head -c 1 | od -An -tx1 | tr -d ' \\n')\" != 0a ]; then printf '\\036N\\t-1\\n'; return; fi",
     // Only bytes up to the last LF in [off, sz) are consumed; a half-written last line waits.
     "  last=$(tail -c +\"$sz\" \"$p\" 2>/dev/null | head -c 1 | od -An -tx1 | tr -d ' \\n')",
     '  if [ "$last" != "0a" ]; then',

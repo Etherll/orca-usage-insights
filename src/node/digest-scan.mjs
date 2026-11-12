@@ -140,8 +140,11 @@ export function createDigestScanner({
       open: (f, state) => createDigestConsumer(f, state, ADOPT),
       oversizedKey: oversized.get(file.path) ?? null,
     });
-    if (result.status === 'skipped' && result.reason === 'too-large' && result.key) oversized.set(file.path, result.key);
-    else oversized.delete(file.path);
+    if (result.status === 'skipped' && result.reason === 'too-large' && result.key) {
+      // Its shard records the skip, so a restart doesn't decompress it up to the cap again.
+      if (oversized.get(file.path) !== result.key) await saveSkip(file, result.key);
+      oversized.set(file.path, result.key);
+    } else oversized.delete(file.path);
     if (result.status === 'unchanged') return 'ok';
     if (result.status === 'gone') {
       files.delete(file.path);
@@ -203,7 +206,12 @@ export function createDigestScanner({
     } catch {
       return null;
     }
-    if (raw?.path !== file.path || raw.kind !== file.kind || !raw.digest) return null;
+    if (raw?.path !== file.path || raw.kind !== file.kind) return null;
+    if (raw.v === SHARD_VERSION && typeof raw.tooLarge === 'string') {
+      oversized.set(file.path, raw.tooLarge);
+      return null;
+    }
+    if (!raw.digest) return null;
     const meta = { key: raw.key, offset: raw.offset, compressed: raw.compressed, kind: raw.kind, sessionId: raw.sessionId };
     if (raw.v === LEGACY_SHARD_VERSION) {
       await writeShard(file.path, { ...meta, ctx: raw.ctx }, raw.digest, raw.state ?? null).catch(() => {});
@@ -240,6 +248,15 @@ export function createDigestScanner({
       // The shard on disk is now older than memory, so the next tail read uses this state.
       if (entry) entry.state = state;
     }
+  }
+
+  async function saveSkip(file, key) {
+    if (!cacheDir) return;
+    try {
+      await fs.mkdir(cacheDir, { recursive: true });
+      await fs.unlink(statePath(file.path)).catch(() => {});
+      await writeJson(shardPath(file.path), { v: SHARD_VERSION, path: file.path, kind: file.kind, tooLarge: key });
+    } catch {}
   }
 
   // State first: a crash between the two writes leaves a state whose key the shard doesn't have.
