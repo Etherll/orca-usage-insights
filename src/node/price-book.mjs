@@ -356,6 +356,12 @@ function chosenRows(diff, keys) {
     if (!row) throw coded('invalid_params', `no price row ${key} in this diff`);
     if (row.status !== 'overridden') rows.push(row);
   }
+  // A new model's entry needs every base rate, so applying any of its rows brings the rest along.
+  const fresh = new Set(rows.filter((row) => row.status === 'new').map((row) => row.model));
+  const chosen = new Set(rows.map((row) => row.key));
+  for (const row of diff.rows) {
+    if (fresh.has(row.model) && row.status === 'new' && !row.field.startsWith('tier.') && !chosen.has(row.key)) rows.push(row);
+  }
   return rows;
 }
 

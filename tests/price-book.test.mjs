@@ -371,6 +371,19 @@ test('overlapping applies both land: each starts from the overlay the one before
   assert.equal(Object.keys(JSON.parse(fs.files.get(OVERLAY).text).entries).length, 1);
 });
 
+test('applying one rate of a new model seeds its other base rates, so the entry is valid', async () => {
+  const NEW = 'claude-newer-5-5';
+  const { priceBook } = book({ replies: sources({ litellm: ok(litellmBody({ [OPUS]: RATES, [NEW]: RATES })), modelsdev: ok(modelsDevBody({ [OPUS]: RATES, [NEW]: RATES })) }) });
+  const sync = await priceBook.sync([OPUS, NEW]);
+  const input = rowOf(sync.rows, `${NEW}.input`);
+  assert.equal(input.status, 'new');
+  await priceBook.apply(sync.diffId, [input.key]);
+  const catalog = await priceBook.catalog();
+  assert.deepEqual(catalog.problems, []);
+  const entry = catalog.entries.get(NEW);
+  assert.deepEqual([entry.input, entry.output, entry.cacheRead, entry.cacheWrite['5m']], [RATES.input, RATES.output, RATES.cacheRead, RATES.write]);
+});
+
 test('a sync applies a changed long-prompt tier rate, and a tier the catalog lacks starts complete', async () => {
   const tierBody = (above, input) => ({
     [OPUS]: {
