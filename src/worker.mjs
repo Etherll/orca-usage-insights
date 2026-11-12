@@ -7,6 +7,7 @@ import v8 from 'node:v8';
 import vm from 'node:vm';
 import { compact } from './core/format.mjs';
 import { buildReport } from './core/report.mjs';
+import { normalizeQuery, parseDateDay } from './core/query.mjs';
 import { createRecordStore } from './core/record-store.mjs';
 import { asTable, distinctNames } from './core/table.mjs';
 import { analyzeBreakdown } from './core/breakdown/analyze.mjs';
@@ -18,7 +19,6 @@ import { createPriceBook } from './node/price-book.mjs';
 import { createScanner } from './node/scan.mjs';
 import { createSshSource } from './node/ssh-source.mjs';
 
-const RANGES = new Set(['7d', '30d', '90d', 'all']);
 const SCOPES = new Set(['all', 'worktrees']);
 const CACHE_FILE = 'scan-cache-v5.json';
 const LEGACY_CACHE_FILE = 'scan-cache-v4.json';
@@ -98,7 +98,8 @@ export function startWorker(orca, scanner, {
   breakdownWaitMs = BREAKDOWN_WAIT_MS,
 } = {}) {
   const paths = pathFor(platform);
-  let cache = { records: null, reports: new Map() };
+  let cache = { records: null, day: null, reports: new Map() };
+  let lastPollDay = localDayKey(now());
   let store = null; // local files and SSH files together, once an SSH host has records
   let workspaces = null; // { at, roots } from workspace.list
   let settingsFailing = false;
@@ -126,14 +127,14 @@ export function startWorker(orca, scanner, {
     return job;
   }
 
-  orca.panels.handle('usage.report', (input) => track(async () => answer(parseReportInput(input), { force: false })));
+  orca.panels.handle('usage.report', (input) => track(async () => answer(parseReportInput(input, now()), { force: false })));
 
   // Refresh rescans every source now. Each keeps its per-file cache, so only changed files are read.
-  orca.panels.handle('usage.refresh', (input) => track(async () => answer(parseReportInput(input), { force: true })));
+  orca.panels.handle('usage.refresh', (input) => track(async () => answer(parseReportInput(input, now()), { force: true })));
 
   // Sync is not tracked: it may wait on the network, and stop() must not. Its own scan is tracked.
-  orca.panels.handle('usage.breakdown', (input) => track(async () => breakdown(parseBreakdownInput(input))));
-  orca.panels.handle('usage.explain', (input) => track(async () => explain(parseExplainInput(input))));
+  orca.panels.handle('usage.breakdown', (input) => track(async () => breakdown(parseBreakdownInput(input, now()))));
+  orca.panels.handle('usage.explain', (input) => track(async () => explain(parseExplainInput(input, now()))));
 
   // The digest scan runs only from here, never from the poll or the agent rescan.
   async function breakdown(options, { waitMs = breakdownWaitMs } = {}) {
@@ -143,7 +144,7 @@ export function startWorker(orca, scanner, {
       priceBook.catalog(),
       priceBook.status(),
     ]);
-    const since = sinceFor(options.range);
+    const since = sinceFor(options);
     const scan = await digestsWithin(waitMs, since, sessionsSince(gathered.records, since));
     if (!scan) return { loading: digestScanner.progress() };
     const view = analyzeBreakdown({
@@ -152,6 +153,8 @@ export function startWorker(orca, scanner, {
       files: scan.files,
       catalog,
       range: options.range,
+      startDate: options.startDate,
+      endDate: options.endDate,
       now: now(),
       providers: options.providers,
       hosts: options.hosts,
@@ -176,8 +179,12 @@ export function startWorker(orca, scanner, {
   }
 
   // The range's first local day less a day of margin for time zones and clock skew. 0 for 'all'.
-  function sinceFor(range) {
-    const days = { '7d': 7, '30d': 30, '90d': 90 }[range];
+  function sinceFor({ range, startDate }) {
+    if (range === 'custom') {
+      const start = new Date(parseDateDay(startDate) * 86_400_000);
+      return new Date(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate()).getTime() - 86_400_000;
+    }
+    const days = { '1d': 1, '7d': 7, '30d': 30, '90d': 90 }[range];
     return days ? now().getTime() - (days + 1) * 86_400_000 : 0;
   }
 
@@ -197,7 +204,7 @@ export function startWorker(orca, scanner, {
   }
 
   function viewKey(options) {
-    return JSON.stringify([options.range, options.providers ?? null, options.hosts ?? null, options.scope ?? null]);
+    return JSON.stringify([options.range, options.startDate ?? null, options.endDate ?? null, options.providers ?? null, options.hosts ?? null, options.scope ?? null]);
   }
 
   // null means still running: the caller answers { loading } and usage.changed follows.
@@ -281,6 +288,10 @@ export function startWorker(orca, scanner, {
     ]);
     const report = reportFor(gathered.records, {
       range: options.range,
+      startDate: options.startDate,
+      endDate: options.endDate,
+      models: options.models,
+      includeCache: options.includeCache,
       providers: options.providers,
       hosts: options.hosts,
       scope: scope.scope,
@@ -290,17 +301,20 @@ export function startWorker(orca, scanner, {
     return { ...report, sources: gathered.statuses, ...(scope.scopeError ? { scopeError: scope.scopeError } : {}) };
   }
 
-  // Reports are kept per request shape for as long as the records they came from are current. The
-  // merged records array is reused while its inputs are, so an unchanged request is a cache hit.
-  function reportFor(records, { range, providers, hosts, scope, catalog }) {
-    if (cache.records !== records) cache = { records, reports: new Map() };
-    // The local day is in the key: ranges, the calendar and today's total move at midnight.
+  // Reports are kept per request shape for as long as the records they came from are current and the
+  // local day is the same (ranges, the calendar and today's total move at midnight). The merged records
+  // array is reused while its inputs are, so an unchanged request is a cache hit.
+  function reportFor(records, { range, startDate, endDate, models, includeCache = true, providers, hosts, scope, catalog }) {
     const at = now();
-    const day = `${at.getFullYear()}-${at.getMonth()}-${at.getDate()}`;
-    const key = JSON.stringify([range, providers ?? null, hosts ?? null, scope ?? null, catalog.version, day]);
+    const day = localDayKey(at);
+    if (cache.records !== records || cache.day !== day) cache = { records, day, reports: new Map() };
+    const key = JSON.stringify([range, startDate ?? null, endDate ?? null, models ?? null, includeCache, providers ?? null, hosts ?? null, scope ?? null, catalog.version]);
     let report = cache.reports.get(key);
     if (!report) {
-      const options = { range, now: at, catalog };
+      const options = { range, now: at, catalog, includeCache };
+      if (startDate !== undefined) options.startDate = startDate;
+      if (endDate !== undefined) options.endDate = endDate;
+      if (models !== undefined) options.models = models;
       if (providers !== undefined) options.providers = providers;
       if (hosts !== undefined) options.hosts = hosts;
       if (scope !== undefined) options.scope = scope;
@@ -544,7 +558,11 @@ export function startWorker(orca, scanner, {
   async function poll({ forceLocal = false } = {}) {
     try {
       const gathered = await gather({ force: false, detach: true, forceLocal });
-      if (gathered.localChanged) notify('usage.changed', { generatedAt: now().toISOString() });
+      // A new local day moves Today and every range, so the panel redraws even with no new usage.
+      const at = now();
+      const day = localDayKey(at);
+      if (gathered.localChanged || day !== lastPollDay) notify('usage.changed', { generatedAt: at.toISOString() });
+      lastPollDay = day;
       if (!statusBar) return;
       const report = reportFor(gathered.records, { range: '7d', catalog: await priceBook.catalog() });
       await orca.host.call('statusBar.update', { id: STATUS_ID, ...statusText(report) });
@@ -694,17 +712,22 @@ function settingLines(value) {
     .filter((line) => line !== '' && !line.startsWith('#'));
 }
 
-// Input from the panel: { range?, providers?, scope?, hosts? }. Anything else is rejected with code invalid_params.
-function parseReportInput(input) {
+// Input from the panel: { range?, startDate?, endDate?, models?, includeCache?, providers?, scope?, hosts? }
+// (query fields as in query.mjs). Anything malformed is rejected with code invalid_params.
+function parseReportInput(input, at = new Date()) {
   const body = input === undefined ? {} : input;
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     throw invalidParams('usage.report input must be an object');
   }
-  const range = body.range === undefined ? '7d' : body.range;
-  if (!RANGES.has(range)) throw invalidParams('range must be one of 7d, 30d, 90d, all');
+  let query;
+  try {
+    query = normalizeQuery(body, at);
+  } catch (error) {
+    throw invalidParams(error.message);
+  }
   const scope = body.scope === undefined ? 'all' : body.scope;
   if (!SCOPES.has(scope)) throw invalidParams('scope must be one of all, worktrees');
-  const out = { range, scope };
+  const out = { ...query, scope };
   if (body.providers !== undefined) {
     if (!Array.isArray(body.providers) || !body.providers.every((p) => typeof p === 'string')) {
       throw invalidParams('providers must be an array of strings');
@@ -731,9 +754,9 @@ function parsePricesInput(input) {
   return { diffId: input.diffId, keys: input.keys };
 }
 
-function parseBreakdownInput(input) {
+function parseBreakdownInput(input, at = new Date()) {
   const { path, ...rest } = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const out = parseReportInput(input === undefined ? undefined : rest);
+  const out = parseReportInput(input === undefined ? undefined : rest, at);
   if (path === undefined) return { ...out, path: [] };
   if (!Array.isArray(path) || path.length > 8 || !path.every((key) => typeof key === 'string' && key.length <= 500)) {
     throw invalidParams('path must be an array of at most 8 strings of at most 500 characters');
@@ -741,10 +764,14 @@ function parseBreakdownInput(input) {
   return { ...out, path };
 }
 
-function parseExplainInput(input) {
+function parseExplainInput(input, at = new Date()) {
   const { findingId, ...rest } = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   if (typeof findingId !== 'string' || findingId === '' || findingId.length > 200) throw invalidParams('findingId must be a non-empty string');
-  return { ...parseReportInput(rest), findingId };
+  return { ...parseReportInput(rest, at), findingId };
+}
+
+function localDayKey(at) {
+  return `${at.getFullYear()}-${at.getMonth()}-${at.getDate()}`;
 }
 
 function invalidParams(message) {

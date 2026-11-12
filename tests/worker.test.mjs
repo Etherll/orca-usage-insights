@@ -275,6 +275,50 @@ test('usage.report reuses its Report while the scan records are unchanged', asyn
   await worker.stop();
 });
 
+test('Today reports and refreshes expire at local midnight without new records', async () => {
+  const mock = mockOrca();
+  let at = new Date(2026, 10, 3, 23, 59, 59);
+  const current = result([usageRecord()]);
+  const { build, options } = recordingBuild();
+  const worker = startWorker(mock.orca, fakeScanner(() => current), { now: () => at, pollMs: 60_000, build });
+  try {
+    await worker.ready;
+    const handler = mock.handlers.get('usage.report');
+    const today = await handler({ range: '1d' });
+    assert.equal(today.range, '1d');
+    assert.equal(today.totals.total, 150);
+    const built = options.length;
+    await mock.handlers.get('usage.refresh')({ range: '1d' });
+    assert.equal(options.length, built, 'same local day and records reuse the report');
+    at = new Date(2026, 10, 4, 0, 0, 0);
+    const tomorrow = await handler({ range: '1d' });
+    assert.equal(options.length, built + 1);
+    assert.equal(tomorrow.totals.total, 0);
+    assert.equal(tomorrow.today.total, 0);
+    assert.equal(tomorrow.daily[0].day, '2026-11-04');
+  } finally {
+    await worker.stop();
+  }
+});
+
+test('poll notifies the panel when the local day changes without new usage', async () => {
+  const mock = mockOrca();
+  let at = new Date(2026, 10, 3, 23, 59, 59);
+  const current = result([usageRecord()]);
+  const worker = startWorker(mock.orca, fakeScanner(() => current), { now: () => at, pollMs: 2 });
+  try {
+    await worker.ready;
+    const before = mock.changedPosts();
+    at = new Date(2026, 10, 4, 0, 0, 0);
+    for (let i = 0; i < 100 && mock.changedPosts() === before; i++) await sleep(2);
+    assert.equal(mock.changedPosts(), before + 1);
+    await sleep(10);
+    assert.equal(mock.changedPosts(), before + 1, 'only notify once for the new day');
+  } finally {
+    await worker.stop();
+  }
+});
+
 test('usage.refresh forces a rescan without dropping the file cache, for the requested range', async () => {
   const mock = mockOrca();
   const scanner = fakeScanner(() => result([usageRecord()]));
@@ -944,4 +988,29 @@ test('usage.breakdown asks the digest scan for the sessions Usage has turns of i
   await mock.handlers.get('usage.breakdown')({ range: '30d' });
   assert.deepEqual([...calls[0].sessions], ['recent']);
   await worker.stop();
+});
+
+test('model, date and cache options are validated, passed through and cache isolated', async () => {
+  const mock = mockOrca();
+  const { build, options } = recordingBuild();
+  const current = result([usageRecord()]);
+  const worker = startWorker(mock.orca, fakeScanner(() => current), { now: NOON, pollMs: 60_000, build });
+  try {
+    await worker.ready;
+    const report = mock.handlers.get('usage.report');
+    const base = { range: 'custom', startDate: '2026-11-01', endDate: '2026-11-02', models: ['z', 'a', 'z'], includeCache: false };
+    await report(base);
+    assert.deepEqual(options.at(-1).models, ['a', 'z']);
+    assert.equal(options.at(-1).startDate, base.startDate);
+    assert.equal(options.at(-1).endDate, base.endDate);
+    assert.equal(options.at(-1).includeCache, false);
+    const count = options.length;
+    await report({ ...base, models: ['a', 'z'] });
+    assert.equal(options.length, count, 'equivalent model sets hit cache');
+    for (const delta of [{ models: ['a'] }, { startDate: '2026-10-31' }, { endDate: '2026-11-03' }, { includeCache: true }]) await report({ ...base, ...delta });
+    assert.equal(options.length, count + 4);
+    for (const handler of [report, mock.handlers.get('usage.refresh')]) {
+      for (const bad of [{ models: null }, { models: [''] }, { includeCache: 1 }, { range: 'custom' }, { ...base, startDate: '2026-02-30' }, { ...base, endDate: '2026-11-04' }, { ...base, startDate: '2026-11-03' }]) await assert.rejects(handler(bad), { code: 'invalid_params' });
+    }
+  } finally { await worker.stop(); }
 });
