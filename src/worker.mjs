@@ -517,10 +517,15 @@ export function startWorker(orca, scanner, {
     if (zstd > 0) notes.push(`${zstd} compressed Codex ${zstd === 1 ? 'file' : 'files'} skipped: zstd unavailable`);
     if (tooLarge > 0) notes.push(`${tooLarge} compressed Codex ${tooLarge === 1 ? 'file' : 'files'} skipped: too large`);
     if (notes.length > 0) Object.assign(local, { state: 'warning', message: notes.join('; ') });
+    // Every transcript root: the defaults, environment and Orca account homes, and the extra folders.
     const folders = (result.folders ?? []).map((folder) => ({
       id: `folder:${folder.path}`,
       kind: 'folder',
       label: folder.path,
+      path: folder.path,
+      provider: folder.kind,
+      source: folder.source ?? 'extra',
+      latestRecordAt: folder.latestRecordAt ?? null,
       state: folder.state,
       files: folder.files,
       records: folder.records,

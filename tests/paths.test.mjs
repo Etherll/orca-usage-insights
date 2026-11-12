@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { cacheDir, homeDir, resolveRoots } from '../src/node/paths.mjs';
+import { cacheDir, homeDir, resolveRoots, rootSpecs } from '../src/node/paths.mjs';
 
 const identity = async (value) => value;
+const noAccounts = async () => [];
 
 test('home is USERPROFILE then HOME on win32, HOME elsewhere, then the fallback', () => {
   assert.equal(homeDir({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\me', HOME: 'C:\\h' }, home: 'X' }), 'C:\\Users\\me');
@@ -16,7 +17,7 @@ test('home is USERPROFILE then HOME on win32, HOME elsewhere, then the fallback'
 });
 
 test('win32 roots use backslash paths for the default Claude and Codex locations', async () => {
-  const roots = await resolveRoots({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\me' }, realpath: identity });
+  const roots = await resolveRoots({ platform: 'win32', env: { USERPROFILE: 'C:\\Users\\me' }, readdir: noAccounts, realpath: identity });
   assert.deepEqual(roots, {
     claude: ['C:\\Users\\me\\.claude', 'C:\\Users\\me\\.config\\claude'],
     codex: ['C:\\Users\\me\\.codex'],
@@ -25,35 +26,36 @@ test('win32 roots use backslash paths for the default Claude and Codex locations
 
 test('darwin and linux roots use HOME, and XDG_CONFIG_HOME moves the claude config root', async () => {
   assert.deepEqual(
-    await resolveRoots({ platform: 'darwin', env: { HOME: '/Users/me' }, realpath: identity }),
+    await resolveRoots({ platform: 'darwin', env: { HOME: '/Users/me' }, readdir: noAccounts, realpath: identity }),
     { claude: ['/Users/me/.claude', '/Users/me/.config/claude'], codex: ['/Users/me/.codex'] },
   );
   assert.deepEqual(
-    await resolveRoots({ platform: 'linux', env: { HOME: '/home/me', XDG_CONFIG_HOME: '/srv/cfg' }, realpath: identity }),
+    await resolveRoots({ platform: 'linux', env: { HOME: '/home/me', XDG_CONFIG_HOME: '/srv/cfg' }, readdir: noAccounts, realpath: identity }),
     { claude: ['/home/me/.claude', '/srv/cfg/claude'], codex: ['/home/me/.codex'] },
   );
 });
 
-test('CLAUDE_CONFIG_DIR replaces the default Claude roots, split on commas and trimmed', async () => {
+test('CLAUDE_CONFIG_DIR supplements the default Claude roots, split on commas and trimmed', async () => {
   const roots = await resolveRoots({
     platform: 'linux',
     env: { HOME: '/home/me', CLAUDE_CONFIG_DIR: ' /a/one , ,/b/two ', CODEX_HOME: ' /c/codex ' },
-    realpath: identity,
+    readdir: noAccounts, realpath: identity,
   });
-  assert.deepEqual(roots, { claude: ['/a/one', '/b/two'], codex: ['/c/codex'] });
+  assert.deepEqual(roots, { claude: ['/home/me/.claude', '/home/me/.config/claude', '/a/one', '/b/two'], codex: ['/home/me/.codex', '/c/codex'] });
 
-  const blank = await resolveRoots({ platform: 'linux', env: { HOME: '/home/me', CLAUDE_CONFIG_DIR: ' , ' }, realpath: identity });
+  const blank = await resolveRoots({ platform: 'linux', env: { HOME: '/home/me', CLAUDE_CONFIG_DIR: ' , ' }, readdir: noAccounts, realpath: identity });
   assert.deepEqual(blank.claude, ['/home/me/.claude', '/home/me/.config/claude']);
 });
 
 test('roots that cannot be resolved are dropped', async () => {
   const realpath = async (value) => {
-    if (value.includes('missing')) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+    if (value.includes('missing') || !value.startsWith('/x/')) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
     return value;
   };
   const roots = await resolveRoots({
     platform: 'linux',
     env: { CLAUDE_CONFIG_DIR: '/x/missing,/x/here', CODEX_HOME: '/x/missing-codex' },
+    readdir: noAccounts,
     realpath,
   });
   assert.deepEqual(roots, { claude: ['/x/here'], codex: [] });
@@ -62,13 +64,13 @@ test('roots that cannot be resolved are dropped', async () => {
 test('roots are deduped by realpath, case-insensitively only on win32', async () => {
   const win = await resolveRoots({
     platform: 'win32',
-    env: { CLAUDE_CONFIG_DIR: 'C:\\Users\\Me\\.claude, c:\\users\\me\\.claude' },
-    realpath: identity,
+    env: { USERPROFILE: 'C:\\Users\\Me', CLAUDE_CONFIG_DIR: 'C:\\Users\\Me\\.claude, c:\\users\\me\\.claude' },
+    readdir: noAccounts, realpath: identity,
   });
-  assert.deepEqual(win.claude, ['C:\\Users\\Me\\.claude']);
+  assert.deepEqual(win.claude, ['C:\\Users\\Me\\.claude', 'C:\\Users\\Me\\.config\\claude']);
 
-  const posix = await resolveRoots({ platform: 'linux', env: { CLAUDE_CONFIG_DIR: '/x/A, /x/a' }, realpath: identity });
-  assert.deepEqual(posix.claude, ['/x/A', '/x/a']);
+  const posix = await resolveRoots({ platform: 'linux', home: '/fixture', env: { CLAUDE_CONFIG_DIR: '/x/A, /x/a' }, readdir: noAccounts, realpath: identity });
+  assert.deepEqual(posix.claude, ['/fixture/.claude', '/fixture/.config/claude', '/x/A', '/x/a']);
 });
 
 test('a symlinked root resolves to its target and is counted once', async (t) => {
@@ -129,4 +131,45 @@ test('scanner modules import only node:path, node:os, node:fs/promises and local
     }
     assert.doesNotMatch(source, /['"`][/~]/, `${name} has a hardcoded path literal`);
   }
+});
+
+test('Orca account roots follow each OS convention and an explicit user-data override', async () => {
+  for (const [platform, env, expected] of [
+    ['darwin', {}, '/fixture/Library/Application Support/orca'],
+    ['linux', { XDG_CONFIG_HOME: '/cfg' }, '/cfg/orca'],
+    ['win32', { APPDATA: 'C:\\Roaming' }, 'C:\\Roaming\\orca'],
+    ['linux', { ORCA_USER_DATA_PATH: '/custom-orca' }, '/custom-orca'],
+  ]) {
+    const seen = [];
+    const specs = await rootSpecs({ platform, env, home: '/fixture', readdir: async (dir) => {
+      seen.push(dir);
+      return [{ name: 'account-a', isDirectory: () => true, isSymbolicLink: () => false }];
+    } });
+    const p = platform === 'win32' ? path.win32 : path.posix;
+    assert.deepEqual(seen, [p.join(expected, 'claude-profiles'), p.join(expected, 'codex-accounts')]);
+    assert.deepEqual(specs.filter((s) => s.source === 'orca').map((s) => s.path), seen.map((dir) => p.join(dir, 'account-a', 'home')));
+  }
+});
+
+test('account discovery failures remain visible and do not block the other provider', async () => {
+  const specs = await rootSpecs({ home: '/fixture', env: {}, readdir: async (dir) => {
+    if (dir.endsWith('claude-profiles')) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return [{ name: 'ok', isDirectory: () => true }];
+  } });
+  assert.match(specs.find((s) => s.path.endsWith('claude-profiles')).message, /EACCES/);
+  assert.ok(specs.some((s) => s.kind === 'codex' && s.source === 'orca'));
+});
+
+test('Linux discovers real accounts under the lowercase Electron application name', async (t) => {
+  const base = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'usage-linux-roots-')));
+  t.after(() => fsp.rm(base, { recursive: true, force: true }));
+  const account = path.join(base, '.config', 'orca', 'codex-accounts', 'one', 'home');
+  await fsp.mkdir(account, { recursive: true });
+  const roots = await resolveRoots({ platform: 'linux', env: {}, home: base });
+  assert.deepEqual(roots.codex, [account]);
+});
+
+test('CODEX_HOME is one directory even when its name includes a comma', async () => {
+  const roots = await resolveRoots({ platform: 'linux', home: '/fixture', env: { CODEX_HOME: ' /homes/with,comma ' }, readdir: noAccounts, realpath: identity });
+  assert.deepEqual(roots.codex, ['/fixture/.codex', '/homes/with,comma']);
 });

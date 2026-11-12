@@ -11,14 +11,21 @@ const CHUNK_BYTES = 4 << 20;
 const TRANSCRIPT = /\.jsonl(\.zst)?$/i;
 const COMPRESSED = /\.zst$/i;
 
-// Paths are canonical (top-level dirs and symlinked files resolved), so a file two roots reach is listed once.
-// Default roots own a file an extra folder also reaches; `owners` maps each extra-folder file to its status.
+const STAT_LIMIT = 64;
+
+// `roots` are rootSpecs() entries ({ path, kind, source, message? }); `extra` holds the folders from settings
+// by kind. Every root and folder gets a status entry in `folders`, in that order: { path, kind, source, state,
+// message, paths, dirs }, where `paths` are the files it reaches and `dirs` its walked top-level dirs.
+// Paths are canonical (top-level dirs and symlinked files resolved), and a hardlinked file is listed once by
+// device and inode, so a file several roots reach (account homes sharing history) is read once, as the
+// first root's. `stats` maps each listed path to its stat. A root that could not be discovered or opened is
+// in run.failed, so callers keep what they had read under it.
 export async function listTranscripts({ fs, platform = process.platform, roots, extra, run }) {
   const p = pathFor(platform);
   const out = [];
-  const owners = new Map();
-  const seen = new Set();
-  const walks = new Map(); // identity of a top-level dir -> files under it, walked once per run
+  const stats = new Map();
+  const claimed = new Map(); // physical identity -> canonical path
+  const walks = new Map(); // identity of a top-level dir -> { top, found }, walked once per run
   const walkTop = async (dir) => {
     const top = await canonicalDir(fs, dir);
     if (top === null) return null;
@@ -26,23 +33,23 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
     if (!walks.has(id)) {
       const found = [];
       await walk(top, found);
-      walks.set(id, found);
+      walks.set(id, { top, found });
     }
     return walks.get(id);
   };
-  const claim = (kind, paths, folder) => {
-    for (const path of paths) {
-      const id = identityOf(path, platform);
-      if (seen.has(id)) continue;
-      seen.add(id);
-      if (folder) owners.set(path, folder);
-      out.push({
-        path,
-        kind,
-        ctx: { sessionId: p.basename(path).replace(TRANSCRIPT, ''), project: p.basename(p.dirname(path)) },
-        compressed: COMPRESSED.test(path),
-      });
-    }
+  const statted = new Map();
+  const statAll = (paths) =>
+    mapLimit(paths.filter((path) => !statted.has(path)), STAT_LIMIT, async (path) => {
+      try {
+        statted.set(path, await fs.stat(path));
+      } catch {
+        statted.set(path, null);
+      }
+    });
+  const fail = (dir) => {
+    if (run.failed.includes(dir)) return;
+    run.failed.push(dir);
+    run.errors++;
   };
 
   // Symlinked directories are not Dirent directories, so only the resolved top-level dirs can be symlinks.
@@ -51,10 +58,7 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
     try {
       entries = await fs.readdir(dir, { withFileTypes: true });
     } catch (error) {
-      if (error?.code !== 'ENOENT') {
-        run.errors++;
-        run.failed.push(dir);
-      }
+      if (error?.code !== 'ENOENT') fail(dir);
       return;
     }
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -73,44 +77,102 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
     }
   }
 
-  for (const [kind, provider] of Object.entries(PROVIDERS)) {
-    for (const root of roots[kind]) {
-      for (const sub of provider.subdirs) claim(kind, (await walkTop(p.join(root, sub))) ?? [], null);
-    }
-  }
+  const specs = [...roots];
+  for (const kind of Object.keys(PROVIDERS)) for (const path of extra?.[kind] ?? []) specs.push({ path, kind, source: 'extra' });
   const folders = [];
-  for (const [kind, provider] of Object.entries(PROVIDERS)) {
-    for (const folder of extra[kind]) {
-      const entry = { path: folder, kind, state: 'ok', files: 0, records: 0, message: null };
-      folders.push(entry);
-      const errorsBefore = run.errors;
-      const top = await canonicalDir(fs, folder);
-      if (top === null) {
-        Object.assign(entry, { state: 'warning', message: 'Folder not found' });
-        continue;
-      }
+  for (const spec of specs) {
+    const { path: folder, kind, source } = spec;
+    const provider = PROVIDERS[kind];
+    if (!provider) continue;
+    const entry = { path: folder, kind, source, state: 'ok', message: null, paths: new Set(), dirs: [] };
+    folders.push(entry);
+    if (spec.message) {
+      // Discovery failed: that proves nothing about the transcripts read under it before.
+      Object.assign(entry, { state: 'warning', message: spec.message });
+      entry.dirs.push(folder);
+      fail(folder);
+      continue;
+    }
+    const errorsBefore = run.errors;
+    const top = await canonicalDir(fs, folder);
+    if (top === null) {
+      Object.assign(entry, source === 'default' ? { state: 'empty' } : { state: 'warning', message: 'Folder not found' });
+      continue;
+    }
+    if (source === 'extra') {
       let st;
       try {
         st = await fs.stat(top);
       } catch (error) {
         Object.assign(entry, { state: 'warning', message: `Cannot open folder (${error?.code ?? 'error'})` });
+        if (error?.code !== 'ENOENT' && error?.code !== 'ENOTDIR') {
+          entry.dirs.push(top);
+          fail(top);
+        }
         continue;
       }
       if (!st.isDirectory()) {
         Object.assign(entry, { state: 'warning', message: 'Not a folder' });
         continue;
       }
-      const asRoot = await isDirectory(fs, p.join(top, provider.subdirs[0]));
-      for (const dir of asRoot ? provider.subdirs.map((sub) => p.join(top, sub)) : [top]) {
-        const found = await walkTop(dir);
-        if (!found) continue;
-        entry.files += found.length;
-        claim(kind, found, entry);
-      }
-      if (run.errors > errorsBefore) Object.assign(entry, { state: 'warning', message: 'Some files could not be read' });
     }
+    // A root, or a folder that holds the provider's subdirs (projects, sessions), is read like a home.
+    // Any other folder is read whole.
+    const asRoot = source !== 'extra' || (await Promise.all(provider.subdirs.map((sub) => isDirectory(fs, p.join(top, sub))))).some(Boolean);
+    const paths = [];
+    for (const dir of asRoot ? provider.subdirs.map((sub) => p.join(top, sub)) : [top]) {
+      const walked = await walkTop(dir);
+      if (!walked) continue;
+      entry.dirs.push(walked.top);
+      for (const path of walked.found) paths.push(path);
+    }
+    await statAll(paths);
+    for (const path of paths) {
+      const fileStat = statted.get(path);
+      const id = physicalId(path, fileStat, platform);
+      let canonical = claimed.get(id);
+      if (canonical === undefined) {
+        canonical = path;
+        claimed.set(id, path);
+        if (fileStat) stats.set(path, fileStat);
+        out.push({
+          path,
+          kind,
+          ctx: { sessionId: p.basename(path).replace(TRANSCRIPT, ''), project: p.basename(p.dirname(path)) },
+          compressed: COMPRESSED.test(path),
+          fileId: inodeOf(fileStat),
+        });
+      }
+      entry.paths.add(canonical);
+    }
+    if (run.errors > errorsBefore) Object.assign(entry, { state: 'warning', message: 'Some files could not be read' });
   }
-  return { found: out, owners, folders };
+  return { found: out, folders, stats };
+}
+
+// A hardlink is known by device and inode, trusted only as exact integers (a 64-bit inode can round in a
+// Number) and only with more than one link, so ordinary files and test filesystems use their path.
+function physicalId(path, st, platform) {
+  const inode = inodeOf(st);
+  if (inode !== null && exactInteger(st.nlink, 2)) return `inode:${inode}`;
+  return `path:${identityOf(path, platform)}`;
+}
+
+// 'dev:ino', or null when the stat has no trustworthy one. A file replaced by rename changes it.
+function inodeOf(st) {
+  return st && exactInteger(st.ino, 1) && exactInteger(st.dev, 0) ? `${st.dev}:${st.ino}` : null;
+}
+
+function exactInteger(value, minimum) {
+  return typeof value === 'bigint' ? value >= BigInt(minimum) : Number.isSafeInteger(value) && value >= minimum;
+}
+
+async function mapLimit(items, limit, fn) {
+  let next = 0;
+  const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) await fn(items[next++]);
+  });
+  await Promise.all(lanes);
 }
 
 // An unchanged key costs only the stat. A plain file that only grew is tailed from prior.offset; anything

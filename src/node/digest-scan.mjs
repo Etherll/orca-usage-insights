@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { decodeDigest, encodeDigest, packDigest } from '../core/breakdown/digest-rows.mjs';
 import { createDigestConsumer } from './digest-consumer.mjs';
 import { createParsePool } from './parse-pool.mjs';
-import { resolveRoots } from './paths.mjs';
+import { rootSpecs } from './paths.mjs';
 import { listTranscripts, readTranscript } from './transcript-files.mjs';
 
 const SHARD_VERSION = 3;
@@ -64,7 +64,7 @@ export function createDigestScanner({
 
   async function runScan(extra, since, sessions) {
     if (threads > 0 && !pool && fs === fsp) pool = createParsePool(threads);
-    const roots = await resolveRoots({ platform, env, home, realpath: fs.realpath });
+    const roots = await rootSpecs({ platform, env, home, readdir: fs.readdir });
     const listing = { errors: 0, failed: [] };
     const { found } = await listTranscripts({ fs, platform, roots, extra, run: listing });
     progress = { done: 0, total: found.length };

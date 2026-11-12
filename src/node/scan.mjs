@@ -9,7 +9,7 @@ import { NameDict } from '../core/table.mjs';
 import { PROVIDERS } from '../core/providers.mjs';
 import { MARKER_BYTES, createRecordsConsumer, markedLines } from './lines.mjs';
 import { createParsePool } from './parse-pool.mjs';
-import { pathFor, resolveRoots } from './paths.mjs';
+import { pathFor, rootSpecs } from './paths.mjs';
 import { listTranscripts, readTranscript } from './transcript-files.mjs';
 
 export { markedLines };
@@ -23,7 +23,6 @@ const SAVE_EVERY_MS = 30_000;
 // Files read whole for the first time go to parse threads when they are at most this big.
 // Compressed files over this size are skipped: they are never read whole on the calling thread.
 const THREAD_MAX_BYTES = 64 << 20;
-const STAT_LIMIT = 64;
 // Saves append changed files to a journal. The whole cache is rewritten (journal emptied) on the first
 // save, after reset, when more files changed than this, or once the journal is this big.
 const JOURNAL_MAX_FILES = 512;
@@ -59,6 +58,7 @@ export function createScanner({
   let dirty = false;
   const touched = new Set(); // paths read or dropped since the last save
   const oversized = new Map(); // path -> key of a compressed file that decompressed past the cap
+  const folderMemo = new Map(); // root id -> its last counts, see folderCounts
   const journalFile = cacheFile ? `${cacheFile}.journal` : null;
   let baseGen = null; // gen of the cache file the journal extends; null: the next save rewrites it
   let journalBytes = 0;
@@ -135,16 +135,10 @@ export function createScanner({
       loaded = true;
       await loadCache(map);
     }
-    const roots = await resolveRoots({ platform, env, home, realpath: fs.realpath });
+    const roots = await rootSpecs({ platform, env, home, readdir: fs.readdir });
     const run = { map, errors: 0, changed: false, failed: [], skipped: { zstd: 0, tooLarge: 0 } };
-    const { found, owners, folders } = await listTranscripts({ fs, platform, roots, extra: folderSpecs, run });
+    const { found, folders, stats } = await listTranscripts({ fs, platform, roots, extra: folderSpecs, run });
     // Largest files first (a .zst byte costs several plain ones), so no big file starts last while threads idle.
-    const stats = new Map();
-    await mapLimit(found, STAT_LIMIT, async (file) => {
-      try {
-        stats.set(file.path, await fs.stat(file.path));
-      } catch {}
-    });
     const weight = (file) => (stats.get(file.path)?.size ?? 0) * (file.compressed ? 7 : 1);
     const order = [...found].sort((a, b) => weight(b) - weight(a));
     await mapLimit(order, limit, (file) =>
@@ -164,12 +158,19 @@ export function createScanner({
         drop(run, path);
         continue;
       }
-      const table = entry.parser.table();
-      sources.push({ id: path, table });
-      const folder = owners.get(path);
-      if (folder) folder.records += table.length;
+      sources.push({ id: path, table: entry.parser.table() });
     }
     const records = store.update(sources);
+    // Each root counts every file it reaches, shared ones included, and the cached files under a dir of it
+    // that failed to list.
+    const tables = new Map(sources.map(({ id, table }) => [id, table]));
+    const statuses = folders.map((folder) => {
+      const paths = new Set(folder.paths);
+      const failed = run.failed.filter((dir) => folder.dirs.includes(dir) || underAny(folder.dirs, dir, p.sep));
+      if (failed.length > 0) for (const path of tables.keys()) if (underAny(failed, path, p.sep)) paths.add(path);
+      const { rows, latest } = folderCounts(folder, [...paths].map((path) => tables.get(path)).filter(Boolean));
+      return publicFolder({ ...folder, files: folder.paths.size, records: rows, latestRecordAt: latest > -Infinity ? new Date(latest).toISOString() : null });
+    });
     return {
       records,
       sources,
@@ -177,14 +178,48 @@ export function createScanner({
       files: found.length,
       errors: run.errors,
       changed: run.changed,
-      folders: folders.map(publicFolder),
+      folders: statuses,
       skipped: run.skipped,
     };
   }
 
+  // Turns (rows with the same key count once) and the newest timestamp across a root's files. Kept per root
+  // while its tables are unchanged, so a quiet poll costs one comparison per file.
+  function folderCounts(folder, list) {
+    const id = `${folder.kind}\u0000${folder.source}\u0000${folder.path}`;
+    const memo = folderMemo.get(id);
+    if (memo && memo.list.length === list.length && memo.list.every((table, i) => table === list[i] && memo.versions[i] === table.version && memo.lengths[i] === table.length)) {
+      return memo.counts;
+    }
+    const keys = new Set();
+    let rows = 0;
+    let latest = -Infinity;
+    for (const table of list) {
+      for (let i = 0; i < table.length; i++) {
+        const key = table.keys[i];
+        if (key !== undefined) {
+          if (keys.has(key)) continue;
+          keys.add(key);
+        }
+        rows++;
+        if (table.ms[i] > latest) latest = table.ms[i];
+      }
+    }
+    const counts = { rows, latest };
+    folderMemo.set(id, { list, versions: list.map((t) => t.version), lengths: list.map((t) => t.length), counts });
+    return counts;
+  }
+
   async function refreshFile(run, file, stat) {
     const entry = run.map.get(file.path);
-    const prior = entry?.kind === file.kind && ensureParser(entry) ? entry : undefined;
+    // A file replaced under the same name (a new inode) is read whole, even with the same mtime and size.
+    const sameFile = !entry?.fileId || !file.fileId || entry.fileId === file.fileId;
+    const prior = entry?.kind === file.kind && sameFile && ensureParser(entry) ? entry : undefined;
+    if (entry && file.fileId && entry.fileId !== file.fileId && sameFile) {
+      entry.fileId = file.fileId;
+      touched.add(file.path);
+      dirty = true;
+    }
     const result = await readTranscript({
       fs,
       file,
@@ -226,6 +261,7 @@ export function createScanner({
           offset: result.offset,
           kind: file.kind,
           ctx: file.ctx,
+          fileId: file.fileId ?? null,
           parser: result.consumer,
           state: result.state,
         });
@@ -414,20 +450,21 @@ function nextGen(previous) {
 }
 
 function fromCache(entry) {
-  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, state: entry.state, parser: null };
+  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, fileId: typeof entry.fileId === 'string' ? entry.fileId : null, state: entry.state, parser: null };
 }
 
 function toCache(entry) {
-  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, state: entry.parser ? entry.parser.state() : entry.state };
+  return { key: entry.key, offset: entry.offset, kind: entry.kind, ctx: entry.ctx, fileId: entry.fileId ?? null, state: entry.parser ? entry.parser.state() : entry.state };
 }
 
 function listOfStrings(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item !== '') : [];
 }
 
-function publicFolder({ path, kind, state, files, records, message }) {
-  return message ? { path, kind, state, files, records, message } : { path, kind, state, files, records };
+function publicFolder({ path, kind, source, state, files, records, latestRecordAt, message }) {
+  return { path, kind, source, state, files, records, latestRecordAt, ...(message ? { message } : {}) };
 }
+
 
 function noop() {}
 

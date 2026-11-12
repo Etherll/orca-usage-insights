@@ -635,7 +635,7 @@ test('status and folder entries from the scan show on report.sources, with local
       errors: 2,
       folders: [
         { path: folder, kind: 'claude', state: 'warning', files: 0, records: 0, message: 'Folder not found' },
-        { path: `${folder}-codex`, kind: 'codex', state: 'ok', files: 3, records: 4 },
+        { path: `${folder}-codex`, kind: 'codex', source: 'orca', latestRecordAt: '2026-11-03T01:00:00.000Z', state: 'ok', files: 3, records: 4 },
       ],
     }),
   );
@@ -649,6 +649,7 @@ test('status and folder entries from the scan show on report.sources, with local
   assert.equal(local.records, 1);
   assert.deepEqual([missing.id, missing.kind, missing.label, missing.state, missing.message], ['folder:' + folder, 'folder', folder, 'warning', 'Folder not found']);
   assert.deepEqual([present.id, present.state, present.files, present.records], ['folder:' + folder + '-codex', 'ok', 3, 4]);
+  assert.deepEqual([present.provider, present.source, present.latestRecordAt, present.path], ['codex', 'orca', '2026-11-03T01:00:00.000Z', `${folder}-codex`]);
   await worker.stop();
 });
 
@@ -787,6 +788,7 @@ test('activate scans the real roots and deactivate flushes the cache under the c
     XDG_CONFIG_HOME: path.join(base, 'config'),
     CLAUDE_CONFIG_DIR: path.join(base, 'claude'),
     CODEX_HOME: path.join(base, 'codex'),
+    ORCA_USER_DATA_PATH: path.join(base, 'orca-user-data'),
   };
   const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
   t.after(() => {
