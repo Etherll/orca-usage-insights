@@ -35,6 +35,7 @@ const SYNC_STATUS = {
   single: 'One source only',
   flagged: 'Check this',
   new: 'New model',
+  removed: 'No source lists it',
   overridden: 'Set in your overrides file',
 }
 const FIELD_LABELS = {
@@ -46,6 +47,8 @@ const FIELD_LABELS = {
   'cacheWrite.default': 'Cache write',
 }
 function fieldLabel(field) {
+  const whole = /^tier\.(\d+)$/.exec(field)
+  if (whole) return `Rates for prompts over ${Number(whole[1]) / 1000}k`
   const tier = /^tier\.(\d+)\.(.+)$/.exec(field)
   if (!tier) return FIELD_LABELS[field] || field
   return `${FIELD_LABELS[tier[2]] || tier[2]}, prompts over ${Number(tier[1]) / 1000}k`
@@ -201,7 +204,7 @@ export function priceLine(status) {
 export function changedSyncRows(rows = []) {
   return rows.filter((r) => {
     const values = [r.litellm, r.modelsdev].filter((v) => v !== null && v !== undefined)
-    return r.current === null || r.current === undefined || values.some((v) => Math.abs(v - r.current) > 1e-9)
+    return r.status === 'removed' || r.current === null || r.current === undefined || values.some((v) => Math.abs(v - r.current) > 1e-9)
   })
 }
 
@@ -218,6 +221,7 @@ export function syncBody(result) {
   const fmt = (v) => (v === null || v === undefined ? '—' : `$${Number(v)}`)
   // The price a ticked row applies (LiteLLM's, else models.dev's); the other source's follows when it differs.
   const proposed = (r) => {
+    if (r.status === 'removed') return 'Remove'
     const first = r.litellm ?? r.modelsdev
     const other = r.litellm !== null && r.litellm !== undefined && r.modelsdev !== null && r.modelsdev !== undefined && Math.abs(r.litellm - r.modelsdev) > 1e-9
       ? `<span class="muted small">models.dev ${esc(fmt(r.modelsdev))}</span>`

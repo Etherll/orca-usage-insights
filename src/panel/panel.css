@@ -361,7 +361,7 @@ dialog .icon-btn { margin-left: 0; }
 .bd.sync tr.overridden td { color: var(--muted-fg); }
 .chip-s { font-size: 11px; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--border); white-space: nowrap; }
 .chip-s.agree { border-color: color-mix(in srgb, var(--s3) 50%, var(--border)); }
-.chip-s.flagged, .chip-s.disagree { border-color: color-mix(in srgb, var(--s4) 60%, var(--border)); color: var(--s4); }
+.chip-s.flagged, .chip-s.disagree, .chip-s.removed { border-color: color-mix(in srgb, var(--s4) 60%, var(--border)); color: var(--s4); }
 #explain-text { width: 100%; resize: vertical; min-height: 180px; font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
 #explain-text:focus-visible { outline: 2px solid var(--s1); }
 @media (max-width: 480px) {

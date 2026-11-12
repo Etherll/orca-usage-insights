@@ -278,10 +278,13 @@ export function startWorker(orca, scanner, {
   // merged records array is reused while its inputs are, so an unchanged request is a cache hit.
   function reportFor(records, { range, providers, hosts, scope, catalog }) {
     if (cache.records !== records) cache = { records, reports: new Map() };
-    const key = JSON.stringify([range, providers ?? null, hosts ?? null, scope ?? null, catalog.version]);
+    // The local day is in the key: ranges, the calendar and today's total move at midnight.
+    const at = now();
+    const day = `${at.getFullYear()}-${at.getMonth()}-${at.getDate()}`;
+    const key = JSON.stringify([range, providers ?? null, hosts ?? null, scope ?? null, catalog.version, day]);
     let report = cache.reports.get(key);
     if (!report) {
-      const options = { range, now: now(), catalog };
+      const options = { range, now: at, catalog };
       if (providers !== undefined) options.providers = providers;
       if (hosts !== undefined) options.hosts = hosts;
       if (scope !== undefined) options.scope = scope;

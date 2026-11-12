@@ -51,6 +51,14 @@ export function diffCatalog(catalog, { litellm = null, modelsdev = null } = {}, 
         ticked: status === 'agree',
       });
     }
+    // A catalog tier no source that lists the model has any more gets a row that removes it (never pre-ticked).
+    const listed = [fromLitellm.get(model), fromModelsDev.get(model)].filter(Boolean);
+    for (const tier of entry?.tiers ?? []) {
+      if (listed.some((source) => (source.tiers ?? []).some((t) => t?.above === tier.above))) continue;
+      const key = `${model}.tier.${tier.above}`;
+      const status = overridden.has(`${key}.input`) ? 'overridden' : 'removed';
+      rows.push({ key, model, field: `tier.${tier.above}`, current: tier.input ?? null, litellm: null, modelsdev: null, status, ticked: false });
+    }
   }
   return { rows, notInUse };
 }

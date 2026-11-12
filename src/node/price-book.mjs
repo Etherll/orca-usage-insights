@@ -183,15 +183,15 @@ export function createPriceBook({
 
   async function preview(diffId, keys) {
     const diff = diffFor(diffId);
-    const rows = chosenRows(diff, keys);
     const state = await current();
+    const rows = chosenRows(diff, keys, state.catalog);
     return buildCatalog(bundled, overlayWith(state.overlay, rows, state.catalog, now()), state.overrides.data);
   }
 
   async function apply(diffId, keys) {
     const diff = diffFor(diffId);
-    const rows = chosenRows(diff, keys);
     const state = await current();
+    const rows = chosenRows(diff, keys, state.catalog);
     const base = state.overlay;
     const next = overlayWith(base, rows, state.catalog, now());
     // Re-applying rows the overlay holds changes nothing, so `previous` keeps the state before the first apply.
@@ -328,6 +328,11 @@ function overlayWith(base, rows, catalog, at) {
 // A tier field rewrites the patch's whole tier list, starting from the catalog's tiers. A tier the catalog
 // lacks starts from the base rates, so it is complete when only some of its rows are applied.
 function setRate(patch, field, value, current = null) {
+  const removed = /^tier\.(\d+)$/.exec(field);
+  if (removed) {
+    patch.tiers = structuredClone(patch.tiers ?? current?.tiers ?? []).filter((t) => t.above !== Number(removed[1]));
+    return;
+  }
   const tier = /^tier\.(\d+)\.(.+)$/.exec(field);
   if (tier) {
     const above = Number(tier[1]);
@@ -346,7 +351,7 @@ function setRate(patch, field, value, current = null) {
 }
 
 // The rows for the keys. An overridden row is skipped, because the user's file already wins for it.
-function chosenRows(diff, keys) {
+function chosenRows(diff, keys, catalog) {
   if (!Array.isArray(keys) || !keys.every((key) => typeof key === 'string')) {
     throw coded('invalid_params', 'keys must be an array of row keys');
   }
@@ -357,11 +362,12 @@ function chosenRows(diff, keys) {
     if (!row) throw coded('invalid_params', `no price row ${key} in this diff`);
     if (row.status !== 'overridden') rows.push(row);
   }
-  // A new model's entry must be complete, so applying any of its rows brings the rest (tiers included).
-  const fresh = new Set(rows.filter((row) => row.status === 'new').map((row) => row.model));
+  // A model the catalog lacks must get a complete entry, so applying any of its rows brings the rest
+  // (tiers included), whatever their status.
+  const fresh = new Set(rows.filter((row) => !resolveModel(row.model, catalog)).map((row) => row.model));
   const chosen = new Set(rows.map((row) => row.key));
   for (const row of diff.rows) {
-    if (fresh.has(row.model) && row.status === 'new' && !chosen.has(row.key)) rows.push(row);
+    if (fresh.has(row.model) && row.status !== 'overridden' && !chosen.has(row.key)) rows.push(row);
   }
   // Base rates first: a tier the catalog lacks starts from them.
   const isTier = (row) => (row.field.startsWith('tier.') ? 1 : 0);

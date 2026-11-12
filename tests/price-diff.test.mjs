@@ -243,3 +243,14 @@ test('long-prompt tier rates get rows of their own', () => {
   const keys = overriddenKeysOf({ models: { 'claude-opus-5-5': { tiers: [{ above: 200000, input: 1, output: 1, cacheRead: 1 }] } } });
   assert.ok(keys.has('claude-opus-5-5.tier.200000.input'));
 });
+
+test('a catalog tier no source lists any more gets a removal row, never pre-ticked', () => {
+  const withTier = buildCatalog([{ ...BUNDLED[0], tiers: [{ above: 200000, input: 8, output: 30, cacheRead: 0.4, cacheWrite: { '5m': 10 } }] }]);
+  const plain = [{ id: 'claude-opus-5-5', input: 4, output: 20, cacheRead: 0.2, cacheWrite: { '5m': 5 } }];
+  const { rows } = diffCatalog(withTier, { litellm: source(plain), modelsdev: source(plain) }, ['claude-opus-5-5']);
+  const row = rowOf(rows, 'claude-opus-5-5.tier.200000');
+  assert.deepEqual([row.field, row.current, row.status, row.ticked], ['tier.200000', 8, 'removed', false]);
+  // A source that still lists the tier keeps it.
+  const tiered = [{ ...plain[0], tiers: [{ above: 200000, input: 8, output: 30, cacheRead: 0.4, cacheWrite: { '5m': 10 } }] }];
+  assert.equal(rowOf(diffCatalog(withTier, { litellm: source(tiered), modelsdev: source(plain) }, ['claude-opus-5-5']).rows, 'claude-opus-5-5.tier.200000'), undefined);
+});

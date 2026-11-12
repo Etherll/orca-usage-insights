@@ -913,3 +913,23 @@ test('usage.breakdown and usage.explain reject bad input', async () => {
   await assert.rejects(mock.handlers.get('usage.explain')({}), { code: 'invalid_params' });
   await worker.stop();
 });
+
+test('usage.report builds a new Report after local midnight even when the records are unchanged', async () => {
+  const mock = mockOrca();
+  const { build, options } = recordingBuild();
+  let clock = new Date(2026, 10, 3, 23, 59, 0);
+  const same = result([usageRecord()]);
+  const worker = startWorker(mock.orca, fakeScanner(() => same), { now: () => clock, pollMs: 60_000, build });
+  await worker.ready;
+  const handler = mock.handlers.get('usage.report');
+  await handler({ range: '7d' });
+  const built = options.length;
+  clock = new Date(2026, 10, 3, 23, 59, 30);
+  await handler({ range: '7d' });
+  assert.equal(options.length, built, 'same day: reused');
+  clock = new Date(2026, 10, 4, 0, 0, 30);
+  await handler({ range: '7d' });
+  assert.equal(options.length, built + 1, 'a new day: rebuilt');
+  assert.equal(options.at(-1).now.getDate(), 4);
+  await worker.stop();
+});

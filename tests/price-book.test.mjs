@@ -404,6 +404,35 @@ test('applying one tier rate of a new model brings its base and tier rates, so t
   assert.deepEqual([tier.input, tier.output, tier.cacheRead], [8, 30, 0.4]);
 });
 
+test('a new model whose rows are flagged still gets a complete entry from one applied row', async () => {
+  const NEW = 'claude-newer-5-5';
+  const odd = { ...litellmBody({ [NEW]: RATES })[NEW], other_token_cost: 1 / 1e6 };
+  const { priceBook } = book({ replies: sources({ litellm: ok({ ...litellmBody({ [OPUS]: RATES }), [NEW]: odd }), modelsdev: ok(modelsDevBody({ [OPUS]: RATES })) }) });
+  const sync = await priceBook.sync([OPUS, NEW]);
+  const input = rowOf(sync.rows, `${NEW}.input`);
+  assert.equal(input.status, 'flagged');
+  await priceBook.apply(sync.diffId, [input.key]);
+  const catalog = await priceBook.catalog();
+  assert.deepEqual(catalog.problems, []);
+  assert.equal(catalog.entries.get(NEW).output, RATES.output);
+});
+
+test('applying a removal row drops the tier from the catalog', async () => {
+  const tierBody = { [OPUS]: { ...litellmBody({ [OPUS]: RATES })[OPUS], input_cost_per_token_above_200k_tokens: 8 / 1e6, output_cost_per_token_above_200k_tokens: 30 / 1e6, cache_read_input_token_cost_above_200k_tokens: 0.4 / 1e6, cache_creation_input_token_cost_above_200k_tokens: 10 / 1e6 } };
+  let body = tierBody;
+  const { priceBook } = book({ replies: sources({ litellm: () => json(body), modelsdev: ok(modelsDevBody({ [OPUS]: RATES })) }) });
+  const added = await priceBook.sync([OPUS]);
+  await priceBook.apply(added.diffId, [`${OPUS}.tier.200000.input`]);
+  assert.ok((await priceBook.catalog()).entries.get(OPUS).tiers.some((t) => t.above === 200000));
+  body = litellmBody({ [OPUS]: RATES });
+  const sync = await priceBook.sync([OPUS]);
+  const row = rowOf(sync.rows, `${OPUS}.tier.200000`);
+  assert.equal(row?.status, 'removed', sync.rows.map((r) => r.key).join(', '));
+  await priceBook.apply(sync.diffId, [row.key]);
+  const entry = (await priceBook.catalog()).entries.get(OPUS);
+  assert.ok(!(entry.tiers ?? []).some((t) => t.above === 200000));
+});
+
 test('a sync applies a changed long-prompt tier rate, and a tier the catalog lacks starts complete', async () => {
   const tierBody = (above, input) => ({
     [OPUS]: {
