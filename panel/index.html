@@ -1529,7 +1529,7 @@ function cacheTile(t) {
   const tip = esc(JSON.stringify({
     title: 'Cache',
     rows: [
-      ['', 'Cache use as recorded, with or without cache tokens in the totals'],
+      ['', 'As recorded, whether or not totals include cache tokens'],
       ['Hit rate', pct1(hit)],
       ['', 'read ÷ (read + write + uncached)'],
       ['Reuse', pct1(t.cacheReuseRate)],
@@ -1701,7 +1701,7 @@ function applyDates() {
   try {
     normalizeQuery({ range: 'custom', startDate, endDate })
   } catch (err) {
-    $('date-error').textContent = `Pick a start date from ${MIN_USAGE_DATE} and an end date no later than today, start first. ${err.message}`
+    $('date-error').textContent = `Pick a start date on or after ${MIN_USAGE_DATE} and an end date no later than today, with the start on or before the end (${err.message}).`
     $('date-error').hidden = false
     $('start-date').setAttribute('aria-invalid', 'true')
     $('end-date').setAttribute('aria-invalid', 'true')
@@ -1744,7 +1744,7 @@ function render() {
   $('hero-total').title = `${shownTotal.toLocaleString('en-US')} tokens`
   const zone = timeZoneName()
   const span = r.startDate && r.endDate ? (r.startDate === r.endDate ? r.startDate : `${r.startDate} – ${r.endDate}`) : 'All history'
-  $('selection-summary').textContent = `${span} · ${zone} · ${includeCache ? 'Includes cache tokens' : 'Excludes cache tokens'} · all available account histories in the selected sources`
+  $('selection-summary').textContent = `${span} · ${zone} · ${includeCache ? 'Includes cache tokens' : 'Excludes cache tokens'} · all accounts combined`
   $('date-hint').textContent = `Inclusive local dates (${zone}). Use the same date for one day.`
   $('hero-sub').textContent = `tokens · ${money(t.costUsd)}${t.hasUnpriced ? '+' : ''} est.`
 
@@ -1773,7 +1773,7 @@ function render() {
   const empty = t.turns === 0
   $('status').hidden = !empty || state.view === 'breakdown'
   if (empty) {
-    $('status').textContent = 'No recorded usage matches these dates and filters. Try another range, select All models, or reset filters. History appears only when it is available in the selected sources.'
+    $('status').textContent = 'No recorded usage matches these dates and filters. Try another range, choose All models, or reset the filters.'
     $('status').classList.remove('error')
   }
   $('content').hidden = state.view === 'breakdown'
@@ -1875,7 +1875,7 @@ function renderBreakdown(r) {
   }
   $('rank-sort').value = state.sort
   $('rank-note').textContent = detailed
-    ? `Exact recorded token counts. Input, output, cache read and cache write are raw categories; Total ${includeCache ? 'includes' : 'excludes'} cache tokens.`
+    ? `Exact token counts as recorded. Total ${includeCache ? 'includes' : 'excludes'} cache tokens.`
     : `Totals ${includeCache ? 'include' : 'exclude'} cache tokens. Hover a token count for its exact value.`
   $('breakdown').classList.toggle('detail', detailed)
   if (detailed) {

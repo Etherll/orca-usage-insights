@@ -103,7 +103,7 @@ The first entry changes one price of a known model, the second adds a new model,
 
 By default the plugin reads this machine's `~/.claude`, `~/.config/claude` and `~/.codex`, plus `CLAUDE_CONFIG_DIR` and `CODEX_HOME` when they're set, and every Claude profile and Codex account home Orca manages. A new account shows up on the next scan.
 
-Histories from all of them are combined. A transcript several accounts share, a hard link and a copied Codex turn count once (Codex turns are matched by turn ID, so a resumed or copied session with a new session ID still counts once; older logs without turn IDs can't be matched across sessions). The transcripts don't say which subscription paid for a turn, so this is a combined view, not a bill per account. Each folder's status, files, turns and latest usage are in the source strip under the filters; folders that share transcripts each count them there.
+Histories from all of them are combined. A transcript that several accounts share counts once, and so does a hard link or a copied Codex turn. Codex turns are matched by turn ID, so a session resumed or copied under a new session ID still counts once. Older Codex logs have no turn IDs and can't be matched across sessions. The transcripts don't say which subscription paid for a turn, so the totals cover all accounts together. The source strip under the filters shows each folder's status, files, turns and latest usage, and a transcript that several folders share is counted in each of them there.
 
 You can add more in **Settings → Plugins → Usage Insights**, one per line:
 
@@ -125,7 +125,7 @@ It uses your own `ssh` with your keys or ssh-agent, and never asks for a passwor
 
 Using an Orca server? Install the plugin there too, or add the server as an SSH host to see it here.
 
-After this update, Codex transcripts are read once more so copied turns can be matched; Claude transcripts are not. An offline SSH host shows its Codex history again when it reconnects.
+The first scan after this update reads every Codex transcript again, so copied turns can be matched. Claude transcripts aren't read again. An offline SSH host shows its Codex history again when it reconnects.
 
 ## Speed
 
