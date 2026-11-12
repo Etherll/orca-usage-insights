@@ -6,15 +6,11 @@ export function zstdAvailable() {
   return typeof zlib.zstdDecompressSync === 'function';
 }
 
-// The error a transcript that decompresses past the cap throws; a parse thread passes its message.
 export const TOO_LARGE = 'decompressed transcript is too large';
 
 const LF = 0x0a;
 const LF_BYTES = Buffer.from('\n');
 
-// Decompresses in 1 MiB chunks and calls onLines with Buffers that each hold whole lines (a last
-// line without LF gets one). A line that spans chunks is joined once, when its LF arrives, so
-// memory stays near the input plus one line and no byte is copied twice.
 export async function forEachLines(buf, onLines, maxBytes = 768 << 20) {
   const stream = zlib.createZstdDecompress({ chunkSize: 64 << 10 });
   stream.end(buf);
@@ -41,12 +37,7 @@ export async function forEachLines(buf, onLines, maxBytes = 768 << 20) {
 const ZIN_BYTES = 256 << 10;
 const ZOUT_BYTES = 1 << 20;
 
-// Reads a .zst file of `size` bytes from `fh` in pieces and calls onLines like forEachLines: Buffers
-// of whole lines, a last line without LF given one, lines decoded before an error still delivered.
-// zlib's handle decodes straight into one reused 1 MiB buffer (the call zlib's own sync API makes),
-// so lines are searched while still in cache and no output Buffer is allocated per chunk; the
-// stream API made ~10 GB of garbage on a full Codex history and ran 2x slower. A Node whose zlib
-// lacks that handle method gets forEachLines. scratch: { zin, zout, z } reused across files.
+// Decodes into one reused 1 MiB buffer through zlib's handle: the stream API made far more garbage and ran slower.
 // onLines must not keep the Buffer it is given: the next chunk overwrites it.
 export async function readLines(fh, size, onLines, scratch = {}, maxBytes = 768 << 20) {
   let z = scratch.z;

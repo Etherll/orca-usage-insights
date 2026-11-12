@@ -1,29 +1,19 @@
-// Use case: one deduped table from many sources (a transcript file each, local or on an SSH host).
-// A Claude message copied into a resumed session is in two files, so rows with the same key count
-// once: the earliest by ms, at the position of the key's first row in source order (a tie keeps
-// the first). Rows without a key always count. Pure: no Node built-in or Orca imports.
-//
-// update(sources) takes the sources in order, [{ id, table }], and returns the merged table, frozen.
-// It is incremental: it remembers each source's table, version and length, so a source that only
-// gained rows costs those rows, a replaced row costs a look at its key, and unchanged sources cost
-// a bulk copy. Nothing changed: the same table object comes back. A table whose object changed,
-// that got shorter, or whose replaced-row log started over (see table.mjs) is read again whole.
-// The merged table uses `names`: pass the dictionary the sources' tables share and their columns
-// are copied in bulk; a source on another dictionary has its ids translated.
-//
-// Memory: a set of every key, plus row references for keys held by 2+ rows (~16 MB at 418k rows).
+// One deduped table from many sources. Rows with the same key count once: the earliest by ms, at the position of
+// the key's first row in source order (a tie keeps the first). Keyless rows always count.
+// update() is incremental and returns the same frozen table when nothing changed. A table whose object changed,
+// that shrank, or whose replaced-row log started over is read again whole. Pure: no Node built-in or Orca imports.
 
 import { COLUMNS, NAME_FIELDS, NameDict, RecordTable, TOKEN_FIELDS } from './table.mjs';
 
 const ROW = 2 ** 26; // a row reference is sid * ROW + row
 
 export function createRecordStore({ names = new NameDict() } = {}) {
-  const byId = new Map(); // source id -> Source
+  const byId = new Map();
   const bySid = []; // sid -> Source, undefined once removed
-  const keys = new Set(); // every key some row holds
+  const keys = new Set();
   const dups = new Map(); // key -> refs of its rows, for keys held by 2+ rows
   const outcome = new Map(); // dup key -> { first, winner, dropped } as applied to the sources
-  const remaps = new WeakMap(); // other NameDict -> Int32Array of ids in `names`
+  const remaps = new WeakMap();
   let order = [];
   let output = null;
 
@@ -36,10 +26,9 @@ export function createRecordStore({ names = new NameDict() } = {}) {
       ids.add(id);
     }
     let changed = output === null || list.length !== order.length || list.some(({ id }, i) => order[i].id !== id);
-    const affected = new Set(); // dup keys whose outcome may differ
+    const affected = new Set();
     const pending = new Set(); // keys that just gained a second row: their rows are looked up below
 
-    // Pass 1: rows that left. Sources no longer listed, and sources read again from the start.
     for (const [id, src] of byId) {
       if (ids.has(id)) continue;
       removeRows(src, affected, pending);
@@ -65,7 +54,6 @@ export function createRecordStore({ names = new NameDict() } = {}) {
       }
     }
 
-    // Pass 2: rows that arrived or changed.
     const next = list.map(({ id, table }, rank) => {
       let src = byId.get(id);
       if (!src) {
@@ -92,7 +80,6 @@ export function createRecordStore({ names = new NameDict() } = {}) {
     order = next;
     if (reordered) for (const key of dups.keys()) affected.add(key);
 
-    // Keys that just gained a second row: one pass over every source finds all their rows.
     if (pending.size > 0) {
       const found = new Map();
       for (const src of next) {
@@ -140,7 +127,6 @@ export function createRecordStore({ names = new NameDict() } = {}) {
     }
   }
 
-  // Forgets every row of a source it has seen (the source left, or is read again from the start).
   function removeRows(src, affected, pending) {
     const rowKeys = src.table.keys;
     for (let r = 0; r < src.seen; r++) {
@@ -152,19 +138,16 @@ export function createRecordStore({ names = new NameDict() } = {}) {
         if (at >= 0) refs.splice(at, 1);
         if (refs.length < 2) {
           dups.delete(key);
-          // The row left over is found again by the lookup pass.
           pending.add(key);
         }
         affected.add(key);
       } else if (pending.has(key)) {
-        // Its rows are counted by the lookup pass, which sees only rows still listed.
       } else {
         keys.delete(key);
       }
     }
   }
 
-  // Takes back what apply did for a key: its dropped rows and its substitute.
   function unapply(key) {
     const prev = outcome.get(key);
     if (!prev) return;
@@ -173,8 +156,6 @@ export function createRecordStore({ names = new NameDict() } = {}) {
     if (prev.winner !== prev.first) touch(prev.first)?.subst.delete(prev.first % ROW);
   }
 
-  // The first row in source order holds the key's place. Its value is the rule merging in order
-  // gives: the first row, replaced by each later row that is strictly earlier.
   function apply(key) {
     const refs = dups.get(key);
     if (!refs) return;
@@ -196,7 +177,6 @@ export function createRecordStore({ names = new NameDict() } = {}) {
     outcome.set(key, { first, winner, dropped });
   }
 
-  // The source a row reference points into, marked as having rows that may differ in the output.
   function touch(ref) {
     const src = bySid[Math.floor(ref / ROW)];
     if (src) src.dirty = true;
@@ -207,13 +187,11 @@ export function createRecordStore({ names = new NameDict() } = {}) {
     return bySid[Math.floor(ref / ROW)].table.ms[ref % ROW];
   }
 
-  // The merged table. Sources whose rows are as they were sit in the previous output in the same
-  // relative order, so each run of them is copied from it in one piece per column; the others are
-  // copied from their own tables.
+  // Clean sources sit in the previous output in the same relative order, so each run of them is copied in one piece.
   function assemble(sources) {
     const prev = output;
     let total = 0;
-    const wide = new Set(); // token columns some source holds as Float64Array
+    const wide = new Set();
     for (const src of sources) {
       total += src.table.length - src.dropped.size;
       for (const field of TOKEN_FIELDS) if (src.table[field] instanceof Float64Array) wide.add(field);
@@ -228,7 +206,6 @@ export function createRecordStore({ names = new NameDict() } = {}) {
     for (let i = 0; i < sources.length; ) {
       const src = sources[i];
       if (prev !== null && !src.dirty && src.at >= 0) {
-        // The longest run of clean sources that were next to each other last time.
         let j = i + 1;
         let end = src.at + src.rows;
         while (j < sources.length && !sources[j].dirty && sources[j].at === end) end += sources[j++].rows;
@@ -254,13 +231,10 @@ export function createRecordStore({ names = new NameDict() } = {}) {
     return out;
   }
 
-  // One source's output rows, from its own table. Returns how many.
   function copySource(src, out, at) {
     const t = src.table;
     const len = t.length;
     if (src.dropped.size === 0 && src.subst.size === 0) {
-      // A table whose columns are exactly its rows (read back, or from a thread) is copied
-      // without a view per column.
       const whole = t.ms.length === len;
       const copy = (field) => out[field].set(whole ? t[field] : t[field].subarray(0, len), at);
       if (t.dict === names) {
@@ -309,7 +283,6 @@ export function createRecordStore({ names = new NameDict() } = {}) {
     out.host[i] = id(t.host[r]);
   }
 
-  // Ids of another dictionary in `names`, extended as that dictionary grows.
   function remapFor(dict) {
     let map = remaps.get(dict);
     if (!map || map.length < dict.list.length) {
@@ -323,7 +296,6 @@ export function createRecordStore({ names = new NameDict() } = {}) {
   }
 }
 
-// The tables merged once, in order: for callers that merge a fixed set of tables.
 export function mergeTables(tables) {
   return createRecordStore().update(tables.map((table, id) => ({ id, table })));
 }

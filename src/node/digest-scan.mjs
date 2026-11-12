@@ -1,12 +1,7 @@
-// Digest scanner: one token digest per transcript for the Breakdown view. It lists and reads files
-// through transcript-files.mjs (the same rules as the records scanner) and keeps one shard per file
-// under digests-v1/, so only changed files are read again. Runs only when Breakdown asks for it.
-//
-// A shard is <sha1 of path>.json: { v: 3, path, key, offset, compressed, kind, sessionId, ctx,
-// digest } with the digest's rows packed and base64 (digest-rows.mjs). A plain file's adapter and
-// fold state, needed only to read on from its offset, is in <sha1>.state.json: { v: 3, path, key,
-// state }, used only when its key matches the shard's. Version 2 shards held both in one file with
-// rows as arrays; they are read and converted on first use, so no transcript is read again.
+// One token digest per transcript for Breakdown, a shard per file under digests-v1/. Runs only when Breakdown asks.
+// A shard is <sha1 of path>.json: { v: 3, path, key, offset, compressed, kind, sessionId, ctx, digest }, rows
+// packed (digest-rows.mjs). A plain file's adapter and fold state is in <sha1>.state.json { v: 3, path, key,
+// state }, used only when its key matches the shard's. v2 shards (one file, rows as arrays) convert on first use.
 import { createHash } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -22,8 +17,7 @@ const LEGACY_SHARD_VERSION = 2;
 const CONCURRENCY = 8;
 
 // cacheDir: the digests folder, or null to keep everything in memory (tests, previews).
-// Each consumer here is dropped once its state and digest are read, and every state it starts from
-// is a fresh parse or one no other code reads, so no copy is made either way.
+// Consumers adopt their state: each is dropped once read, and no other code reads a state it starts from.
 const ADOPT = { adopt: true };
 
 export function createDigestScanner({
@@ -33,18 +27,11 @@ export function createDigestScanner({
   env = process.env,
   home = os.homedir(),
   threads = Math.min(4, Math.max(0, (os.availableParallelism?.() ?? os.cpus().length) - 1)),
-  // A pool to share (the records scanner's). Without one, the scanner starts and closes its own.
   sharedPool = null,
 } = {}) {
-  // path -> { key, offset, compressed, sessionId, kind, digest, state? }. Digests are kept packed
-  // (digest-rows.mjs). Plain files keep their adapter and fold state on disk only; it is read back
-  // when the file grows.
   const files = new Map();
-  // The last result. A scan that finds the same digests and states returns it again, so the
-  // Breakdown analysis built from it is reused.
+  // Returned again by a scan that finds the same digests and states, so the Breakdown analysis is reused.
   let last = null;
-  // Targets ([key, label, kind]) shared by every digest that has them: the same file or command
-  // shows up in many sessions (106k targets, 18k distinct, on a large history).
   const targets = new Map(); // key -> [target, ...] (one per label and kind)
   const loaded = new Set();
   const oversized = new Map(); // path -> key of a compressed file that decompressed past the cap
@@ -54,9 +41,8 @@ export function createDigestScanner({
 
   return { scan, progress: () => ({ ...progress }), close };
 
-  // since: epoch ms. Files last changed before it hold no spend after it, so they are not read
-  // (state 'old'); a wider range reads them later. A call joins the running scan when that scan
-  // covers its range and lists the same extra folders, else it runs after it.
+  // since: epoch ms. Files last changed before it are not read (state 'old'). A call joins the running
+  // scan when it covers the range and the same extra folders, else runs after it.
   function scan({ extra = { claude: [], codex: [] }, since = 0 } = {}) {
     const folders = JSON.stringify([extra?.claude ?? [], extra?.codex ?? []]);
     if (run && run.since <= since && run.folders === folders) return run.done;
@@ -122,11 +108,8 @@ export function createDigestScanner({
     return last;
   }
 
-  // Brings one file's digest up to date. Returns its status: ok, old, zstd, too-large or error.
   async function refresh(listed, since) {
-    // The adapters need home to write paths under it as ~/...; ctx goes to parse threads too.
     const file = { ...listed, ctx: { ...listed.ctx, home } };
-    // One stat serves the age check, the unchanged check and the read.
     const st = await fs.stat(file.path).catch(() => null);
     if (since > 0 && st?.isFile() && st.mtimeMs < since) return 'old';
     let entry = files.get(file.path);
@@ -137,7 +120,6 @@ export function createDigestScanner({
     }
     const prior = entry && entry.key !== null ? { key: entry.key, offset: entry.offset, consumer: null } : null;
     if (prior && st?.isFile() && `${st.mtimeMs}:${st.size}` === prior.key) return 'ok';
-    // The consumer for a tail read is rebuilt from the stored state only when the file changed.
     if (prior && !file.compressed) {
       const state = entry.state ?? (await loadState(file.path, entry.key));
       try {
@@ -186,13 +168,11 @@ export function createDigestScanner({
       digest: compact(packDigest(digest)), // packed in memory; plain in the shard
     };
     files.set(file.path, next);
-    // A compressed file is always read whole, so its state is never needed again.
     await saveShard(file.path, { key: next.key, offset: next.offset, compressed: next.compressed, kind: next.kind, sessionId: next.sessionId, ctx: file.ctx }, digest, file.compressed ? null : state);
     return 'ok';
   }
 
-  // Points a packed digest's targets at the shared ones. Only this scanner holds the digest, and
-  // the targets are frozen, so nothing can change one through another.
+  // Safe to share: only this scanner holds the digest, and the targets are frozen.
   function compact(digest) {
     if (!Array.isArray(digest?.targets)) return digest;
     digest.targets = digest.targets.map((target) => {
@@ -215,7 +195,6 @@ export function createDigestScanner({
     return join(cacheDir, `${createHash('sha1').update(path).digest('hex')}.state.json`);
   }
 
-  // The file's entry from its shard, or null when there is none (or it is unusable).
   async function loadShard(file) {
     if (!cacheDir) return null;
     let raw;
@@ -227,7 +206,6 @@ export function createDigestScanner({
     if (raw?.path !== file.path || raw.kind !== file.kind || !raw.digest) return null;
     const meta = { key: raw.key, offset: raw.offset, compressed: raw.compressed, kind: raw.kind, sessionId: raw.sessionId };
     if (raw.v === LEGACY_SHARD_VERSION) {
-      // Converted once to the current form; if that write fails, it is converted next time.
       await writeShard(file.path, { ...meta, ctx: raw.ctx }, raw.digest, raw.state ?? null).catch(() => {});
       return { ...meta, digest: compact(packDigest(raw.digest)) };
     }
@@ -239,7 +217,6 @@ export function createDigestScanner({
     }
   }
 
-  // A plain file's state for a tail read, when it was saved with the same key; else null.
   async function loadState(path, key) {
     if (!cacheDir) return null;
     try {
@@ -253,7 +230,6 @@ export function createDigestScanner({
   async function saveShard(path, meta, digest, state) {
     const entry = files.get(path);
     if (!cacheDir) {
-      // In memory only: keep the state for the next tail read.
       if (entry) entry.state = state;
       return;
     }
@@ -293,8 +269,6 @@ export function createDigestScanner({
 
 }
 
-// True when a scan found exactly what the last result holds: the same digest objects for the same
-// files, in order, and the same file states.
 function sameResult(last, digests, status) {
   if (last.digests.length !== digests.length || last.files.length !== status.length) return false;
   for (let i = 0; i < digests.length; i++) {

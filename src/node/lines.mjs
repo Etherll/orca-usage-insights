@@ -34,7 +34,6 @@ export function markedLines(buf, end, markers) {
   return out
 }
 
-// The head limit when every marker has one, else 0 (search whole lines).
 function headOf(markers) {
   let head = 0
   for (const marker of markers) {
@@ -45,8 +44,6 @@ function headOf(markers) {
   return head
 }
 
-// Like markedLines, but a line counts only when a marker is in its first `head` bytes. One memchr
-// per line and a short search, so long lines cost nothing beyond finding their end.
 function markedHeads(buf, end, markers, head) {
   let out = ''
   let start = 0
@@ -65,11 +62,8 @@ function markedHeads(buf, end, markers, head) {
   return out
 }
 
-// ---- Usage parsers fed straight from bytes ----
-// The parsers take text (records.mjs is pure JS). Decoding every marked line first costs more than
-// parsing it: Claude assistant lines are mostly message.content, which no kept field comes from.
-// These find and parse lines in the raw bytes and hand the parsed objects to parser.pushObject,
-// with the same results as parser.push(markedLines(...)).
+// Decoding every marked line costs more than parsing it (Claude lines are mostly message.content), so these
+// parse lines from raw bytes into parser.pushObject, with the same results as parser.push(markedLines(...)).
 
 const CR = 0x0d
 const USAGE = Buffer.from(CLAUDE_MARKERS[0])
@@ -78,7 +72,6 @@ const USAGE_OBJ = Buffer.from('"usage":{')
 const STOP = Buffer.from('"stop_reason":')
 const CODEX_HEAD = MARKER_HEADS[CODEX_MARKERS[0]]
 
-/** A parser of the given kind that also takes whole lines as bytes (pushBytes). */
 export function createRecordsConsumer(kind, ctx, state, options) {
   const parser = PROVIDERS[kind].createParser(ctx, state, options)
   if (kind === 'claude') parser.pushBytes = (buf) => pushClaudeBytes(buf, parser)
@@ -86,7 +79,6 @@ export function createRecordsConsumer(kind, ctx, state, options) {
   return parser
 }
 
-// Lines holding "usage", found by one search over the chunk, so other lines are never touched.
 function pushClaudeBytes(buf, parser) {
   const end = buf.length
   let pos = 0
@@ -101,10 +93,8 @@ function pushClaudeBytes(buf, parser) {
   }
 }
 
-// parseClaudeLine (records.mjs) on bytes: a long line is parsed with message.content cut out, and
-// only the head and tail around the cut are decoded. The cut points are ASCII, so the decoded
-// pieces equal slices of the decoded line. Length is in UTF-16 units, as in JS: a line of 3x the
-// limit in bytes has at least the limit in units, so only lines in between are decoded to check.
+// A long line is parsed with message.content cut out, decoding only the head and tail around the ASCII cut points.
+// Lengths are UTF-16 units, so only lines between 1x and 3x the limit in bytes are decoded to check.
 function parseClaudeBytes(buf, s, e) {
   const bytes = e - s
   let text = null
@@ -122,8 +112,7 @@ function parseClaudeBytes(buf, s, e) {
   return parseJson(text ?? buf.toString('utf8', s, e))
 }
 
-// Lines with a marker in their first bytes. One memchr per line and a short latin1 head: searching
-// the chunk once per marker measured 6x slower on Codex files, whose lines are long.
+// One memchr per line and a short latin1 head: searching the chunk once per marker is slower on long lines.
 function pushCodexBytes(buf, parser) {
   const end = buf.length
   for (let p = 0; p < end; ) {

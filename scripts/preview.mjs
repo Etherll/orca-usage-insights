@@ -1,7 +1,6 @@
 // Dev only: renders the built panel with real local usage, through the worker's own handlers,
 // so it can be opened or screenshotted outside Orca.
 // Usage: node scripts/preview.mjs [out.html] [--light] [--cost] [--breakdown] [--sync] [--codex dir] [--ssh host,...] [--folders a,b] [--worktrees a,b]
-// --sync fetches the public price lists once (as the Sync button does) so the Sync dialog has an answer.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -39,8 +38,6 @@ for (const range of ['7d', '30d', '90d', 'all']) {
     reports[JSON.stringify(input)] = await handlers.get('usage.report')(input, {})
   }
 }
-// Breakdown views (top level and one level down for every project), price status and the Explain
-// prompts, so every click in the preview has an answer.
 const views = {}
 const explains = {}
 const t0 = Date.now()

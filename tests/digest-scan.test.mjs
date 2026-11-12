@@ -19,10 +19,8 @@ async function home() {
   return dir;
 }
 
-// Shard files (one per transcript); a plain file's state sits next to it in <sha1>.state.json.
 const shards = async (dir) => (await fsp.readdir(dir)).filter((f) => !f.endsWith('.state.json')).sort();
 
-// The scanner keeps digests packed: ROW_WIDTH numbers per row in one typed array.
 const rowsTotal = (d) => {
   assert.ok(ArrayBuffer.isView(d.rows), 'digest rows are packed');
   let total = 0;
@@ -55,24 +53,20 @@ for (const threads of [0, 2]) {
       assert.equal((await shards(cacheDir)).length, 2, 'one shard per file');
       assert.equal((await fsp.readdir(cacheDir)).length, 3, 'and one state file, for the plain file only');
 
-      // Unchanged: same digest objects come back.
       const again = await scanner.scan();
       assert.equal(again.digests.find((d) => !d.compressed).digest, claude.digest);
 
-      // A fresh scanner reads the shards instead of the files, and tails a grown file.
       const fresh = createDigestScanner({ cacheDir, home: dir, env, platform: 'linux', threads });
       await fsp.appendFile(claudeFile, claudeText);
       const grown = await fresh.scan();
       const d = grown.digests.find((x) => !x.compressed).digest;
       assert.ok(rowsTotal(d) >= before);
       await fresh.close();
-      // Tailing from the stored state gives the same digest as reading the grown file whole.
       const whole = createDigestScanner({ cacheDir: null, home: dir, env, platform: 'linux', threads });
       const w = (await whole.scan()).digests.find((x) => !x.compressed).digest;
       await whole.close();
       assert.deepEqual(d, w);
 
-      // A deleted file drops its shard.
       await fsp.rm(claudeFile);
       const gone = await scanner.scan();
       assert.equal(gone.total, 1);
@@ -120,7 +114,6 @@ test('paths under home are stored as ~/…, and the scanner passes home to the a
   assert.ok(digest.targets.some((t) => t[0] === 'file:~/notes/plan.md'), digest.targets.map((t) => t[0]).join(', '));
   assert.ok(!JSON.stringify(digest).includes(homeDir));
 
-  // The scanner hands its home to the adapters (the shard keeps the ctx it parsed with).
   const dir = await home();
   await fsp.writeFile(path.join(dir, '.claude', 'projects', 'proj', 's.jsonl'), lines.join('\n') + '\n');
   const cacheDir = path.join(dir, 'digests');
@@ -165,7 +158,6 @@ test('a version 2 shard (one file, rows as arrays) is read and converted without
   const original = (await first.scan()).digests[0].digest;
   await first.close();
 
-  // Rewrite the cache as an earlier build left it.
   const [name] = await shards(cacheDir);
   const shard = JSON.parse(await fsp.readFile(path.join(cacheDir, name), 'utf8'));
   const stateName = name.replace(/\.json$/, '.state.json');
@@ -176,7 +168,6 @@ test('a version 2 shard (one file, rows as arrays) is read and converted without
   await fsp.writeFile(path.join(cacheDir, name), JSON.stringify({ ...shard, v: 2, state, digest: { ...plain, rows } }));
   await fsp.rm(path.join(cacheDir, stateName));
 
-  // The transcript can't be read: the digest must come from the shard.
   await fsp.chmod(file, 0o000);
   const reading = createDigestScanner(opts);
   try {
@@ -189,7 +180,6 @@ test('a version 2 shard (one file, rows as arrays) is read and converted without
   assert.equal(JSON.parse(await fsp.readFile(path.join(cacheDir, name), 'utf8')).v, 3, 'converted');
   assert.deepEqual(JSON.parse(await fsp.readFile(path.join(cacheDir, stateName), 'utf8')).state, state, 'state moved to its own file');
 
-  // The converted state still tails the file.
   await fsp.appendFile(file, claudeText);
   const tail = createDigestScanner(opts);
   const whole = createDigestScanner({ ...opts, cacheDir: null });
@@ -213,7 +203,6 @@ test('a scan with other extra folders does not join the running one', async () =
   const scanner = createDigestScanner({ cacheDir: null, home: dir, env: { HOME: dir }, platform: 'linux', threads: 0 });
   try {
     const running = scanner.scan();
-    // A folder added while the first scan runs, asked for with a narrower range.
     const wider = scanner.scan({ extra: { claude: [extraDir], codex: [] }, since: 1 });
     assert.equal((await running).total, 1);
     assert.equal((await wider).total, 2);

@@ -1,7 +1,5 @@
-// Price book: keeps the catalog in use current. Sync reads the two public price files, diffs them
-// against the catalog, and holds the diff in memory until the user applies rows from it. Applied rows
-// go to the overlay file. The overrides file belongs to the user and is only read. This is the only
-// src/ module that calls fetch.
+// Keeps the catalog current: Sync diffs the public price files against it; applied rows go to the overlay file.
+// The user's overrides file is only read. The only src/ module that calls fetch.
 import { randomUUID } from 'node:crypto';
 import * as nodeFs from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -17,16 +15,13 @@ const USER_AGENT = 'usage-insights';
 const OVERLAY_FILE = 'price-overlay-v1.json';
 const OVERRIDES_FILE = 'price-overrides.json';
 const WRITE = 'cacheWrite.';
-// The sources in the order sync reports them. `key` is the diff row field each one fills.
 const SOURCES = [
   { name: 'litellm', key: 'litellm', url: LITELLM_URL, parse: parseLiteLLM },
   { name: 'models.dev', key: 'modelsdev', url: MODELSDEV_URL, parse: parseModelsDev },
 ];
 const NO_OVERRIDES = { stamp: 'none', file: null, data: null, models: 0, aliases: 0, problems: [] };
 
-// Options: fs (readFile, writeFile, rename, unlink, mkdir, stat), fetch, dir (the cache directory;
-// without it there is no overlay or overrides and writes fail), bundled, now, log, timeoutMs per
-// source and maxBytes per reply. Returns { catalog, status, sync, preview, apply, undo, reset }.
+// Without `dir` there is no overlay or overrides and writes fail. timeoutMs is per source, maxBytes per reply.
 export function createPriceBook({
   fs = nodeFs,
   fetch,
@@ -37,13 +32,12 @@ export function createPriceBook({
   timeoutMs = 20_000,
   maxBytes = 16 << 20,
 } = {}) {
-  let overlayState = null; // { data } once the overlay is read or written
+  let overlayState = null;
   let generation = 0; // bumps on every overlay change, so the catalog is rebuilt
-  let overridesCache = null; // { stamp, state }
-  let built = null; // { key, catalog }
+  let overridesCache = null;
+  let built = null;
   let latest = null; // { id, rows }: the last sync's diff
-  // Overlay changes (apply, undo, reset) run one at a time: each reads the overlay the one before
-  // it wrote, so overlapping calls never write from the same old overlay.
+  // Overlay changes run one at a time, so overlapping calls never write from the same old overlay.
   let changing = Promise.resolve();
   const serial = (change) => (...args) => {
     const job = changing.then(() => change(...args));
@@ -51,8 +45,7 @@ export function createPriceBook({
     return job;
   };
 
-  // The catalog in effect. It is rebuilt only when the overlay or the overrides file changed; the
-  // overrides file is stat'ed on every call, the overlay is kept in memory after its first read.
+  // Rebuilt only when the overlay or overrides changed; overrides are stat'ed every call, the overlay read once.
   async function current() {
     const gen = generation;
     const overlay = await loadOverlay();
@@ -150,8 +143,6 @@ export function createPriceBook({
     return json;
   }
 
-  // One source: its parsed adapter output, or the reason it failed. A source that parses to no
-  // models counts as failed.
   async function pull(source) {
     let data = null;
     let error;
@@ -190,7 +181,6 @@ export function createPriceBook({
     };
   }
 
-  // The catalog the rows would give, without writing anything. Rows already applied stay applied.
   async function preview(diffId, keys) {
     const diff = diffFor(diffId);
     const rows = chosenRows(diff, keys);
@@ -198,15 +188,13 @@ export function createPriceBook({
     return buildCatalog(bundled, overlayWith(state.overlay, rows, state.catalog, now()), state.overrides.data);
   }
 
-  // Writes the chosen rows into the overlay. The overlay in effect is kept as `previous`, so one undo
-  // restores it.
   async function apply(diffId, keys) {
     const diff = diffFor(diffId);
     const rows = chosenRows(diff, keys);
     const state = await current();
     const base = state.overlay;
     const next = overlayWith(base, rows, state.catalog, now());
-    // Re-applying rows the overlay already holds changes nothing, so `previous` keeps the state before the first apply.
+    // Re-applying rows the overlay holds changes nothing, so `previous` keeps the state before the first apply.
     if (JSON.stringify(next.entries) !== JSON.stringify(base?.entries ?? {})) {
       next.previous = base
         ? { appliedAt: base.appliedAt ?? null, sources: base.sources ?? [], entries: base.entries }
@@ -280,7 +268,6 @@ export function createPriceBook({
     if (dir === undefined) throw coded('no_cache_dir', 'no cache directory');
   }
 
-  // Temp file, then rename, so a reader never sees half an overlay.
   async function writeAtomic(file, text) {
     const tmp = `${file}.${process.pid}.tmp`;
     await fs.mkdir(dirname(file), { recursive: true });
@@ -308,7 +295,6 @@ function overridesOf(file, stamp, data, problems) {
   return { stamp, file, data, models: count(data?.models), aliases: count(data?.aliases), problems };
 }
 
-// Parses a versioned file. Anything but a JSON object with v 1 is ignored, with the reason returned.
 function parseFile(text, label) {
   let json;
   try {
@@ -321,8 +307,7 @@ function parseFile(text, label) {
   return { data: json, problem: null };
 }
 
-// Overlay rows as a new overlay on top of `base`. Entries already in the overlay keep the fields these
-// rows do not set. models.dev values are recorded with the 'manual' source, LiteLLM values with 'litellm'.
+// Overlay entries keep the fields these rows do not set. models.dev values are recorded as 'manual'.
 function overlayWith(base, rows, catalog, at) {
   const entries = structuredClone(base?.entries ?? {});
   const sources = new Set(base?.sources ?? []);
@@ -340,9 +325,8 @@ function overlayWith(base, rows, catalog, at) {
   return { v: 1, appliedAt: at.toISOString(), sources: [...sources].sort(), entries };
 }
 
-// A tier field rewrites the patch's whole tier list (an overlay's tiers replace the entry's), starting
-// from the catalog's tiers. A tier the catalog lacks starts from the base rates, so it is complete
-// even when only some of its rows are applied.
+// A tier field rewrites the patch's whole tier list, starting from the catalog's tiers. A tier the catalog
+// lacks starts from the base rates, so it is complete when only some of its rows are applied.
 function setRate(patch, field, value, current = null) {
   const tier = /^tier\.(\d+)\.(.+)$/.exec(field);
   if (tier) {
@@ -375,7 +359,6 @@ function chosenRows(diff, keys) {
   return rows;
 }
 
-// Model ids in use, with the catalog entry each one resolves to (an alias names its target).
 function inUseSet(ids, catalog) {
   const out = new Set();
   for (const id of Array.isArray(ids) ? ids : []) {
@@ -387,7 +370,6 @@ function inUseSet(ids, catalog) {
   return [...out];
 }
 
-// Reads a reply body, stopping as soon as it passes maxBytes.
 async function readCapped(response, maxBytes) {
   if (!response.body) return '';
   const reader = response.body.getReader();
@@ -410,7 +392,6 @@ function oversize(maxBytes) {
   return new Error(`reply over ${maxBytes} bytes`);
 }
 
-// The reason an error happened, in one line. A timeout says so; a failed fetch keeps its cause.
 function describe(error) {
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'timed out';
   const cause = error?.cause?.message;

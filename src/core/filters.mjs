@@ -1,6 +1,4 @@
-// Use case: the record filters the Report and the breakdown analysis share (range in local days,
-// providers, hosts, scope). Pure: no Node built-in or Orca imports. Records with a bad timestamp or
-// a day after `now` belong to no window, so they are skipped.
+// Pure: no Node built-in or Orca imports. Records with a bad timestamp or a day after `now` belong to no window.
 
 import { asTable } from './table.mjs';
 import { localClock } from './time.mjs';
@@ -9,13 +7,8 @@ const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
 const RANGE_DAYS = new Map([['7d', 7], ['30d', 30], ['90d', 90]]);
 
-// Keeps the records that pass every filter, in input order. `records` is a RecordTable (or an
-// array of plain records, converted). Kept rows come back as columns: `rows` (row positions in
-// `table`), `days` (local day numbers) and `slots` (local hour of the week, 0 is Sunday 00:00), with
-// `count` rows used. `hostNames[id + 1]` is the host a host id stands for ('local' for none).
-// `allProviders` and `allHosts` list every value in the data, before filtering; `rowProviders` the
-// providers of the kept rows. `startDay` is the first day of the range (for 'all', the earliest kept
-// day, or today when none is kept).
+// `slots` is the local hour of the week (0 is Sunday 00:00). `hostNames[id + 1]` is 'local' for no host.
+// `allProviders` and `allHosts` are before filtering. For 'all', `startDay` is the earliest kept day, or today.
 export function selectRecords(records, { range, now = new Date(), providers, hosts, scope } = {}) {
   if (range !== 'all' && !RANGE_DAYS.has(range)) throw new RangeError(`Unknown range: ${range}`);
   const table = asTable(records);
@@ -86,31 +79,26 @@ export function selectRecords(records, { range, now = new Date(), providers, hos
   return { table, rows, days, slots, count, hostNames, today, startDay, allProviders, allHosts, rowProviders };
 }
 
-// Whole local days since the epoch for a timestamp (Date, number or string), or null when it does
-// not parse. Day arithmetic stays in whole days, so DST never shifts it.
+// Null when it does not parse. Day arithmetic stays in whole days, so DST never shifts it.
 function localDay(ts) {
   const date = new Date(ts);
   if (Number.isNaN(date.getTime())) return null;
   return dayNumber(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-// True when the cwd is one of the scope roots or sits under one at a segment boundary ('/a/b' is not
-// under '/a/bc'). Empty cwds never match. With no scope, every cwd is in.
+// At a segment boundary ('/a/b' is not under '/a/bc'). Empty cwds never match; with no scope every cwd is in.
 export function inScope(cwd, scope) {
   return scopeMatcher(scope)(cwd);
 }
 
-// The ISO date (YYYY-MM-DD, UTC) of a day number from localDay.
 export function dayKey(day) {
   return new Date(day * DAY_MS).toISOString().slice(0, 10);
 }
 
-// Records without a host (and empty ones) belong to this machine.
 function hostOf(record) {
   return record.host || 'local';
 }
 
-// Predicate for a scope: every cwd passes without a scope. Roots are normalized once per predicate.
 function scopeMatcher(scope) {
   if (!scope) return () => true;
   const fold = Boolean(scope.caseInsensitive);
@@ -122,13 +110,11 @@ function scopeMatcher(scope) {
   };
 }
 
-// Forward slashes, no trailing slashes, optionally lower-cased. Roots and cwds both go through it.
 function normalizePath(path, fold) {
   const slashed = path.replaceAll('\\', '/').replace(/\/+$/, '');
   return fold ? slashed.toLowerCase() : slashed;
 }
 
-// Whole days since the epoch for a local calendar date.
 function dayNumber(year, monthIndex, date) {
   return Date.UTC(year, monthIndex, date) / DAY_MS;
 }

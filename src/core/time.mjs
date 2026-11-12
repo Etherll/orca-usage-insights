@@ -1,12 +1,8 @@
-// Time helpers shared by the record store and the filters: timestamps to epoch ms, and epoch ms to
-// local wall-clock ms. Pure: no Node built-in or Orca imports.
+// Timestamps to epoch ms and to local wall-clock ms. Pure: no Node built-in or Orca imports.
 
 const HOUR_MS = 3_600_000;
 
-// A parser from timestamp (string, number or Date) to epoch ms, NaN when it does not parse: always
-// the same answer as new Date(ts).getTime(). Transcripts write 'YYYY-MM-DDTHH:MM:SS.sssZ', and
-// consecutive records mostly share the hour, so that shape is read digit by digit on top of the
-// last hour parsed; any other shape, or a field out of range, goes to Date.parse.
+// Same answer as new Date(ts).getTime(); the transcript shape is read digit by digit from the last hour parsed.
 const TAIL_DIGITS = [14, 15, 17, 18, 20, 21, 22];
 const HEAD_DIGITS = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12];
 export function timestampParser() {
@@ -36,10 +32,7 @@ export function timestampParser() {
   };
 }
 
-// A converter from epoch ms to local wall-clock ms (local time read as UTC), so local days and hours
-// are plain division. The zone offset is looked up once per hour and reused for the records in that
-// hour; an hour with an offset change in it (DST) asks the Date for each record. Each call gets a
-// fresh memo, so a zone change between calls is picked up.
+// Local time read as UTC. The offset is looked up once per hour (per record in an hour with a DST change).
 export function localClock() {
   const offsets = new Map();
   return (ms) => {

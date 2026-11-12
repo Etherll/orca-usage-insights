@@ -6,8 +6,7 @@ import { DEFAULT_CATALOG, estimateCostUsd, priceFor } from '../src/core/pricing.
 
 const KINDS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 
-// [model, [input, output, cacheRead, cacheWrite] USD per 1M]. Each is priced at a prompt below
-// the first tier, so these are base rates; cacheWrite is the 5-minute rate.
+// [model, [input, output, cacheRead, cacheWrite] USD per 1M] at base rates; cacheWrite is the 5-minute rate.
 const CASES = [
   ['claude-fable-5-1', [10, 50, 0.25, 12.5]],
   ['claude-mythos-5-1-20261001', [10, 50, 0.25, 12.5]],
@@ -23,7 +22,6 @@ const CASES = [
   ['claude-fable-5-2', [8, 40, 0.2, 10]],
 ];
 
-// Old ids and what they resolve to now. Ids the catalog does not bundle resolve to null.
 const OLD_IDS = [
   ['claude-fable-5-1', 'claude-fable-5-1'],
   ['claude-mythos-5-1-20261001', 'claude-mythos-5-1'],
@@ -69,13 +67,11 @@ test('claude-haiku-5-5 base rates up to 100k, tier rates over 100k', () => {
   KINDS.forEach((kind, i) => {
     const small = { model: 'claude-haiku-5-5', input: 0, output: 0, cacheRead: 0, cacheWrite: 0, [kind]: 99_999 };
     assert.ok(Math.abs(estimateCostUsd(small) - (99_999 * base[i]) / 1e6) < 1e-12, `base ${kind}`);
-    // The band counts input, cache reads and cache writes, not output. An input prompt over 100k
-    // moves the request to the tier, so that input adds its own tier cost to the 1M of `kind`.
+    // The band counts input, cache reads and writes, not output: the 100k+ input moves the request to the tier.
     const large = { model: 'claude-haiku-5-5', input: 100_001, output: 0, cacheRead: 0, cacheWrite: 0, [kind]: 1_000_000 };
     const extra = kind === 'input' ? 0 : (100_001 * tier[0]) / 1e6;
     assert.ok(Math.abs(estimateCostUsd(large) - (tier[i] + extra)) < 1e-9, `tier ${kind}`);
   });
-  // Exactly 100k is not over 100k: base rates.
   const boundary = { model: 'claude-haiku-5-5', input: 100_000, output: 0, cacheRead: 0, cacheWrite: 0 };
   assert.ok(Math.abs(estimateCostUsd(boundary) - 0.01) < 1e-12);
   const over = { model: 'claude-haiku-5-5', input: 100_001, output: 0, cacheRead: 0, cacheWrite: 0 };

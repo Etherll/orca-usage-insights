@@ -119,7 +119,6 @@ function codexExpected(rows) {
     [arrival('tools', T.webSearchTool, 26, { callId: 'call_7' })],
     [call('call_8', T.node, 'shell')],
     [arrival('tools', T.node, 20, { callId: 'call_8' })],
-    // An output whose call id was never seen: no call to resolve, so no target.
     [arrival('tools', null, 26, { callId: 'call_unknown' })],
     [reply(31)],
     [],
@@ -145,8 +144,6 @@ function timestampOf(line) {
   }
 }
 
-// Each line with the byte offset it starts at, as a scanner passes them: offsets advance by the
-// line's UTF-8 length plus one newline byte.
 function rowsOf(text) {
   let offset = 0;
   return text.replace(/\n$/, '').split('\n').map((line) => {
@@ -213,7 +210,6 @@ function assertShape(event, row) {
       assert.deepEqual(keysOf(rest), ['bucket', 'bytes', 'chars', 'images', 'offset', 't', 'target', 'ts']);
       assert.ok(BUCKETS.includes(event.bucket), event.bucket);
       if (callId !== undefined) assert.ok(callId.length > 0);
-      // A tool result whose call is unknown has no target. fold.mjs files it under unattributed.
       if (event.target === null) assert.equal(event.bucket, 'tools');
       else assertTarget(event.target);
       for (const key of ['chars', 'images']) assertCount(event[key]);
@@ -238,7 +234,6 @@ function requestsOf(lineEvents) {
   return lineEvents.flat().filter((event) => event.t === 'request');
 }
 
-// The adapter's request events and the records parser's records describe the same usage.
 function assertSameRequests(requests, records) {
   assert.equal(records.length, requests.length);
   const fromEvent = (event) => ({ ts: event.ts, model: event.model, ...event.usage });

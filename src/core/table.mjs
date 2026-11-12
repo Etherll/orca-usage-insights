@@ -1,17 +1,7 @@
-// Usage records as columns. One RecordTable holds rows of the same fields a usage record has
-// (key, provider, ts, model, project, sessionId, input, output, cacheRead, cacheWrite,
-// cacheWrite1h, cwd, host), stored as typed arrays plus a dictionary of distinct strings, so 400k
-// records cost a few dozen MB instead of an object each. Pure: no Node built-in or Orca imports.
-//
-// - ms: the timestamp as epoch ms (Float64Array; NaN when it did not parse).
-// - input .. cacheWrite1h: token counts. Uint32Array while every count is a whole number that fits,
-//   else Float64Array (a column switches the first time a count doesn't fit).
-// - provider .. host: Int32Array ids in the table's NameDict; -1 when the record has no such string.
-// - keys: the dedupe key per row, or undefined.
-//
-// A table grows by push; replace rewrites a row in place and keeps its key. `version` counts both,
-// and `replaced` lists the rows replaced since `epoch` began, so a reader can tell what changed
-// since it last looked (see record-store.mjs). Cache and thread encoding is in table-codec.mjs.
+// Usage records as columns: typed arrays plus a dictionary of distinct strings instead of an object per
+// record. Pure: no Node built-in or Orca imports. ms is epoch ms, NaN when it did not parse. Counts are
+// Uint32Array until a count is not a whole u32, then Float64Array. Name ids are -1 for no string.
+// replace keeps the row's key. `version` counts pushes and replaces; `replaced` lists rows replaced since `epoch`.
 
 import { timestampParser } from './time.mjs';
 
@@ -19,19 +9,16 @@ export const TOKEN_FIELDS = Object.freeze(['input', 'output', 'cacheRead', 'cach
 export const NAME_FIELDS = Object.freeze(['provider', 'model', 'project', 'sessionId', 'cwd', 'host']);
 export const COLUMNS = Object.freeze(['ms', ...TOKEN_FIELDS, ...NAME_FIELDS]);
 const U32_MAX = 0xffffffff;
-// After this many replaced rows the log starts over under a new epoch; a reader that saw the old
-// epoch rereads the table whole.
+// Past this many replaced rows the log restarts under a new epoch; a reader on the old one rereads the table.
 const REPLACED_LOG_MAX = 4096;
 
-// Distinct strings and their ids. Ids never change and strings are never removed, so tables that
-// share a dictionary share ids and can be copied without translating them.
+// Ids never change and strings are never removed, so tables sharing a dictionary copy ids untranslated.
 export class NameDict {
   constructor(list = []) {
     this.list = list;
-    this.index = null; // string -> id, built on first use
+    this.index = null;
   }
 
-  // The id of a string, adding it the first time; -1 for anything but a string.
   id(value) {
     if (typeof value !== 'string') return -1;
     let index = this.index;
@@ -72,12 +59,10 @@ export class RecordTable {
     this.replaced = [];
   }
 
-  // The dictionary's strings: names[id] is the string an id stands for.
   get names() {
     return this.dict.list;
   }
 
-  // Appends a row and returns its position. Strings are interned; anything else is stored as absent.
   push(key, ms, provider, model, project, sessionId, cwd, host, input, output, cacheRead, cacheWrite, cacheWrite1h) {
     const i = this.length;
     if (i === this.ms.length) this.grow(Math.max(16, i * 2));
@@ -88,7 +73,6 @@ export class RecordTable {
     return i;
   }
 
-  // Replaces row i in place (its key stays).
   replace(i, ms, provider, model, project, sessionId, cwd, host, input, output, cacheRead, cacheWrite, cacheWrite1h) {
     this.write(i, ms, provider, model, project, sessionId, cwd, host, input, output, cacheRead, cacheWrite, cacheWrite1h);
     this.version++;
@@ -134,7 +118,6 @@ export class RecordTable {
     }
   }
 
-  // Moves the table onto another dictionary, translating its ids once.
   rebase(dict) {
     if (dict === this.dict) return this;
     const from = this.dict.list;
@@ -148,13 +131,11 @@ export class RecordTable {
     return this;
   }
 
-  // The string a name column holds at row i, or undefined.
   nameAt(field, i) {
     const id = this[field][i];
     return id < 0 ? undefined : this.dict.list[id];
   }
 
-  // Row i in the plain record shape. `ts` is the ISO form of `ms`; absent strings are left out.
   recordAt(i) {
     const record = {};
     if (this.keys[i] !== undefined) record.key = this.keys[i];
@@ -181,9 +162,7 @@ export class RecordTable {
   }
 }
 
-// A table from plain records ({ key, provider, ts, model, ... }), in order. `ts` may be a string,
-// number or Date; it is stored as epoch ms. For callers that build records by hand.
-// `dict` is ignored unless it is a NameDict, so tableFromRecords works as a map callback.
+// `ts` may be a string, number or Date. `dict` is ignored unless a NameDict, so this works as a map callback.
 export function tableFromRecords(records, dict) {
   const table = new RecordTable(records.length, dict instanceof NameDict ? dict : new NameDict());
   const parse = timestampParser();
@@ -194,8 +173,6 @@ export function tableFromRecords(records, dict) {
   return table;
 }
 
-// A table as is; an array of plain records converted (once per array, so the same array gives
-// the same table).
 const converted = new WeakMap();
 export function asTable(records) {
   if (records instanceof RecordTable) return records;
@@ -205,7 +182,6 @@ export function asTable(records) {
   return table;
 }
 
-// Distinct values of a name column, in order of first appearance.
 export function distinctNames(table, field) {
   const seen = new Uint8Array(table.names.length);
   const out = [];

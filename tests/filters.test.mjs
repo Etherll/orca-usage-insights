@@ -47,7 +47,6 @@ test('timestampParser gives what Date does, for transcript and odd timestamps', 
     assert.ok(same(timestampParser()(value), new Date(value).getTime()), String(value));
   }
 
-  // Mutated transcript timestamps: any character anywhere, in runs that share an hour.
   const next = random(7);
   const chars = '0123456789-:.TZtz +x';
   let parser = timestampParser();

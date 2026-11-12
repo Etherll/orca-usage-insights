@@ -1,6 +1,5 @@
 // Regenerates src/core/catalog-data.mjs, the bundled price table, from a LiteLLM price snapshot.
 // Usage: node scripts/prices.mjs <litellm.json> [--write]
-// Without --write it prints the diff against the current file. It reads only the file it is given.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { bundledSubset, inBundleScope, parseLiteLLM, today } from '../src/core/price-sources.mjs'
@@ -62,7 +61,6 @@ function render(models) {
   return lines.join('\n')
 }
 
-// Source text for a catalog value: numbers as-is, strings single-quoted, objects with bare identifier keys.
 function lit(value) {
   if (value === null) return 'null'
   if (typeof value === 'number') return String(value)
@@ -72,7 +70,6 @@ function lit(value) {
   return fields.length ? `{ ${fields.join(', ')} }` : '{}'
 }
 
-// Line diff with `-` and `+` prefixes, from a longest-common-subsequence table.
 function lineDiff(a, b) {
   const n = a.length
   const m = b.length

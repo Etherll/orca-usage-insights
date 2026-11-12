@@ -1,6 +1,4 @@
-// The one place that lists and reads transcript files. The records scanner (scan.mjs) and the
-// digest scanner (digest-scan.mjs) use it and keep only their own consumer and cache.
-// A consumer is { push(text), state() } and receives the marked lines of a file in order.
+// The one place that lists and reads transcript files, for the records and digest scanners.
 import { PROVIDERS } from '../core/providers.mjs';
 import { markedLines } from './lines.mjs';
 import { pathFor } from './paths.mjs';
@@ -13,11 +11,8 @@ const CHUNK_BYTES = 4 << 20;
 const TRANSCRIPT = /\.jsonl(\.zst)?$/i;
 const COMPRESSED = /\.zst$/i;
 
-// Lists the transcripts under the default roots and the extra folders. Every file path is
-// canonical: top-level dirs are resolved once, and so are symlinked files, so a physical file is
-// listed once even when two roots reach it through a symlink. Default roots come first and own a
-// file that an extra folder also reaches. `owners` maps each file an extra folder owns to that
-// folder's status entry. Read failures go to run.errors and run.failed.
+// Paths are canonical (top-level dirs and symlinked files resolved), so a file two roots reach is listed once.
+// Default roots own a file an extra folder also reaches; `owners` maps each extra-folder file to its status.
 export async function listTranscripts({ fs, platform = process.platform, roots, extra, run }) {
   const p = pathFor(platform);
   const out = [];
@@ -50,8 +45,7 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
     }
   };
 
-  // Symlinked directories are not Dirent directories, so they are never followed. Only the
-  // top-level dirs (resolved by canonicalDir) can be symlinks.
+  // Symlinked directories are not Dirent directories, so only the resolved top-level dirs can be symlinks.
   async function walk(dir, found) {
     let entries;
     try {
@@ -99,7 +93,6 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
       try {
         st = await fs.stat(top);
       } catch (error) {
-        // The folder's own status carries this warning; it is not counted as a file error.
         Object.assign(entry, { state: 'warning', message: `Cannot open folder (${error?.code ?? 'error'})` });
         continue;
       }
@@ -107,8 +100,6 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
         Object.assign(entry, { state: 'warning', message: 'Not a folder' });
         continue;
       }
-      // A folder that holds the provider's main subdir (projects, sessions) is read like a default
-      // root. Any other folder is read whole.
       const asRoot = await isDirectory(fs, p.join(top, provider.subdirs[0]));
       for (const dir of asRoot ? provider.subdirs.map((sub) => p.join(top, sub)) : [top]) {
         const found = await walkTop(dir);
@@ -122,14 +113,10 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
   return { found: out, owners, folders };
 }
 
-// Reads one transcript into the consumer it is given. Stats first (or takes the caller's stat): an
-// unchanged key costs nothing more. A plain file that only grew is tailed from prior.offset. Anything else is read whole: on a
-// parse thread when there is a pool and the file is at most maxWholeBytes, else inline.
-// Returns what the caller stores: `consumer` when parsed here, `state` when a thread parsed it.
-// A failure while reading returns key null (the next scan reads the file whole) with error: true.
-// Failures before reading starts (stat, open) throw. A compressed file that decompresses past the cap
-// is skipped as too large with its key; pass that key back as `oversizedKey` and the file is not
-// decompressed again until it changes.
+// An unchanged key costs only the stat. A plain file that only grew is tailed from prior.offset; anything
+// else is read whole, on a parse thread when there is a pool and size <= maxWholeBytes.
+// A read failure returns key null with error: true; stat or open failures throw. A .zst over the cap
+// returns its key: pass it back as `oversizedKey` and it is not decompressed again until it changes.
 export async function readTranscript({
   fs,
   file,
@@ -161,8 +148,6 @@ export async function readTranscript({
   let consumer = null;
   let whole = false;
   try {
-    // Size grew with no older mtime, and the byte before the stored offset ends a line: only the
-    // bytes past the offset are new. Compressed files are never tailed.
     if (prior && prior.key !== null && prior.consumer && !file.compressed && canTail(prior.key, st) && (await endsLine(fh, prior.offset))) {
       consumer = prior.consumer;
       const offset = await readChunks(fh, consumer, markers, prior.offset, st.size, null, prior.onAdvance);
@@ -170,7 +155,6 @@ export async function readTranscript({
     }
 
     whole = true;
-    // A parse thread opens and reads the file itself, in chunks: nothing is copied between threads.
     if (pool && st.size > 0) {
       try {
         const { state, offset } = await pool.parse({
@@ -185,7 +169,6 @@ export async function readTranscript({
         return { status: 'read', key, offset, whole, consumer: null, state };
       } catch (error) {
         if (error?.message === TOO_LARGE) return { status: 'skipped', reason: 'too-large', key };
-        // The pool could not take it: parse inline below.
       }
     }
 
@@ -201,26 +184,20 @@ export async function readTranscript({
   }
 }
 
-// Reads a whole file of `size` bytes into the consumer and returns the offset read up to. Plain
-// files go in 4 MiB chunks cut at LF; compressed ones are decompressed in chunks. Used on the
-// calling thread and on parse threads.
-// scratch: { buf } a parse thread reuses for every file it reads. Freeing and allocating a large
-// read buffer per file leaves glibc holding hundreds of MB it never returns to the OS (measured).
+// scratch.buf is reused per parse thread: allocating a large buffer per file leaves glibc holding
+// memory it never returns to the OS.
 export async function readWhole(fh, size, compressed, markers, consumer, scratch = null) {
   if (!compressed) return readChunks(fh, consumer, markers, 0, size, scratch);
   await readLines(fh, size, (lines) => feed(consumer, lines, markers), scratch ?? {});
   return size;
 }
 
-// A buffer of at least `size` bytes: the scratch one, grown when needed, or a new one.
 function bufferFor(size, scratch) {
   if (!scratch) return Buffer.allocUnsafeSlow(size);
   if (!scratch.buf || scratch.buf.length < size) scratch.buf = Buffer.allocUnsafeSlow(Math.max(size, (scratch.buf?.length ?? 0) * 2));
   return scratch.buf;
 }
 
-// Whole lines into a consumer: raw bytes when it picks its own lines (pushBytes) or takes every
-// line (pushBuffer), else the text of the marked lines.
 function feed(consumer, lines, markers) {
   if (consumer.pushBytes) return consumer.pushBytes(lines);
   if (!markers && consumer.pushBuffer) return consumer.pushBuffer(lines);
@@ -228,23 +205,17 @@ function feed(consumer, lines, markers) {
   if (text) consumer.push(text);
 }
 
-// Text of the marked lines in a whole file's bytes. A last line with no LF still counts.
 export function fileText(buf, markers) {
   const ended = buf.length === 0 || buf[buf.length - 1] === LF ? buf : Buffer.concat([buf, LF_BYTES]);
   return linesText(ended, ended.length, markers);
 }
 
-// Marked lines of buf[0, end), or every line when there are no markers.
 export function linesText(buf, end, markers) {
   return markers ? markedLines(buf, end, markers) : buf.toString('utf8', 0, end);
 }
 
-// Reads [from, end) in chunks. Each chunk is cut at its last LF, so the consumer only sees whole
-// lines and the returned offset advances in the same step as the push. onAdvance(offset), when
-// given, hears each new offset right after its push, so a caller that saves the consumer's state
-// mid-read can save the offset that state belongs to.
-// One buffer for the whole file: the bytes after the last LF move to its start before the next
-// read, and it doubles when one line is longer than it.
+// Each chunk is cut at its last LF. onAdvance(offset) hears each offset right after its push, so a
+// mid-read save stores the offset the consumer's state belongs to.
 async function readChunks(fh, consumer, markers, from, end, scratch = null, onAdvance = null) {
   let pos = from;
   let offset = from;
@@ -276,8 +247,7 @@ async function readChunks(fh, consumer, markers, from, end, scratch = null, onAd
   return offset;
 }
 
-// True when offset is 0 or the byte before it is LF. The scanner only stores offsets that follow
-// an LF, so any other byte means the file was replaced under the stored offset.
+// The scanner stores only offsets that follow an LF, so any other byte means the file was replaced.
 async function endsLine(fh, offset) {
   if (offset === 0) return true;
   const probe = Buffer.alloc(1);
@@ -301,7 +271,6 @@ async function canonicalDir(fs, dir) {
   }
 }
 
-// Key used to decide that two paths name the same file or directory.
 function identityOf(file, platform) {
   return platform === 'win32' ? file.toLowerCase() : file;
 }

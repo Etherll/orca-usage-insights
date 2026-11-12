@@ -84,7 +84,6 @@ test('encode gives the same table back, as cache strings and as typed arrays', (
   const binary = encodeTable(table, { binary: true });
   const copied = structuredClone(binary, { transfer: transferList(binary) });
   assert.deepEqual(decodeTable(copied).toRecords(), table.toRecords());
-  // Narrow on disk, wide in memory.
   const encoded = encodeTable(table);
   assert.match(encoded.provider, /^n8:/);
   assert.match(encoded.model, /^n16:/);

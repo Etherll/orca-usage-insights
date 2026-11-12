@@ -11,7 +11,6 @@ const file = (key) => ({ key, label: key.split('/').pop(), kind: 'file' });
 const arrival = (target, chars, extra = {}) => ({ t: 'arrival', ts: at(0), bucket: 'tools', target, chars, images: 0, offset: 100, bytes: chars, ...extra });
 const total = (u) => u.input + u.cacheRead + u.cacheWrite + u.output;
 
-// Token sums of a digest's rows, by field, optionally filtered.
 function sums(digest, pick = () => true) {
   const out = { input: 0, cacheRead: 0, cw5m: 0, cw1h: 0, output: 0 };
   for (const row of digest.rows) {
@@ -28,8 +27,6 @@ const rowTotal = (d, pick) => Object.values(sums(d, pick)).reduce((a, b) => a + 
 const bucketOf = (d, name) => (row) => row[3] === BUCKETS.indexOf(name);
 const targetOf = (d, key) => (row) => d.targets[row[4]][0] === key;
 
-// Feeds events one at a time and checks after every request that the new rows add up to exactly
-// that request's usage, field by field.
 function feed(events, info = { harness: 'claude', host: 'local' }) {
   const fold = createFold(info, null);
   let before = sums(fold.digest());
@@ -80,7 +77,6 @@ test('a single tool result takes all new tokens, measured; the previous output g
     req(0, usage(10, 0, 5000, 200)),
     { t: 'call', id: 'c1', target: a, op: 'read' },
     arrival(a, 4000, { callId: 'c1' }),
-    // ctx grows 5010 -> 6210: 200 replies + 1000 new
     req(1, usage(10, 5010, 1190, 50)),
   ]).digest();
   assert.equal(rowTotal(d, (r) => targetOf(d, 'src/a.mjs')(r) && r[5] === 0), rowTotal(d, targetOf(d, 'src/a.mjs')));
@@ -107,7 +103,7 @@ test('several results share new tokens by characters and are marked est', () => 
   assert.equal(ra.cw5m, 300);
   assert.equal(rb.cw5m, 100);
   assert.ok(d.rows.filter(targetOf(d, 'a')).every((r) => r[5] === 1));
-  assert.equal(d.splitTokens, 400 + 0); // only the est rows count
+  assert.equal(d.splitTokens, 400 + 0);
 });
 
 test('images weigh 6,000 chars', () => {
@@ -147,7 +143,6 @@ test('a compaction resets the resident map and splits ctx over the summary', () 
   ]).digest();
   const s = sums(d, targetOf(d, 'summary'));
   assert.equal(s.cw5m, 3000);
-  // after the reset, reads go to what was rebuilt, not to the old file
   assert.equal(s.cacheRead, 3000);
 });
 

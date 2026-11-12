@@ -1,28 +1,19 @@
-// Digests as analyze reads them: the rows in one typed array instead of an array per row, so the
-// Breakdown's 400k+ rows cost a few MB of buffer instead of tens of MB of heap. Pure: no Node
-// built-ins.
-//
-// A row is ROW_WIDTH numbers: [slot, model, band, bucket, target, est, repeat, input, cacheRead,
-// cacheWrite5m, cacheWrite1h, output] (see fold.mjs digest()). Row r starts at rows[r * ROW_WIDTH].
-// Uint32Array while every value is a whole number that fits, else Float64Array; a missing value
-// is NaN, which every reader treats as it treated undefined.
-//
-// Digests are treated as immutable: a digest is packed, and priced, once per object.
-//
-// On disk (digest-scan.mjs shards) packed rows are '<u32|f64>:<base64>' with `rowCount`.
+// Digest rows in one typed array instead of an array per row. Pure: no Node built-ins.
+// A row is ROW_WIDTH numbers [slot, model, band, bucket, target, est, repeat, input, cacheRead, cacheWrite5m,
+// cacheWrite1h, output] (fold.mjs digest()). Uint32Array while every value fits, else Float64Array; a missing
+// value is NaN. Digests are immutable: packed and priced once per object.
+// On disk (digest-scan.mjs shards) rows are '<u32|f64>:<base64>' with `rowCount`.
 
 import { fromBase64, toBase64 } from '../base64.mjs';
 
 export const ROW_WIDTH = 12;
 const U32_MAX = 0xffffffff;
-const packed = new WeakMap(); // plain digest -> packed copy
+const packed = new WeakMap();
 
 export function isPacked(digest) {
   return ArrayBuffer.isView(digest?.rows);
 }
 
-// The digest with its rows packed (`rows` typed, `rowCount` set); a packed digest as is. Anything
-// without a rows array is returned unchanged.
 export function packDigest(digest) {
   if (!digest || isPacked(digest) || !Array.isArray(digest.rows)) return digest;
   let out = packed.get(digest);
@@ -45,13 +36,11 @@ export function packDigest(digest) {
   return out;
 }
 
-// A packed digest as JSON-safe data: rows as one base64 string.
 export function encodeDigest(digest) {
   const d = packDigest(digest);
   return { ...d, rows: `${d.rows instanceof Uint32Array ? 'u32' : 'f64'}:${toBase64(d.rows)}` };
 }
 
-// The packed digest from encodeDigest's output. Throws on malformed rows.
 export function decodeDigest(encoded) {
   const text = encoded?.rows;
   const n = encoded?.rowCount;

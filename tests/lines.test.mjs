@@ -18,7 +18,6 @@ function claude(id, { text = 'hi', usage = { input_tokens: 3, output_tokens: 5 }
 const codex = (type, payload) => JSON.stringify({ timestamp: T, type, payload });
 const tokens = (n) => codex('event_msg', { type: 'token_count', info: { total_token_usage: { total_tokens: n }, last_token_usage: { input_tokens: n, output_tokens: 1 } } });
 
-// The byte reader must give what the text parser gives on the marked lines of the same bytes.
 function both(kind, buf) {
   const text = createRecordsConsumer(kind, CTX);
   text.push(markedLines(buf, buf.length, MARKER_BYTES[kind]));
@@ -50,7 +49,7 @@ test('Codex lines from bytes match the text parser: markers count in the head on
     codex('turn_context', { model: 'gpt-5' }),
     tokens(10),
     tokens(10),
-    ' '.repeat(250) + tokens(20), // marker past the head
+    ' '.repeat(250) + tokens(20),
     codex('response_item', { content: 'token_count' }),
     tokens(30) + '\r',
     tokens(40).slice(0, -3),

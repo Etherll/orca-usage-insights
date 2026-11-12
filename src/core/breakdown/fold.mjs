@@ -1,7 +1,5 @@
-// Fold: turns one transcript's events into token rows that say what each request paid for.
-// Tokens only, no prices: analyze prices the rows later, so a price change never re-reads a file.
-// Every request's rows add up exactly to its usage tokens (integer split by largest remainder).
-// State and digest are plain JSON and hold no transcript text, only sizes, offsets and targets.
+// Turns one transcript's events into token rows, tokens only, so a price change never rereads a file. Each
+// request's rows add up exactly to its usage. State and digest are plain JSON with no transcript text.
 import { bandOf } from '../bands.mjs';
 
 export const BUCKETS = Object.freeze(['startup', 'tools', 'messages', 'injected', 'replies', 'compaction', 'rebuilds', 'output', 'unattributed']);
@@ -13,14 +11,10 @@ const RESIDENT_MAX = 300;
 const COMPOSITION_MAX = 30;
 const BIG_MAX = 10;
 const READS_MAX = 2000;
-// Arrivals waiting for the next request. Past this many, arrivals of the same bucket and target
-// merge, then the smallest merge into their bucket's (other), so a long run of tool results with
-// no request between them keeps the state small. Totals per target are unchanged by the first step.
 const PENDING_MAX = 2000;
 const TTL_5M = 5 * 60_000;
 const TTL_1H = 60 * 60_000;
 
-// Targets the fold makes itself, for tokens that belong to no file, command or message.
 const OWN = {
   startup: { key: 'startup', label: '(startup)', kind: 'bucket' },
   replies: { key: 'replies', label: '(replies)', kind: 'bucket' },
@@ -33,9 +27,8 @@ const OWN = {
   rebuildOther: { key: 'rebuild:other', label: 'other rewrites', kind: 'bucket' },
 };
 
-// info: { harness, host }. state: a previous state() to continue from, or null. With `adopt`, the
-// fold takes over `state` and state() returns the live state, with no copies either way: for a
-// caller that drops its own reference and reads state() only once it has stopped adding.
+// With `adopt` the fold takes over `state` and state() returns it live, with no copies: for a caller that
+// drops its reference and reads state() only once it has stopped adding.
 export function createFold(info = {}, state = null, { adopt = false } = {}) {
   const s = state ? (adopt ? state : structuredClone(state)) : fresh(info);
   return { add, state: () => (adopt ? s : structuredClone(s)), digest };
@@ -62,11 +55,10 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
         onRequest(event);
         break;
       default:
-        break; // reply and unknown events carry nothing the split needs
+        break;
     }
   }
 
-  // Repeated reads: a read of a path already read, with no edit or write since. Claude only.
   function onCall({ id, target, op }) {
     if (s.harness !== 'claude' || !target?.key) return;
     if (op === 'read') {
@@ -80,7 +72,6 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
   }
 
   function onArrival(event) {
-    // A session started from an Explain prompt is marked so analyze can keep it out of findings.
     if (event.bucket === 'messages' && !s.sawMessage) {
       s.sawMessage = true;
       if (event.explain === true) s.explain = true;
@@ -98,8 +89,6 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     if (s.pending.length > PENDING_MAX) capPending();
   }
 
-  // Merges pending arrivals of the same bucket, target and repeat flag (the largest keeps its
-  // offset, bytes and time for evidence); if that is not enough, the smallest half go to (other).
   function capPending() {
     const merge = (list, keyOf) => {
       const out = new Map();
@@ -130,8 +119,7 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     const ctx = u.input + u.cacheRead + u.cacheWrite;
     const at = Date.parse(ts);
     const time = Number.isFinite(at) ? at : null;
-    // 15-minute UTC slots: every real time-zone offset is a multiple of 15 minutes, so a slot
-    // always falls on one local day.
+    // 15-minute UTC slots: every real time-zone offset is a multiple of 15 minutes, so a slot falls on one local day.
     const slot = time === null ? 0 : Math.floor(time / SLOT_MS);
     const req = { slot, model: modelIdx(model), band: bandOf(ctx), cells: new Map() };
     const prev = s.prev;
@@ -207,8 +195,7 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     s.prev = { ctx, output: u.output, time, model: req.model, cw1h: u.cacheWrite1h };
   }
 
-  // Splits `tokens` over the pending arrivals by characters and clears them. One arrival takes
-  // all of it (measured); several share it by weight (estimated).
+  // One arrival takes all of it (measured); several share it by characters (estimated).
   function splitArrivals(tokens) {
     const arrivals = s.pending;
     s.pending = [];
@@ -231,7 +218,6 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     if (s.big.length > BIG_MAX) s.big.length = BIG_MAX;
   }
 
-  // Scales the resident entries down to `ctx` tokens in total (an unexplained shrink).
   function scaleResident(ctx) {
     const list = Object.values(s.resident);
     const shares = apportion(ctx, list.map((entry) => entry.n));
@@ -241,7 +227,6 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     });
   }
 
-  // Each token field goes to the entries by their share of tokens.
   function spread(req, entries, fields) {
     const weights = entries.map((entry) => entry.n);
     for (const [field, total] of Object.entries(fields)) {
@@ -264,8 +249,7 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     req.cells.set(key, cell);
   }
 
-  // Adds a request's cells to the rows. Per bucket, the 30 largest targets are kept and the rest
-  // merge into (other), so one request never adds an unbounded number of rows.
+  // Per bucket the 30 largest targets are kept and the rest merge into (other), so rows per request stay bounded.
   function commit(req) {
     const byBucket = new Map();
     for (const cell of req.cells.values()) {
@@ -287,7 +271,6 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     }
   }
 
-  // Keeps at most RESIDENT_MAX entries; the smallest merge into their bucket's (other) entry.
   function capResident() {
     const other = targetIdx(OWN.other);
     const list = Object.entries(s.resident).filter(([, entry]) => entry.t !== other);
@@ -323,9 +306,6 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     return i;
   }
 
-  // The digest lists only the targets its rows and big arrivals use, renumbered in their original
-  // order: the state keeps every target it has seen (a session that reads thousands of files keeps
-  // a few hundred in rows), and the digest is what stays in memory and in the shard.
   function digest() {
     const rows = Object.entries(s.rows)
       .map(([key, v]) => [...key.split('|').map(Number), ...v])
@@ -396,8 +376,6 @@ function cleanUsage(usage = {}) {
   return { input: n(usage.input), output: n(usage.output), cacheRead: n(usage.cacheRead), cacheWrite, cacheWrite1h, cw5m: cacheWrite - cacheWrite1h, cw1h: cacheWrite1h };
 }
 
-// Splits an integer total over weights so the parts are integers that add up to the total:
-// floors first, then the remainder by largest fraction (earlier index on ties).
 export function apportion(total, weights) {
   const out = weights.map(() => 0);
   if (total <= 0 || weights.length === 0) return out;

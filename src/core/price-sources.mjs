@@ -22,7 +22,6 @@ const LITELLM_SLOTS = {
   cache_creation_input_token_cost_above_1hr: 'write1h',
 };
 
-// Lower-cases an id and strips one provider prefix and any version or date suffixes.
 export function normalizeModelId(id) {
   let s = String(id).toLowerCase().replace(PREFIX, '');
   let stripped;
@@ -30,19 +29,15 @@ export function normalizeModelId(id) {
   return s;
 }
 
-// Local calendar date as YYYY-MM-DD.
 export function today(now = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
-// Models the generator bundles: every anthropic id, plus the GPT-5.6 and GPT-6 families.
 export function inBundleScope(entry) {
   return entry.provider === 'anthropic' || (entry.provider === 'openai' && /^gpt-(5\.6|6)/.test(entry.id));
 }
 
-// Filters to the bundled models, drops a dated id (`-YYYYMMDD`) whose undated id has the same
-// rates, and sorts by id.
 export function bundledSubset(entries) {
   const kept = entries.filter(inBundleScope);
   const byId = new Map(kept.map((e) => [e.id, e]));
@@ -54,7 +49,6 @@ export function bundledSubset(entries) {
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-// parseLiteLLM(json, { ids, asOf, source }) returns { entries, unknownFields, errors }.
 export function parseLiteLLM(json, { ids, asOf = today(), source = 'litellm' } = {}) {
   const wanted = wantedSet(ids);
   const entries = [];
@@ -71,8 +65,7 @@ export function parseLiteLLM(json, { ids, asOf = today(), source = 'litellm' } =
   return { entries, unknownFields, errors };
 }
 
-// parseModelsDev(json, { ids, asOf, source }) returns { entries, errors }. The 1-hour write rate
-// is not in models.dev, so anthropic entries get a `5m` write only.
+// The 1-hour write rate is not in models.dev, so anthropic entries get a `5m` write only.
 export function parseModelsDev(json, { ids, asOf = today(), source = 'manual' } = {}) {
   const wanted = wantedSet(ids);
   const entries = [];
@@ -94,7 +87,7 @@ const isRate = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0;
 const round6 = (v) => Math.round(v * 1e6) / 1e6;
 const wantedSet = (ids) => (ids ? new Set(ids.map(normalizeModelId)) : null);
 
-// Reads one LiteLLM row. Values are per token; they come out per 1M, rounded to 6 decimals.
+// Values are per token; they come out per 1M, rounded to 6 decimals.
 function readLiteLLM(row, provider) {
   const base = {};
   const tiers = new Map();
@@ -123,7 +116,6 @@ function readLiteLLM(row, provider) {
   return { base, tiers: [...tiers], unknown, invalid };
 }
 
-// Reads one models.dev cost block. Values are already per 1M.
 function readModelsDev(cost) {
   const invalid = [];
   const pick = (src, prefix) => {
@@ -145,7 +137,6 @@ function readModelsDev(cost) {
   return { base, tiers, invalid };
 }
 
-// Builds one entry, or returns the reason it cannot be priced.
 function build({ id, provider, base, tiers, invalid, source, asOf }) {
   if (invalid.length) return { error: `not a finite number >= 0: ${invalid.join(', ')}` };
   const gaps = (slots) => REQUIRED.filter((k) => slots[k] === undefined);

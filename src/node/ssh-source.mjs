@@ -9,7 +9,6 @@ import { createRecordStore } from '../core/record-store.mjs';
 import { NameDict } from '../core/table.mjs';
 import { LIST_SCRIPT, createReadParser, parseListing, readScript } from './ssh-script.mjs';
 
-// 2: usage keeps the cache_creation split (1h tokens), which v1 entries lack.
 const CACHE_VERSION = 4;
 // Version 3 held parser states as packed rows; the parsers convert them when restored.
 const LEGACY_CACHE_VERSION = 3;
@@ -239,8 +238,7 @@ export function createSshSource({
     return { key: null, offset: 0, kind: file.kind, ctx, state: null, parser: makeParser(file.kind, ctx) };
   }
 
-  // A parser on this host's dictionary. Every row's host is this source's id: a state from an
-  // older cache may name another, so a restored table is relabelled before anything reads it.
+  // Every row's host is this source's id; an older cache's state may name another, so restores are relabelled.
   function makeParser(kind, ctx, state) {
     const parser = kind === 'claude' ? createClaudeParser(ctx, state, { names }) : createCodexParser(ctx, state, { names });
     if (state) {
@@ -250,7 +248,6 @@ export function createSshSource({
     return parser;
   }
 
-  // Builds the entry's parser from its cached state on first use. False when the state is unusable.
   function ensureParser(entry) {
     if (entry.parser) return true;
     try {
@@ -262,8 +259,6 @@ export function createSshSource({
     }
   }
 
-  // Every file's table in order (`sources`), their merge (`records`), and the row count before
-  // the merge (`rows`, what the status shows).
   function collect() {
     const sources = [];
     let rows = 0;
@@ -286,7 +281,6 @@ export function createSshSource({
         files.set(p, { key: typeof e.key === 'string' ? e.key : null, offset: e.offset, kind: e.kind, ctx: { ...e.ctx, host: id }, state: e.state, parser: null });
       }
       if (files.size) status = { ...status, records: 0 };
-      // Rewrite a previous version's file in the current format.
       if (raw.version === LEGACY_CACHE_VERSION && files.size) markDirty();
     } catch {
       // No cache or unreadable: start fresh.

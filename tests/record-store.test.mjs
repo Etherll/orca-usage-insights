@@ -85,7 +85,6 @@ test('incremental merges equal a fresh merge after every kind of change', () => 
         [sources[i], sources[j]] = [sources[j], sources[i]];
         touched = i !== j;
       } else if (op < 0.84 && sources.length) {
-        // Enough replaces to start the table's replaced-row log over.
         const { table } = pick();
         if (table.length) for (let k = 0; k < 4100; k++) table.replace(k % table.length, ...row(next, keySpace).slice(1));
         else touched = false;

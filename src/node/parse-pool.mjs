@@ -4,8 +4,7 @@
 // scanner parses the file inline instead.
 import { Worker } from 'node:worker_threads';
 
-// idleMs: threads idle this long exit, so their memory goes back after a scan. Later jobs start
-// new ones.
+// idleMs: threads idle this long exit, so their memory goes back after a scan.
 export function createParsePool(size, { idleMs = 5_000 } = {}) {
   const idle = [];
   const retiring = new Set();
@@ -18,8 +17,7 @@ export function createParsePool(size, { idleMs = 5_000 } = {}) {
   const pending = new Map();
 
   function spawn() {
-    // A small young generation: parse threads make many short-lived strings, and the default
-    // semi-spaces cost tens of MB per thread for no speed gain (measured).
+    // Small young generation: parse threads make many short-lived strings and default semi-spaces cost tens of MB.
     const worker = new Worker(new URL('./parse-thread.mjs', import.meta.url), { resourceLimits: { maxYoungGenerationSizeMb: 4 } });
     worker.unref();
     worker.on('message', ({ id, ok, state, offset, error }) => {
@@ -53,13 +51,11 @@ export function createParsePool(size, { idleMs = 5_000 } = {}) {
         job.reject(error);
       }
     }
-    // With no thread left, the pool gives up only if no thread ever finished a job (threads can't
-    // run here). Otherwise later jobs start a new thread, the queued ones included.
+    // With no thread left, give up only if no thread ever finished a job (threads can't run here).
     if (all.size === 0 && !worked) broken = true;
     else pump();
   }
 
-  // When nothing is queued or running, idle threads exit after idleMs.
   function scheduleRetire() {
     clearTimeout(idleTimer);
     if (queue.length > 0 || pending.size > 0) return;
@@ -97,7 +93,6 @@ export function createParsePool(size, { idleMs = 5_000 } = {}) {
   }
 
   return {
-    // spec: { mode, kind, ctx, compressed, markers, path, size }. The thread reads the file.
     parse(spec) {
       if (broken) return Promise.reject(new Error('parse pool unavailable'));
       return new Promise((resolve, reject) => {

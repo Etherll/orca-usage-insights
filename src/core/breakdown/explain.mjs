@@ -1,6 +1,5 @@
-// Explain: a prompt the user pastes into their own agent to find the cause of one finding. It holds
-// numbers, paths and read commands only, never transcript text. The agent reads the evidence
-// through the commands, each capped at 2,000 bytes of one transcript line. Pure: no Node built-ins.
+// Explain: a prompt the user pastes into their own agent for one finding. Numbers, paths and read commands
+// only, never transcript text; each command reads at most 2,000 bytes of one line. Pure: no Node built-ins.
 import { EXPLAIN_MARKER } from './claude-events.mjs';
 
 const EXCERPT_MAX = 2000;
@@ -20,8 +19,6 @@ const KINDS = {
   },
 };
 
-// finding: one item of BreakdownView.findings. harnessLabel: 'Claude Code' or 'Codex'.
-// platform: 'win32' quotes for PowerShell, anything else for POSIX shells.
 export function buildExplainPrompt(finding, { harnessLabel = 'Claude Code', platform = 'linux' } = {}) {
   const kind = KINDS[finding.kind] ?? { title: String(finding.kind), look: '' };
   const quote = platform === 'win32' ? powershellQuote : posixQuote;
@@ -51,8 +48,7 @@ export function buildExplainPrompt(finding, { harnessLabel = 'Claude Code', plat
   return { prompt, estTokens: Math.ceil(prompt.length / 4) + Math.ceil(read / 4) };
 }
 
-// The script has no quotes of its own, so only the path needs quoting for the shell. Module names
-// come in as arguments for the same reason.
+// The script has no quotes of its own, so only the path needs quoting; module names come in as arguments.
 function command({ file, offset, compressed, n }, quote) {
   const at = Math.max(0, Math.floor(Number(offset) || 0));
   if (compressed) {

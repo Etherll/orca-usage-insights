@@ -12,7 +12,6 @@ const BUNDLED = [
 ];
 const catalog = () => buildCatalog(BUNDLED);
 
-// Adapter-shaped output for a source: entries with the fields the diff reads.
 function source(entries, extra = {}) {
   return {
     entries: entries.map((entry) => ({
@@ -241,7 +240,6 @@ test('long-prompt tier rates get rows of their own', () => {
   assert.deepEqual([input.current, input.litellm, input.modelsdev, input.status], [8, 9, 9, 'agree']);
   assert.equal(rowOf(rows, 'claude-opus-5-5.tier.200000.output').current, 30);
   assert.ok(rows.findIndex((r) => r.field.startsWith('tier.')) > rows.findIndex((r) => r.field === 'cacheWrite.5m'), 'tiers follow the base fields');
-  // An overrides file that sets tiers owns them.
   const keys = overriddenKeysOf({ models: { 'claude-opus-5-5': { tiers: [{ above: 200000, input: 1, output: 1, cacheRead: 1 }] } } });
   assert.ok(keys.has('claude-opus-5-5.tier.200000.input'));
 });

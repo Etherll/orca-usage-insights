@@ -2,7 +2,6 @@
 // Stat-first: a file whose `mtimeMs:size` key is unchanged costs one stat and no reads.
 // Entries keep the parser per file, so records survive tails. The persisted cache stores
 // { key, offset, kind, ctx, state } per file; `offset` is the end of the last complete line.
-// Listing and reading live in transcript-files.mjs; this file keeps the cache and the records.
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import { createRecordStore } from '../core/record-store.mjs';
@@ -16,8 +15,7 @@ import { listTranscripts, readTranscript } from './transcript-files.mjs';
 export { markedLines };
 
 const CACHE_VERSION = 5;
-// The cache before records were stored as columns. Read once when there is no current cache; its
-// parser states are converted when the parsers are restored, so no file is read again.
+// The pre-columns cache, read when there is no current one; parsers convert its states, so no file is reread.
 const LEGACY_CACHE_VERSION = 4;
 const REUSE_MS = 5_000;
 const SAVE_EVERY_MS = 30_000;
@@ -25,9 +23,8 @@ const SAVE_EVERY_MS = 30_000;
 // Compressed files over this size are skipped: they are never read whole on the calling thread.
 const THREAD_MAX_BYTES = 64 << 20;
 const STAT_LIMIT = 64;
-// Saves append the files that changed to a journal next to the cache file. The whole cache is
-// rewritten (and the journal emptied) on the first save, after reset, when more files changed than
-// this, or once the journal is this big.
+// Saves append changed files to a journal. The whole cache is rewritten (journal emptied) on the first
+// save, after reset, when more files changed than this, or once the journal is this big.
 const JOURNAL_MAX_FILES = 512;
 const JOURNAL_MAX_BYTES = 32 << 20;
 const WRITE_CHUNK_CHARS = 1 << 20;
@@ -38,12 +35,10 @@ export function createScanner({
   home = os.homedir(),
   fs = fsp,
   cacheFile,
-  // The previous version's cache file, read when cacheFile is missing or unusable. It is left as is.
   legacyCacheFile = null,
   concurrency = 8,
   // Threads that parse files read whole for the first time (first open, rewritten files).
-  // 0 parses on the calling thread. Tail reads always parse inline: they are small. Each thread
-  // costs ~35 MB; on a full local history 4 took ~2.1 s, 6 ~1.6 s, 8 ~1.5 s (measured).
+  // 0 parses on the calling thread. Tail reads always parse inline: they are small.
   threads = Math.min(6, Math.max(0, (os.availableParallelism?.() ?? os.cpus().length) - 1)),
   now = () => Date.now(),
 } = {}) {
@@ -73,7 +68,6 @@ export function createScanner({
   // Parse threads open files with the real fs, so an injected fs (tests) parses inline.
   const pool = threads > 0 && fs === fsp ? createParsePool(threads) : null;
 
-  // pool() lets the digest scanner share these threads instead of starting its own.
   return { scan, reset, flush, close: () => pool?.close(), setExtraRoots, pool: () => pool };
 
   // Extra folders are read next to the default roots. A change drops the reuse window, and a run
@@ -143,8 +137,7 @@ export function createScanner({
     const roots = await resolveRoots({ platform, env, home, realpath: fs.realpath });
     const run = { map, errors: 0, changed: false, failed: [], skipped: { zstd: 0, tooLarge: 0 } };
     const { found, owners, folders } = await listTranscripts({ fs, platform, roots, extra: folderSpecs, run });
-    // Stat everything first and read the largest files first (a .zst byte costs ~7 plain ones), so
-    // no big file starts last while the other threads sit idle. readTranscript reuses the stat.
+    // Largest files first (a .zst byte costs several plain ones), so no big file starts last while threads idle.
     const stats = new Map();
     await mapLimit(found, STAT_LIMIT, async (file) => {
       try {
@@ -161,8 +154,6 @@ export function createScanner({
       // A directory that failed to read says nothing about its files, so their cache entries stay.
       if (!walked.has(path) && !underAny(run.failed, path, p.sep)) drop(run, path);
     }
-    // Listing order, so ties between files resolve the same way on every run (map order follows
-    // which file finished reading first). Entries kept for unreadable folders go last.
     const ordered = new Map();
     for (const file of found) if (map.has(file.path)) ordered.set(file.path, map.get(file.path));
     for (const [path, entry] of map) if (!ordered.has(path)) ordered.set(path, entry);
@@ -177,11 +168,9 @@ export function createScanner({
       const folder = owners.get(path);
       if (folder) folder.records += table.length;
     }
-    // Only what changed since the last run is merged again; nothing changed, same table back.
     const records = store.update(sources);
     return {
       records,
-      // The files' own tables, in order, and the dictionary they share: for merging with other sources.
       sources,
       names,
       files: found.length,
@@ -192,8 +181,6 @@ export function createScanner({
     };
   }
 
-  // Brings one file's entry up to date. The reader decides between unchanged, tail, whole read
-  // and skipped; this keeps the cache entry and the error counts.
   async function refreshFile(run, file, stat) {
     const entry = run.map.get(file.path);
     const prior = entry?.kind === file.kind && ensureParser(entry) ? entry : undefined;
@@ -201,8 +188,7 @@ export function createScanner({
       fs,
       file,
       stat,
-      // A tail pushes into the entry's own parser, so the entry's offset moves with every push: a
-      // save during the read then stores an offset that matches the parser's state.
+      // A tail pushes into the entry's own parser, so a mid-read save stores an offset matching its state.
       prior: prior ? { key: prior.key, offset: prior.offset, consumer: prior.parser, onAdvance: (offset) => (prior.offset = offset) } : null,
       pool,
       markers: MARKER_BYTES[file.kind],
@@ -216,8 +202,6 @@ export function createScanner({
       case 'unchanged':
         return;
       case 'gone':
-        // A file whose stat said ENOENT is an error and leaves the cache. A path that is no
-        // longer a file just leaves it.
         if (result.missing) run.errors++;
         drop(run, file.path);
         return;
@@ -246,7 +230,6 @@ export function createScanner({
     return createRecordsConsumer(kind, ctx, state, { names });
   }
 
-  // Builds the parser from persisted state on first use. False when the state cannot be restored.
   function ensureParser(entry) {
     if (!entry) return false;
     if (entry.parser) return true;
@@ -270,9 +253,8 @@ export function createScanner({
     touched.add(path);
   }
 
-  // The cache file, then the journal lines written on top of it (same gen). A line from another gen
-  // was written before the cache file was last rewritten, so it is stale and skipped; so is a line
-  // that doesn't parse (a save cut short).
+  // A journal line from another gen predates the last rewrite and is skipped, as is one that doesn't
+  // parse (a save cut short).
   async function loadCache(map) {
     if (!cacheFile) return;
     const raw = await readJson(cacheFile);
@@ -304,15 +286,13 @@ export function createScanner({
     journalTorn = text !== '' && !text.endsWith('\n');
   }
 
-  // The old cache's entries, whose parser states the parsers convert on restore. The next save
-  // writes the current cache file in full; the old one stays for a downgrade.
+  // The next save writes the current cache file in full; the old one stays for a downgrade.
   async function loadLegacy(map) {
     const raw = await readJson(legacyCacheFile);
     if (raw?.version !== LEGACY_CACHE_VERSION || !isObject(raw.files)) return;
     for (const [path, entry] of Object.entries(raw.files)) {
       if (isCacheEntry(entry)) map.set(path, fromCache(entry));
     }
-    // Saved after the first run, once every parser has converted its state.
     if (map.size > 0) dirty = true;
   }
 
@@ -356,8 +336,7 @@ export function createScanner({
     lastSave = now();
   }
 
-  // The changed entries as journal lines; a dropped file is a null entry. Entries are serialized
-  // before the first await, so the lines are one consistent snapshot.
+  // A dropped file is a null entry. Entries are serialized before the first await: one consistent snapshot.
   async function appendJournal(paths) {
     // After a save cut short, a leading LF keeps the first new line from joining the torn one.
     let text = journalTorn ? '\n' : '';
@@ -375,9 +354,7 @@ export function createScanner({
     journalTorn = false;
   }
 
-  // Rewrites the cache file under a new gen, atomically, which also retires every journal line.
-  // Each entry is serialized on its own and written in ~1 MB pieces, so no single string holds
-  // the whole cache.
+  // A new gen retires every journal line. Written in ~1 MB pieces so no single string holds the whole cache.
   async function writeBase() {
     const gen = nextGen(baseGen);
     const parts = [];
@@ -398,7 +375,6 @@ export function createScanner({
   }
 }
 
-// Comma-joined parts between a head and a tail, yielded in strings of about WRITE_CHUNK_CHARS.
 function* pieces(head, parts, tail) {
   let chunk = head;
   for (let i = 0; i < parts.length; i++) {
@@ -411,7 +387,6 @@ function* pieces(head, parts, tail) {
   yield chunk + tail;
 }
 
-// A gen for a rewritten cache file, never the one before it.
 function nextGen(previous) {
   let gen;
   do gen = Math.floor(Math.random() * 2 ** 48);

@@ -27,10 +27,9 @@ const POLL_MS = 60_000;
 const SSH_WAIT_MS = 1_500;
 const WORKSPACE_TTL_MS = 30_000;
 const STATUS_ID = 'today';
-// Breakdown waits this long for the digest scan, then answers { loading } and posts usage.changed
-// when the scan finishes.
+// Breakdown waits this long for the digest scan, then answers { loading } and posts usage.changed later.
 const BREAKDOWN_WAIT_MS = 10_000;
-// A scan or digest pass this long counts as heavy: a full GC follows SETTLE_MS later.
+// A full GC follows SETTLE_MS after a pass this long.
 const HEAVY_MS = 1_000;
 const SETTLE_MS = 3_000;
 const VIEWS_KEPT = 8;
@@ -89,14 +88,12 @@ export function startWorker(orca, scanner, {
   // After an agent finishes, wait this long (transcripts are written just after) and rescan.
   agentSettleMs = 2_500,
   build = buildReport,
-  // The price book holds the catalog that prices the usage. Its files live in priceDir (the cache dir).
   priceDir,
   priceBook = createPriceBook({
     dir: priceDir,
     fetch: globalThis.fetch,
     log: (message) => orca.log(`Usage Insights: ${message}`),
   }),
-  // Breakdown digests. Built on first use; shards go under the cache dir.
   makeDigestScanner = () => createDigestScanner({ cacheDir: sshCacheDir ? join(sshCacheDir, 'digests-v1') : null, home, platform, sharedPool: scanner.pool?.() ?? null }),
   breakdownWaitMs = BREAKDOWN_WAIT_MS,
 } = {}) {
@@ -134,13 +131,11 @@ export function startWorker(orca, scanner, {
   // Refresh rescans every source now. Each keeps its per-file cache, so only changed files are read.
   orca.panels.handle('usage.refresh', (input) => track(async () => answer(parseReportInput(input), { force: true })));
 
-  // Price book. Sync is not tracked as a whole: it may wait on the network, and stop() must not wait
-  // for that. Its own scan is tracked, so stop() still waits for the records it reads.
+  // Sync is not tracked: it may wait on the network, and stop() must not. Its own scan is tracked.
   orca.panels.handle('usage.breakdown', (input) => track(async () => breakdown(parseBreakdownInput(input))));
   orca.panels.handle('usage.explain', (input) => track(async () => explain(parseExplainInput(input))));
 
-  // Breakdown: the same records and filters as usage.report, split by the per-file digests. The
-  // digest scan runs only from here, never from the poll or the agent rescan.
+  // The digest scan runs only from here, never from the poll or the agent rescan.
   async function breakdown(options, { waitMs = breakdownWaitMs } = {}) {
     const [gathered, scope, catalog, prices] = await Promise.all([
       gather({ force: false, detach: false }),
@@ -170,7 +165,6 @@ export function startWorker(orca, scanner, {
     return scope.scopeError ? { ...view, scopeError: scope.scopeError } : view;
   }
 
-  // The finding is looked up in the view for the same filters; it is rebuilt when there is none.
   async function explain(options) {
     const catalog = await priceBook.catalog();
     let view = views.get(viewKey(options));
@@ -180,8 +174,7 @@ export function startWorker(orca, scanner, {
     return { ...buildExplainPrompt(finding, { harnessLabel: finding.harness === 'codex' ? 'Codex' : 'Claude Code', platform }), estUsd: null };
   }
 
-  // The earliest file change a range needs: its first local day, with a day of margin for
-  // time zones and clock skew. 0 for 'all'.
+  // The range's first local day less a day of margin for time zones and clock skew. 0 for 'all'.
   function sinceFor(range) {
     const days = { '7d': 7, '30d': 30, '90d': 90 }[range];
     return days ? now().getTime() - (days + 1) * 86_400_000 : 0;
@@ -191,11 +184,9 @@ export function startWorker(orca, scanner, {
     return JSON.stringify([options.range, options.providers ?? null, options.hosts ?? null, options.scope ?? null]);
   }
 
-  // Starts a digest scan (or joins the running one) and waits up to waitMs. null means still
-  // running: the caller answers { loading }, and usage.changed is posted when it finishes.
+  // null means still running: the caller answers { loading } and usage.changed follows.
   function digestsWithin(waitMs, since = 0) {
     digestScanner ??= makeDigestScanner();
-    // A running scan answers this call only when it covers the range and the same extra folders.
     const folders = JSON.stringify([lastExtra.claude ?? [], lastExtra.codex ?? []]);
     if (!digestJob || digestJob.since > since || digestJob.folders !== folders) {
       const job = digestScanner
@@ -245,8 +236,7 @@ export function startWorker(orca, scanner, {
   orca.panels.handle('prices.undo', () => track(async () => changePrices(() => priceBook.undo())));
   orca.panels.handle('prices.reset', () => track(async () => changePrices(() => priceBook.reset())));
 
-  // Fetches both price files and diffs them against the catalog in use. `impact` is the 30-day cost
-  // now and with the rows that start pre-ticked applied, so the panel can say what a sync would change.
+  // `impact` is the 30-day cost now and with the pre-ticked rows applied.
   async function syncPrices() {
     const gathered = await track(() => gather({ force: false, detach: false }));
     const inUse = distinctNames(gathered.records, 'model');
@@ -259,7 +249,6 @@ export function startWorker(orca, scanner, {
     return { ...result, impact: { beforeUsd, afterUsd } };
   }
 
-  // A change to the overlay: the panel is told usage may differ, and the status bar is redrawn with the new prices.
   async function changePrices(change) {
     const result = await change();
     notify('usage.changed', { generatedAt: now().toISOString() });
@@ -508,12 +497,10 @@ export function startWorker(orca, scanner, {
     return { records: result.records, files: filesOf(result), names: result.names, changed: result.changed === true, statuses: [local, ...folders] };
   }
 
-  // The scanner's table is merged already, so with no SSH records it is the answer as is. Otherwise
-  // every local and SSH file goes to one store, which merges only what changed (and returns the same
-  // table when nothing did, so repeat requests keep their Report).
+  // Every local and SSH file goes to one store, which merges only what changed and returns the same table
+  // when nothing did, so repeat requests keep their Report.
   function mergedRecords(local, hosts) {
     if (!hosts.some(([, entry]) => entry.records.length > 0)) return asTable(local.records);
-    // On the scanner's dictionary, so local files are copied in bulk.
     if (!store || (local.names && store.names !== local.names)) store = createRecordStore(local.names ? { names: local.names } : {});
     const list = [...local.files];
     for (const [host, entry] of hosts) for (const { id, table } of entry.files) list.push({ id: `${host}\u0000${id}`, table });
@@ -589,8 +576,7 @@ export function startWorker(orca, scanner, {
     }
   }
 
-  // A scan that read many files leaves hundreds of MB of garbage, and an idle worker never
-  // collects it. One full collection a few seconds later hands it back to the OS.
+  // An idle worker never collects a big scan's garbage; one full GC hands it back to the OS.
   function settleSoon() {
     if (stopped || gcTimer) return;
     gcTimer = setTimeout(() => {
@@ -631,8 +617,7 @@ export function startWorker(orca, scanner, {
   };
 }
 
-// The runtime's full collection, or null. Node exposes it only behind --expose-gc; setting the flag
-// at runtime makes a new context carry it.
+// Node exposes gc only behind --expose-gc; setting the flag at runtime makes a new context carry it.
 let gcFn;
 function fullGc() {
   if (gcFn !== undefined) return gcFn;
@@ -713,7 +698,6 @@ function parseReportInput(input) {
   return out;
 }
 
-// Input from the panel for prices.apply: { diffId, keys }, where keys are row keys of that diff.
 function parsePricesInput(input) {
   if (input === null || typeof input !== 'object' || Array.isArray(input)) {
     throw invalidParams('prices.apply input must be an object');
@@ -725,7 +709,6 @@ function parsePricesInput(input) {
   return { diffId: input.diffId, keys: input.keys };
 }
 
-// Breakdown input: the report filters plus `path` (at most 8 keys of at most 500 chars).
 function parseBreakdownInput(input) {
   const { path, ...rest } = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   const out = parseReportInput(input === undefined ? undefined : rest);
@@ -736,7 +719,6 @@ function parseBreakdownInput(input) {
   return { ...out, path };
 }
 
-// Explain input: the report filters plus `findingId`.
 function parseExplainInput(input) {
   const { findingId, ...rest } = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
   if (typeof findingId !== 'string' || findingId === '' || findingId.length > 200) throw invalidParams('findingId must be a non-empty string');
@@ -770,8 +752,6 @@ export function statusText(report) {
   };
 }
 
-// A scan result's per-file tables. Scanners return them; a stand-in that returns only records
-// counts as one file.
 function filesOf(result) {
   return result.sources ?? [{ id: '', table: asTable(result.records) }];
 }

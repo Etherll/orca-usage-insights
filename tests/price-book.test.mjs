@@ -51,7 +51,6 @@ const streamed = (text) => () => new Response(new ReadableStream({
   },
 }), { status: 200 });
 
-// Replies for both sources. Each value replaces the default reply for that source.
 function sources({
   litellm = ok(litellmBody({ [OPUS]: RATES })),
   modelsdev = ok(modelsDevBody({ [OPUS]: RATES })),
@@ -59,7 +58,6 @@ function sources({
   return { [LITELLM_URL]: litellm, [MODELSDEV_URL]: modelsdev };
 }
 
-// Replies that read `rates` on each fetch, so a test can change what the sources say between syncs.
 function live(rates) {
   return sources({
     litellm: () => json(litellmBody(rates)),
@@ -78,7 +76,6 @@ function fakeFetch(replies) {
   return Object.assign(fetch, { calls });
 }
 
-// In-memory fs with the calls the price book makes. Every mutating call is recorded in `ops`.
 function memoryFs(initial = {}) {
   const files = new Map(Object.entries(initial).map(([path, text]) => [path, { text, mtimeMs: 1 }]));
   const ops = [];
@@ -370,7 +367,6 @@ test('overlapping applies both land: each starts from the overlay the one before
   const catalog = await priceBook.catalog();
   assert.equal(catalog.entries.get(OPUS).output, 22);
   assert.equal(catalog.entries.get(SONNET).output, 16);
-  // One undo takes back the second apply only.
   await priceBook.undo();
   assert.equal(Object.keys(JSON.parse(fs.files.get(OVERLAY).text).entries).length, 1);
 });

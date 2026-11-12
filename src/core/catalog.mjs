@@ -1,6 +1,5 @@
-// Price catalog: one entry per model id, built from three layers. Bundled prices come from a
-// LiteLLM snapshot, the overlay is a newer snapshot from Sync, and overrides are the user's file,
-// which always wins. Pure: no Node built-ins and no Orca imports.
+// Price catalog from three layers: the bundled LiteLLM snapshot, the overlay from Sync, and the user's
+// overrides, which always win. Pure: no Node built-ins and no Orca imports.
 import { PROMPT_BANDS, bandOf } from './bands.mjs';
 import { normalizeModelId } from './price-sources.mjs';
 
@@ -16,10 +15,8 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const FNV_OFFSET = 0x811c9dc5;
 const FNV_PRIME = 0x01000193;
 
-// The entry a model id names: exact id, then normalized id, then an alias. Null when unpriced.
-// Families never match, so an unknown version stays unpriced. A catalog is never changed after
-// buildCatalog returns it, so answers are kept per catalog: a few models cover every record.
-const resolved = new WeakMap(); // catalog -> Map<raw id, entry | null>
+// Exact id, then normalized id, then an alias. Families never match, so an unknown version stays unpriced.
+const resolved = new WeakMap();
 export function resolveModel(id, catalog) {
   let memo = resolved.get(catalog);
   if (memo === undefined) resolved.set(catalog, (memo = new Map()));
@@ -47,9 +44,7 @@ function lookupModel(id, catalog) {
   return null;
 }
 
-// USD for one request's token counts at a prompt band. `cacheWrite` counts every cache write and
-// `cacheWrite1h` the part that took the 1-hour TTL; the rest took the 5-minute TTL. Null when a
-// token kind is billed but the entry has no rate for it.
+// `cacheWrite` counts every cache write and `cacheWrite1h` its 1-hour TTL part.
 export function costOfTokens(entry, band, tokens = {}) {
   const rates = tierFor(entry, band);
   const write1h = num(tokens.cacheWrite1h);
@@ -59,19 +54,16 @@ export function costOfTokens(entry, band, tokens = {}) {
   return linesCost(entry, rates, num(tokens.input), num(tokens.output), num(tokens.cacheRead), write5m, write1h);
 }
 
-// USD for one usage record, or null when its model is unpriced. A missing cacheWrite1h counts as 0.
 export function requestCost(record, catalog) {
   const entry = resolveModel(record.model, catalog);
   if (!entry) return null;
   return entryCost(entry, record.input, record.output, record.cacheRead, record.cacheWrite, record.cacheWrite1h);
 }
 
-// The rates a request pays: the entry's tier for the request's prompt size, else its base rates.
 export function ratesFor(entry, input, cacheRead, cacheWrite) {
   return tierFor(entry, bandOf(num(input) + num(cacheRead) + num(cacheWrite)));
 }
 
-// USD for one request's counts at an entry's prices (the entry is already resolved), or null.
 export function entryCost(entry, rawInput, rawOutput, rawCacheRead, rawCacheWrite, rawWrite1h) {
   const input = num(rawInput);
   const output = num(rawOutput);
@@ -82,8 +74,6 @@ export function entryCost(entry, rawInput, rawOutput, rawCacheRead, rawCacheWrit
   return linesCost(entry, rates, input, output, cacheRead, Math.max(0, cacheWrite - write1h), write1h);
 }
 
-// Sum of count * rate per token kind, skipping zero counts; null when a billed kind has no rate.
-// OpenAI bills every cache write at one rate; Anthropic splits them by TTL.
 function linesCost(entry, rates, input, output, cacheRead, write5m, write1h) {
   let usd = 0;
   if (input !== 0) {
@@ -121,9 +111,8 @@ function linesCost(entry, rates, input, output, cacheRead, write5m, write1h) {
   return usd;
 }
 
-// Builds the catalog. Layers apply in order: bundled, then the overlay (per entry, skipped when its
-// asOf is older than the current one), then the overrides. A bad entry, alias or layer is left out
-// and named in `problems` as "<layer> <id>: ..."; the rest still applies. Never throws.
+// Layers apply in order: bundled, overlay (per entry, skipped when its asOf is older), overrides. A bad
+// entry, alias or layer is left out and named in `problems` as "<layer> <id>: ...". Never throws.
 export function buildCatalog(bundled, overlay = null, overrides = null) {
   const entries = new Map();
   const problems = [];
@@ -218,7 +207,6 @@ function applyOverrides(entries, overrides, problems) {
   }
 }
 
-// Stores the candidate when it is valid; otherwise the prior entry stays and the problem is named.
 function take(layer, id, candidate, entries, problems) {
   const bad = invalidFields(candidate);
   if (bad.length > 0) problems.push(`${layer} ${id}: invalid ${bad.join(', ')}`);
@@ -238,8 +226,7 @@ function baseEntry(id) {
   };
 }
 
-// Patch fields replace the entry's, except cacheWrite, which merges one level, and undefined fields,
-// which are skipped.
+// Patch fields replace the entry's, except cacheWrite (merged one level) and undefined fields (skipped).
 function merge(entry, patch, id) {
   const next = { ...entry, id };
   for (const key of ENTRY_FIELDS) {
@@ -254,7 +241,6 @@ function merge(entry, patch, id) {
   return next;
 }
 
-// The stored form of a valid entry: aliases lower-cased, tiers sorted by band.
 function finish(entry) {
   return {
     ...entry,
@@ -268,7 +254,6 @@ function finish(entry) {
   };
 }
 
-// The field names that make a candidate unusable, or [] when it is valid.
 function invalidFields(entry) {
   const bad = [];
   if (!PROVIDERS.includes(entry.provider)) bad.push('provider');
@@ -305,7 +290,6 @@ function validWrite(write, provider) {
   return provider !== 'openai' || write.default !== undefined;
 }
 
-// The tier with the largest `above` at or below the band, else the base rates.
 function tierFor(entry, band) {
   let best = null;
   for (const tier of entry.tiers ?? []) {
@@ -314,7 +298,6 @@ function tierFor(entry, band) {
   return best ?? entry;
 }
 
-// Identical entries always give the same version, and any changed price gives a new one.
 function versionOf(entries) {
   const text = stableJson([...entries.values()]);
   let hash = FNV_OFFSET;
@@ -325,7 +308,6 @@ function versionOf(entries) {
   return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-// JSON with sorted keys and no undefined fields.
 function stableJson(value) {
   if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
   if (isObject(value)) {

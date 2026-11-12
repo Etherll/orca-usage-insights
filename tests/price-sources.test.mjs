@@ -137,7 +137,6 @@ test('parseLiteLLM ignores batch, flex, priority, decisions and 12-hour fields a
   assert.equal(entries.length, 1);
   assert.deepEqual(entries[0].cacheWrite, { default: 1.2 });
   assert.deepEqual(entries[0].tiers, undefined);
-  // An OpenAI 1-hour write is not a field this catalog has, so it is reported with the search fee.
   assert.deepEqual(unknownFields, {
     'gpt-6-test': ['cache_creation_input_token_cost_above_1hr', 'search_context_cost_per_query'],
   });

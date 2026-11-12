@@ -30,7 +30,6 @@ const claudeExpected = [
   { key: 'msg_2:req_9', provider: 'claude', ts: '2026-10-01T10:03:00.000Z', model: 'claude-sonnet-4-5', project: 'alpha', sessionId: 'sess-a', input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/alpha', host: 'local' },
   // No message id, so no dedupe key and the record is kept.
   { provider: 'claude', ts: '2026-10-02T09:00:00.000Z', model: 'claude-sonnet-5', project: 'delta', sessionId: 'sess-d', input: 4, output: 6, cacheRead: 0, cacheWrite: 0, cacheWrite1h: 0, cwd: '/home/me/work/delta', host: 'local' },
-  // A split cache write: 200 of the 300 cache write tokens used the 1-hour TTL.
   { key: 'msg_c:req_c', provider: 'claude', ts: '2026-10-02T08:40:00.000Z', model: 'claude-opus-4-1', project: 'beta', sessionId: 'sess-c', input: 5, output: 6, cacheRead: 0, cacheWrite: 300, cacheWrite1h: 200, cwd: '/home/me/work/beta', host: 'local' },
 ];
 

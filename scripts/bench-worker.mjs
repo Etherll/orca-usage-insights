@@ -93,7 +93,6 @@ try {
   }
   await w.worker.stop();
 
-  // Breakdown: the digest scan reads every transcript once, then keeps one shard per file.
   w = boot();
   await w.call('usage.report', { range: '7d' });
   const [bdCold, bd] = await time(() => w.call('usage.breakdown', { range: '30d' }));

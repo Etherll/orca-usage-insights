@@ -1,8 +1,6 @@
-// Compares the catalog in use with the two price sources, field by field. Pure: the caller reads
-// and parses the sources (price-sources.mjs) and passes the entries in.
+// Compares the catalog in use with the two price sources, field by field. Pure: the caller parses the sources.
 import { normalizeModelId, resolveModel } from './catalog.mjs';
 
-// The priced fields, in the order rows list them. Cache writes are split by TTL as in the catalog.
 // A long-prompt tier's rates follow as `tier.<above>.<field>`, one set per tier a source lists.
 const FIELDS = ['input', 'output', 'cacheRead', 'cacheWrite.5m', 'cacheWrite.1h', 'cacheWrite.default'];
 const WRITE = 'cacheWrite.';
@@ -11,14 +9,11 @@ const RATE_KEYS = ['input', 'output', 'cacheRead'];
 const AGREE_EPSILON = 1e-9;
 const CHANGE_RATIO = 10;
 
-// Rows for the models in use. `litellm` and `modelsdev` are { entries, unknownFields? } as the
-// adapters return them, or null when that source was not read. Models the sources list but that are
-// not in use are counted in notInUse and not listed.
+// A source is null when it was not read. Models the sources list but not in use are only counted (notInUse).
 export function diffCatalog(catalog, { litellm = null, modelsdev = null } = {}, inUseIds = [], overriddenKeys = []) {
   const inUse = new Set([...inUseIds].map((id) => normalizeModelId(String(id))).filter(Boolean));
   const overridden = new Set(overriddenKeys);
-  // Only an unknown per-token price can change what a request costs; per-query or per-image fees
-  // (e.g. search_context_cost_per_query) don't apply to transcript tokens, so they don't flag.
+  // Only an unknown per-token price changes a request's cost; per-query or per-image fees don't flag.
   const unknown = new Set(
     Object.entries(litellm?.unknownFields ?? {})
       .filter(([, fields]) => (fields ?? []).some((field) => /token/i.test(field)))
@@ -60,7 +55,6 @@ export function diffCatalog(catalog, { litellm = null, modelsdev = null } = {}, 
   return { rows, notInUse };
 }
 
-// The keys (`<model>.<field>`) the user's overrides file sets, so the diff can mark them overridden.
 export function overriddenKeysOf(overrides) {
   const keys = new Set();
   if (!isObject(overrides?.models)) return keys;
@@ -73,7 +67,6 @@ export function overriddenKeysOf(overrides) {
     if (isObject(patch.cacheWrite)) {
       for (const kind of Object.keys(patch.cacheWrite)) keys.add(`${model}.${WRITE}${kind}`);
     }
-    // An overrides file that sets tiers replaces them all.
     if (Array.isArray(patch.tiers)) {
       for (const tier of patch.tiers) {
         if (!isObject(tier)) continue;
@@ -84,8 +77,7 @@ export function overriddenKeysOf(overrides) {
   return keys;
 }
 
-// The value a row proposes: LiteLLM's when it has one, else models.dev's. The source is the overlay
-// source name for it: 'litellm', or 'manual' for models.dev.
+// LiteLLM's when it has one, else models.dev's, recorded as source 'manual'.
 export function proposalOf(row) {
   const fromLitellm = typeof row.litellm === 'number';
   return {
@@ -105,8 +97,7 @@ function statusOf({ key, model, values, currentValue, inCatalog, unknown, overri
   return 'single';
 }
 
-// A zero price where anything is paid, or a proposed price 10x away from the current one (or any
-// price where the current one is zero).
+// A zero price where anything is paid, or 10x away from the current one (any price when current is zero).
 function suspicious(values, currentValue) {
   if (values.includes(0) && [...values, currentValue].some((value) => value > 0)) return true;
   if (typeof currentValue !== 'number') return false;
@@ -115,7 +106,6 @@ function suspicious(values, currentValue) {
     : value >= currentValue * CHANGE_RATIO || value <= currentValue / CHANGE_RATIO));
 }
 
-// The base fields, then each tier's fields, for the tiers either source lists (by size).
 function fieldsOf(...entries) {
   const sizes = new Set();
   for (const entry of entries) for (const tier of entry?.tiers ?? []) if (Number.isFinite(tier?.above)) sizes.add(tier.above);
@@ -130,8 +120,6 @@ function valueOf(entry, field) {
   return typeof value === 'number' ? value : undefined;
 }
 
-// One entry per normalized model id. An entry whose id is already the normalized id wins over a
-// dated or prefixed one.
 function byModel(entries) {
   const map = new Map();
   for (const entry of entries) {

@@ -57,7 +57,6 @@ test('command families keep the program and a subcommand, never arguments', () =
     ['cd app && cargo build --release', '$ cargo build'],
     ['"/usr/bin/node" script.js', '$ node'],
     ['curl -H "Authorization: x" https://example.org', '$ curl'],
-    // A bare script name is an argument, not a subcommand.
     ['node deploy_token_rotate', '$ node'],
     ['node --inspect rotate_keys', '$ node'],
     ['python3 rotate_keys', '$ python3'],

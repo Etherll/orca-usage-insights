@@ -15,7 +15,6 @@ const catalog = DEFAULT_CATALOG;
 const usage = (input, cacheRead, cacheWrite, output) => ({ input, cacheRead, cacheWrite, cacheWrite1h: 0, output });
 const file = (key) => ({ key, label: key.split('/').pop(), kind: 'file' });
 
-// One session: a digest (from the real fold) and the matching Usage records.
 function session({ harness = 'claude', host = 'local', sessionId = 's1', cwd = '/w/proj', daysAgo = 0, turns, model = MODEL, explain = false }) {
   const fold = createFold({ harness, host });
   fold.add({ t: 'meta', cwd, sessionId });
@@ -50,7 +49,6 @@ function world() {
   const old = session({ sessionId: 'o1', daysAgo: 20, turns: [{ usage: usage(100, 0, 5000, 50) }] });
   return {
     records: [...s1.records, ...s2.records, ...remote.records, ...old.records],
-    // the remote host has records but no digest (SSH)
     digests: [s1.digest, s2.digest, old.digest],
   };
 }
@@ -176,7 +174,6 @@ test('repeated reads and idle cache expiry become findings', () => {
       { arrivals: [{ target: a, chars: 100, callId: 'r2' }], usage: usage(10, 600_000, 300_000, 10) },
     ],
   });
-  // an idle gap: rebuild everything 2 hours later
   const fold = createFold({ harness: 'claude', host: 'local' });
   fold.add({ t: 'meta', cwd: '/w/proj', sessionId: 'i1' });
   const t0 = new Date(2026, 10, 3, 9, 0);
@@ -309,6 +306,5 @@ test('a view whose findings span many days is cut to fit, without changing the c
   const view = analyzeBreakdown(input);
   assert.ok(JSON.stringify(view).length <= 900_000);
   assert.ok(view.findings.length > 0 && view.findings.every((f) => f.daily.length <= 90));
-  // The next view from the same cached analysis still has the full series to cut from.
   assert.equal(analyzeBreakdown(input).findings[0].daily.length, 90);
 });

@@ -1,6 +1,4 @@
-// Codex rollout lines to breakdown events. Pure: no Node built-ins or Orca imports. Events hold
-// sizes, offsets and targets, never transcript text. Usage is read by records.mjs, and a repeated
-// token_count is skipped the way records.mjs skips it.
+// Codex rollout lines to breakdown events: sizes, offsets and targets, never transcript text. Pure: no Node built-ins.
 import { codexUsage } from '../records.mjs';
 import { EXPLAIN_MARKER } from './claude-events.mjs';
 import { agentTarget, commandTarget, injectedTarget, messagesTarget, pathTarget, toolTarget } from './targets.mjs';
@@ -12,8 +10,6 @@ const PATCH_FILE = /^\*\*\* (?:Update|Add) File: (.+?)\s*$/m;
 const SHELLS = new Set(['bash', 'sh', 'zsh']);
 const encoder = new TextEncoder();
 
-// ctx: { home } expands `~/` paths, and { sessionId } names the requests as records.mjs does.
-// state: a value from an earlier state() call, so a restored adapter continues the same file.
 export function createCodexEvents(ctx = {}, state = null) {
   const home = ctx?.home ?? '';
   const sessionId = ctx?.sessionId ?? '';
@@ -21,12 +17,9 @@ export function createCodexEvents(ctx = {}, state = null) {
   let model = state?.model ?? 'codex';
   let lastTotal = totalOf(state?.lastTotal);
   const calls = new Map(state?.calls ?? []);
-  // The user's first prompt has been seen. Codex puts AGENTS.md and tagged context (environment,
-  // instructions) in user messages before it, so those don't count.
+  // Codex puts AGENTS.md and tagged context in user messages before the first prompt; those don't count.
   let prompted = state?.prompted === true;
 
-  // A token_count whose running total has not moved repeats the one before, so it adds no usage.
-  // The running total is tracked even when the line has no last_token_usage, as records.mjs does.
   function tokenCount(obj, payload, where, out) {
     const info = isObject(payload.info) ? payload.info : {};
     const total = totalOf(info.total_token_usage);
@@ -64,7 +57,7 @@ export function createCodexEvents(ctx = {}, state = null) {
         message(payload, where, out);
         break;
       default:
-        break; // reasoning and other item kinds carry nothing the split needs
+        break;
     }
   }
 
@@ -98,8 +91,6 @@ export function createCodexEvents(ctx = {}, state = null) {
     out.push({ t: 'call', id: callId, target, op });
   }
 
-  // The target and op of a call. A function call carries JSON arguments; a custom tool carries its
-  // input as text. Arguments that do not parse read as none.
   function toolCall(payload) {
     const name = typeof payload.name === 'string' ? payload.name : '';
     const args = parseArgs(payload.arguments);
@@ -123,7 +114,6 @@ export function createCodexEvents(ctx = {}, state = null) {
   }
 
   return {
-    // bytes: the line's UTF-8 length when the caller knows it (saves encoding the line again).
     push(line, offset, bytes = null) {
       const text = String(line);
       if (ignoredHead(text)) return [];
@@ -158,8 +148,7 @@ export function createCodexEvents(ctx = {}, state = null) {
   };
 }
 
-// Codex writes timestamp, type and payload.type first. Lines whose kinds give no events are
-// skipped before parsing: other event_msg kinds, and reasoning and other response items.
+// Codex writes timestamp, type and payload.type first, so lines of kinds that give no events skip parsing.
 const HEAD = /^\{"timestamp":"[^"\\]*","type":"(event_msg|response_item)","payload":\{"type":"([a-z_]+)"/;
 const RESPONSE_KINDS = new Set(['function_call', 'custom_tool_call', 'function_call_output', 'custom_tool_call_output', 'message']);
 
@@ -173,8 +162,7 @@ function shell(command) {
   return { target: commandTarget(command), op: 'shell' };
 }
 
-// A shell command as text. An argv array is joined, except that `bash -lc <script>` gives its
-// script, since the wrapper alone would name no tool.
+// `bash -lc <script>` gives its script, since the wrapper alone names no tool.
 function shellText(value) {
   if (typeof value === 'string') return value;
   if (!Array.isArray(value)) return '';
@@ -183,14 +171,11 @@ function shellText(value) {
   return words.join(' ');
 }
 
-// Function-call arguments as an object. Text that is not a JSON object reads as no arguments.
 function parseArgs(value) {
   const parsed = typeof value === 'string' ? parseJson(value) : value;
   return isObject(parsed) ? parsed : {};
 }
 
-// One arrival of content into the context. A line with several results gives one arrival per
-// result, and each carries the line's offset and bytes.
 function arrival(bucket, target, stats, where, callId) {
   return {
     t: 'arrival',
@@ -205,7 +190,6 @@ function arrival(bucket, target, stats, where, callId) {
   };
 }
 
-// Text length and image count of a content value: a string, or an array of content blocks.
 function firstText(content) {
   if (typeof content === 'string') return content;
   const block = Array.isArray(content) ? content.find((b) => typeof b?.text === 'string') : null;
@@ -223,7 +207,6 @@ function contentStats(content) {
   return stats;
 }
 
-// Size of a value as text: the length of a string, or of its JSON.
 function valueChars(value) {
   if (value === undefined || value === null) return 0;
   return typeof value === 'string' ? value.length : JSON.stringify(value).length;
@@ -233,7 +216,6 @@ function lengthOf(value) {
   return typeof value === 'string' ? value.length : 0;
 }
 
-// Normalized running total from info.total_token_usage, or null when there is none.
 function totalOf(value) {
   if (!isObject(value) || !TOTAL_KEYS.some((key) => typeof value[key] === 'number')) return null;
   return Object.fromEntries(TOTAL_KEYS.map((key) => [key, count(value[key])]));
@@ -264,7 +246,6 @@ function nonBlank(value) {
   return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
-// A parseable timestamp in a plausible year, as records.mjs accepts them.
 function isTimestamp(value) {
   if (typeof value !== 'string') return false;
   const ms = Date.parse(value);

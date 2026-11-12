@@ -45,7 +45,6 @@ const FIELD_LABELS = {
   'cacheWrite.1h': 'Cache write (1 h)',
   'cacheWrite.default': 'Cache write',
 }
-// 'tier.272000.input' reads 'Input, prompts over 272k'.
 function fieldLabel(field) {
   const tier = /^tier\.(\d+)\.(.+)$/.exec(field)
   if (!tier) return FIELD_LABELS[field] || field
@@ -70,7 +69,6 @@ function tipAttr(title, rows) {
   return `data-tip="${esc(JSON.stringify({ title, rows }))}"`
 }
 
-// Headline and bucket bar: "Spent $X", what was analysed, and where it went by bucket.
 export function headline(view) {
   const t = view.totals
   const unpriced = (t.unpricedModels || []).length > 0
@@ -96,7 +94,6 @@ export function headline(view) {
   return `<div class="bd-head"><div><span class="label">Spent</span><strong class="bd-total">${esc(usd(t.usageUsd, { plus: unpriced }))}</strong><p class="muted">${esc(sub)}</p></div></div>${bar}<ul class="bucket-list">${list}</ul>`
 }
 
-// Names for the targets the fold makes itself (kind 'bucket').
 const OWN_TARGETS = {
   startup: 'Session start',
   replies: 'Earlier replies',
@@ -109,7 +106,6 @@ const OWN_TARGETS = {
   'rebuild:other': 'Other cache rewrites',
 }
 
-// Breadcrumbs and the rows of the selected level. Rows with children are buttons that drill in.
 export function tree(view) {
   const path = view.path || []
   const crumbs = [`<button class="crumb" data-depth="0"${path.length === 0 ? ' aria-current="page"' : ''}>All projects</button>`]
@@ -144,7 +140,7 @@ function lastSegment(path) {
   return parts[parts.length - 1] || String(path)
 }
 
-// Finding cards. They overlap, so no total is shown.
+// They overlap, so no total is shown.
 export function findings(view) {
   const list = view.findings || []
   if (!list.length) return '<p class="muted empty">No pattern above $1 in this range.</p>'
@@ -163,7 +159,6 @@ export function findings(view) {
     .join('')
 }
 
-// Spend that wasn't split, by reason, with what to do about it.
 export function notAnalysed(view) {
   const rows = view.totals.notAnalysed || []
   if (!rows.length) return ''
@@ -186,7 +181,6 @@ export function legend(view) {
   return parts.join(' · ')
 }
 
-// The price source line: where prices come from and the Sync, Undo and Reset actions.
 export function priceLine(status) {
   if (!status) return ''
   const from = status.overlay
@@ -203,7 +197,6 @@ export function priceLine(status) {
   return `<span class="muted">${esc(from)}${own}</span>${actions}${problems}`
 }
 
-// The Sync dialog body: impact first, then the source results and the rows to tick.
 // A row whose sources give exactly the price in use changes nothing, so it is counted, not listed.
 export function changedSyncRows(rows = []) {
   return rows.filter((r) => {
@@ -223,8 +216,7 @@ export function syncBody(result) {
     ? `<p class="impact">Last 30 days: <strong>${esc(usd(result.impact.beforeUsd))}</strong> now → <strong>${esc(usd(result.impact.afterUsd))}</strong> with the pre-ticked changes.</p>`
     : ''
   const fmt = (v) => (v === null || v === undefined ? '—' : `$${Number(v)}`)
-  // New: the price a ticked row applies (LiteLLM's, else models.dev's); the other source's price
-  // follows when it differs.
+  // The price a ticked row applies (LiteLLM's, else models.dev's); the other source's follows when it differs.
   const proposed = (r) => {
     const first = r.litellm ?? r.modelsdev
     const other = r.litellm !== null && r.litellm !== undefined && r.modelsdev !== null && r.modelsdev !== undefined && Math.abs(r.litellm - r.modelsdev) > 1e-9

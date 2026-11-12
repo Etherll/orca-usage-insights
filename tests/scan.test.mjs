@@ -146,7 +146,6 @@ test('concurrent scans share one run, and a result under 5 s old is reused', asy
   clock += 5_000;
   const rescanned = await scanner.scan();
   assert.equal(rec.log.stats, 1);
-  // Nothing changed, so the merged list is the same array (the worker keeps its Reports for it).
   assert.equal(rescanned.records, first.records);
 
   await fsp.appendFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm2' })));
@@ -503,7 +502,6 @@ test('saves after the first journal only the changed and dropped files, and a re
     [gen, fx.file('c.jsonl'), true],
   ]);
 
-  // A line cut short by a crash, and a line from an older cache file, are both skipped.
   await fsp.appendFile(journal, `${JSON.stringify([gen + 1, fx.file('b.jsonl'), null])}\n[${gen}, "${fx.file('b.jsonl')}"`);
   const rec = recordingFs();
   const restarted = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, fs: rec.fs });
@@ -521,7 +519,6 @@ test('a save after a journal line cut short starts a new line', async (t) => {
   await first.scan();
   await first.flush();
   const { gen } = JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8'));
-  // A crash cut the last journal line short.
   await fsp.writeFile(journal, `[${gen}, "${fx.file('b.jsonl')}"`);
 
   const second = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile });
@@ -566,11 +563,10 @@ test('a save during a tail read stores an offset that matches the parser state',
   await a.scan();
   await a.flush();
   await fsp.appendFile(codexFile, lines(codexUsage(2)));
-  await a.scan({ force: true }); // a change waits for the timed save
+  await a.scan({ force: true });
   await fsp.appendFile(codexFile, lines(codexUsage(3)));
   hold = () => a.flush(); // the timed save lands after the tail's push, before the scan stores it
   assert.deepEqual(outputs(await a.scan({ force: true })), [1, 2, 3]);
-  // No save after this scan: the process stops here.
   const b = createScanner(opts);
   assert.deepEqual(outputs(await b.scan()), [1, 2, 3]);
 });
@@ -1019,7 +1015,6 @@ test('a codex .zst rollout gives the same records as the plain .jsonl, inline an
   assert.deepEqual(fromThread.skipped, { zstd: 0, tooLarge: 0 });
 });
 
-// The cache a previous version wrote: same entries, parser states with records packed per row.
 async function writeLegacyCache(fromFile, legacyFile) {
   const { packRecords } = await import('./legacy-records.mjs');
   const { decodeTable } = await import('../src/core/table-codec.mjs');

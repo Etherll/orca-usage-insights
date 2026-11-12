@@ -813,11 +813,8 @@ test('statusText shows today tokens, cost and cache hit rate', async () => {
 });
 
 
-// --- Breakdown and Explain ---------------------------------------------------------------------
-
 import { createFold } from '../src/core/breakdown/fold.mjs';
 
-// A digest for one Claude session with a large tool result, and its matching records.
 function breakdownWorld() {
   const fold = createFold({ harness: 'claude', host: 'local' });
   fold.add({ t: 'meta', cwd: '/w/proj', sessionId: 's1' });
@@ -897,7 +894,7 @@ test('a breakdown after an extra folder is added does not reuse the scan that st
   const digests = fakeDigests(scan, 60);
   const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000, makeDigestScanner: () => digests.scanner, breakdownWaitMs: 5 });
   await worker.ready;
-  await mock.handlers.get('usage.breakdown')({ range: 'all' }); // still running: answers loading
+  await mock.handlers.get('usage.breakdown')({ range: 'all' });
   mock.settings = { extraClaudeFolders: '/extra/claude' };
   await mock.handlers.get('usage.breakdown')({ range: '7d' });
   await sleep(150);

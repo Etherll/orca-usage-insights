@@ -8,8 +8,7 @@ export function toBase64(view) {
   return btoa(text);
 }
 
-// The bytes as a typed array of `Type`, in a fresh aligned buffer (Buffer.from may hand back a slice
-// of a shared pool). Throws when the byte count is not a whole number of elements.
+// A fresh aligned buffer: Buffer.from may hand back a slice of a shared pool.
 export function fromBase64(text, Type) {
   const bytes = globalThis.Buffer ? globalThis.Buffer.from(text, 'base64') : Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
   if (bytes.byteLength % Type.BYTES_PER_ELEMENT !== 0) throw new Error('bad base64 column');

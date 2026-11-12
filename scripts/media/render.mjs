@@ -31,8 +31,7 @@ const CHROME = chrome()
 execFileSync(process.execPath, [join(root, 'scripts', 'build.mjs')], { stdio: 'ignore' })
 const panel = readFileSync(join(root, 'panel', 'index.html'), 'utf8')
 const flatten = (src) => src.replace(/^import [^\n]*\n/gm, '').replace(/^export \{[^\n]*\n/gm, '').replace(/^export (?=(const|function|let|class) )/gm, '')
-// Core modules for the browser stand-in. Each runs in its own scope (so private helpers with the
-// same name don't clash); imports become reads from the modules before it. Order matters.
+// Each module runs in its own scope so same-named helpers don't clash; imports read earlier modules. Order matters.
 const CORE = ['bands', 'price-sources', 'catalog-data', 'catalog', 'pricing', 'filters', 'report']
 const core = CORE.map((name) => {
   const src = readFileSync(join(root, 'src', 'core', `${name}.mjs`), 'utf8')

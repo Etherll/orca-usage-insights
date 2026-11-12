@@ -35,7 +35,6 @@ test('excerpts are capped at 2,000 bytes and paths with quotes stay one shell wo
   assert.ok(prompt.includes(`'/t/it'\\''s "odd" $(x).jsonl'`));
   const win = buildExplainPrompt(finding({ evidence: [{ file: tricky, offset: 5, bytes: 10, compressed: false }] }), { platform: 'win32' }).prompt;
   assert.ok(win.includes(`'/t/it''s "odd" $(x).jsonl'`));
-  // PowerShell also ends a single-quoted string at ‘ ’ ‚ ‛, so those are doubled too.
   const curly = 'C:\\t\\a\u2019; calc; \u2018\u201a\u201b.jsonl';
   const ps = buildExplainPrompt(finding({ evidence: [{ file: curly, offset: 0, bytes: 10, compressed: false }] }), { platform: 'win32' }).prompt;
   assert.ok(ps.includes(`'C:\\t\\a\u2019\u2019; calc; \u2018\u2018\u201a\u201a\u201b\u201b.jsonl'`));
@@ -49,7 +48,6 @@ test('the commands print the right bytes of plain and compressed files', async (
     const packed = path.join(dir, 'c.jsonl.zst');
     await fsp.writeFile(plain, text);
     const files = [[plain, false]];
-    // Without zstd in this Node only the plain command can be checked.
     if (typeof zlib.zstdCompressSync === 'function') {
       await fsp.writeFile(packed, zlib.zstdCompressSync(Buffer.from(text)));
       files.push([packed, true]);
@@ -98,7 +96,6 @@ test('the Codex adapter marks a session whose first prompt, after AGENTS.md and 
   assert.equal(run('# AGENTS.md instructions for /w', '<environment_context>x</environment_context>', prompt), true);
   assert.equal(run(prompt), true);
   assert.equal(run('# AGENTS.md instructions for /w', 'fix the build', prompt), false, 'only the first prompt counts');
-  // The mark survives a restore between the context and the prompt.
   const first = createCodexEvents({ sessionId: 's' });
   first.push(user('# AGENTS.md instructions for /w'), 0);
   const events = createCodexEvents({ sessionId: 's' }, first.state()).push(user(prompt), 1);

@@ -1,6 +1,4 @@
-// Claude Code transcript lines to breakdown events. Pure: no Node built-ins or Orca imports.
-// Events hold sizes, offsets and targets, never transcript text. Usage is read by records.mjs, so
-// the breakdown and the usage totals count each message the same way.
+// Claude Code lines to breakdown events: sizes, offsets and targets, never transcript text. Pure: no Node built-ins.
 import { claudeKey, claudeUsage } from '../records.mjs';
 import {
   agentTarget, attachmentTarget, commandTarget, injectedTarget, mcpTarget, messagesTarget, pathTarget,
@@ -19,8 +17,6 @@ const FILE_OPS = new Map([
 ]);
 const encoder = new TextEncoder();
 
-// ctx: { home } expands `~/` paths, and { sessionId } names a request whose message has no id.
-// state: a value from an earlier state() call, so a restored adapter continues the same file.
 export function createClaudeEvents(ctx = {}, state = null) {
   const home = ctx?.home ?? '';
   const fallbackSession = ctx?.sessionId ?? '';
@@ -30,7 +26,6 @@ export function createClaudeEvents(ctx = {}, state = null) {
   const seen = new Set(state?.seen ?? []);
   const calls = new Map(state?.calls ?? []);
 
-  // Meta carries each of cwd, sessionId and agentId once, the first time the file shows it.
   function learn(obj, out) {
     const meta = {};
     if (nonBlank(obj.cwd) && !cwd) {
@@ -70,8 +65,6 @@ export function createClaudeEvents(ctx = {}, state = null) {
     }
   }
 
-  // Tool results arrive as tool arrivals, each tied to its call. The rest of the line is one
-  // arrival: a compaction summary, injected meta text, or a plain message.
   function user(obj, where, out) {
     const message = isObject(obj.message) ? obj.message : {};
     const rest = [];
@@ -90,7 +83,6 @@ export function createClaudeEvents(ctx = {}, state = null) {
     else if (obj.isMeta === true) out.push(arrival('injected', injectedTarget(), stats, where));
     else {
       const event = arrival('messages', messagesTarget(), stats, where);
-      // A session started from an Explain prompt is marked (the text itself is never kept).
       if (startsWithMarker(rest)) event.explain = true;
       out.push(event);
     }
@@ -106,8 +98,6 @@ export function createClaudeEvents(ctx = {}, state = null) {
     out.push({ t: 'call', id, target, op });
   }
 
-  // The target and op of a tool call. A file tool with no usable path, and any tool this file does
-  // not name, is an `other` call on the tool itself.
   function toolUse(block) {
     const name = typeof block.name === 'string' ? block.name : '';
     const input = isObject(block.input) ? block.input : {};
@@ -141,11 +131,9 @@ export function createClaudeEvents(ctx = {}, state = null) {
   }
 
   return {
-    // bytes: the line's UTF-8 length when the caller knows it (saves encoding the line again).
     push(line, offset, bytes = null) {
       const text = String(line);
-      // Lines that open with a type this adapter ignores (api-request, queue-operation, ...) are
-      // skipped unparsed once the file's cwd and session are known and the line names no agent.
+      // Ignored types (api-request, ...) skip parsing once cwd and session are known and the line names no agent.
       if (cwd && sessionId && (agentId || !text.includes('"agentId"'))) {
         const head = HEAD.exec(text.length > 64 ? text.slice(0, 64) : text);
         if (head && !HANDLED.has(head[1])) return [];
@@ -177,8 +165,6 @@ export function createClaudeEvents(ctx = {}, state = null) {
   };
 }
 
-// One arrival of content into the context. A line with several tool results gives one arrival
-// per result, and each carries the line's offset and bytes.
 export const EXPLAIN_MARKER = '<!-- usage-insights explain v1 -->';
 
 function startsWithMarker(blocks) {
@@ -205,7 +191,6 @@ function blocksOf(content) {
   return Array.isArray(content) ? content.filter(isObject) : [];
 }
 
-// Text length and image count of a content value: a string, or an array of content blocks.
 function contentStats(content) {
   const stats = { chars: 0, images: 0 };
   for (const block of blocksOf(content)) {
@@ -218,15 +203,13 @@ function contentStats(content) {
 const HEAD = /^\{"type":"([^"\\]*)"/;
 const HANDLED = new Set(['assistant', 'user', 'attachment', 'system']);
 
-// JSON length of obj.attachment. Claude Code writes each line with JSON.stringify, so it is the
-// line's length less the rest of the line: no need to serialise a large attachment again.
+// Claude Code writes lines with JSON.stringify, so this is the line's length less the rest: no reserializing.
 function attachmentChars(obj, text) {
   if (obj.attachment === undefined || obj.attachment === null) return 0;
   const chars = text.length - JSON.stringify({ ...obj, attachment: 0 }).length + 1;
   return chars > 0 ? chars : valueChars(obj.attachment);
 }
 
-// Size of a value as text: the length of a string, or of its JSON.
 function valueChars(value) {
   if (value === undefined || value === null) return 0;
   return typeof value === 'string' ? value.length : JSON.stringify(value).length;
@@ -253,7 +236,6 @@ function nonBlank(value) {
   return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
-// A parseable timestamp in a plausible year, as records.mjs accepts them.
 function isTimestamp(value) {
   if (typeof value !== 'string') return false;
   const ms = Date.parse(value);

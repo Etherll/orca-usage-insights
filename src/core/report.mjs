@@ -9,10 +9,7 @@ import { dayKey, selectRecords } from './filters.mjs';
 const CALENDAR_DAYS = 182;
 const TOP_PROJECTS = 8;
 
-// `records` is a RecordTable (or an array of plain records, converted). `catalog` prices every
-// record and the cache savings; it defaults to the bundled catalog.
 export function buildReport(records, { range, now = new Date(), providers, hosts, scope, catalog = DEFAULT_CATALOG } = {}) {
-  // Pass 1: the filters (shared with the breakdown). `providers` and `hosts` list every value in the data.
   const selected = selectRecords(records, { range, now, providers, hosts, scope });
   const { table, rows, days, slots, count, hostNames, today, startDay, allProviders, allHosts, rowProviders } = selected;
   const { costs, entries } = tableCosts(table, catalog);
@@ -20,14 +17,13 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
   const nameOf = (id) => (id < 0 ? undefined : names[id]);
 
   // Pass 2: perDay covers every day (streak, calendar). The rest only count in-range records.
-  // Buckets are keyed by name id (Maps keep first-seen order, as the output sorts are stable).
   const perDay = new Map();
   const perProviderDay = new Map(); // provider id -> day -> bucket, in-range records only
   const totals = { ...blank(), savingsUsd: 0 };
-  const sessionsByProvider = new Map(); // provider id -> Set<sessionId id>
-  const sessionsByModel = new Map(); // model id -> provider id -> Set<sessionId id>
-  const sessionsByHost = new Map(); // host -> provider id -> Set<sessionId id>
-  const tokensByModel = new Map(); // model id -> Map<provider, tokens>
+  const sessionsByProvider = new Map();
+  const sessionsByModel = new Map();
+  const sessionsByHost = new Map();
+  const tokensByModel = new Map();
   const punchCard = new Array(168).fill(0);
   const models = new Map();
   const projects = new Map();
@@ -58,8 +54,7 @@ export function buildReport(records, { range, now = new Date(), providers, hosts
       unpriced.turns += 1;
       unpriced.tokens += tokens;
     }
-    // USD the cache reads saved against paying full input price, at the rates the request paid
-    // (its long-prompt tier, if any). Unpriced records save nothing.
+    // Saved against full input price at the rates the request paid (its long-prompt tier, if any).
     const entry = entries[model + 1];
     const price = entry && cacheRead > 0 ? ratesFor(entry, input, cacheRead, cacheWrite) : null;
     totals.savingsUsd += price ? (cacheRead * (price.input - price.cacheRead)) / 1e6 : 0;
@@ -209,7 +204,6 @@ function sortHosts(hosts) {
 const newSet = () => new Set();
 const newMap = () => new Map();
 
-// Distinct (provider, sessionId) pairs in a provider -> Set<sessionId> map.
 function countSessions(byProvider) {
   let n = 0;
   for (const ids of byProvider.values()) n += ids.size;
@@ -249,7 +243,6 @@ function costOf(b) {
   return b.pricedTurns > 0 ? b.costUsd : null;
 }
 
-// The newest asOf date among the catalog's entries, or null when none has one.
 export function newestAsOf(catalog) {
   let newest = null;
   for (const entry of catalog.entries.values()) {

@@ -31,7 +31,6 @@ async function request(name, input) {
   throw new Error('Orca host is not available.')
 }
 
-// The filters both views share, as the worker's input.
 function filterInput() {
   const input = { range: state.range }
   if (state.provider !== 'all') input.providers = [state.provider]
@@ -40,8 +39,6 @@ function filterInput() {
   return input
 }
 
-// Loads the report (header, controls, Usage view), then the Breakdown when it is on screen, so a
-// range or filter change updates both.
 async function load(kind = 'usage.report') {
   if (state.busy) {
     // A change that lands mid-request triggers one more load when this one finishes.
@@ -353,7 +350,6 @@ function renderBreakdown(r) {
   $('breakdown').innerHTML = head + `<tbody>${body}</tbody>`
 }
 
-// Which view is on screen, and the controls that only apply to Usage.
 function renderView() {
   const bd = state.view === 'breakdown'
   for (const b of $('view').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.view === state.view))
@@ -366,8 +362,7 @@ function renderView() {
   $('prices').innerHTML = priceLine(state.prices)
 }
 
-// A one-time note that 1.2.0 changed how costs are priced. localStorage can be missing or throw
-// (private frames), so the note just shows again in that case.
+// One-time 1.2.0 pricing note. localStorage can be missing or throw in frames; the note then shows again.
 function renderNote() {
   let seen = false
   try { seen = globalThis.localStorage?.getItem(NOTE_KEY) === '1' } catch {}
@@ -555,8 +550,7 @@ function bindBreakdown() {
   $('explain-copy').addEventListener('click', copyExplain)
 }
 
-// New data while Breakdown is on screen: a loading view refreshes itself; a finished one offers an
-// update instead of reordering under the reader.
+// A finished Breakdown offers an update instead of reordering under the reader.
 function onChanged() {
   loadPrices()
   if (state.view !== 'breakdown') return load()

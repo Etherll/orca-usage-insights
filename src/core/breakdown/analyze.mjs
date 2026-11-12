@@ -1,11 +1,5 @@
-// Analyze: prices the digests' token rows and reconciles them with the Usage records, so the
-// Breakdown total equals the Usage total for the same filters. Spend the digests can't explain is
-// listed by reason. Pure: no Node built-ins.
-//
-// Reconciliation runs per (provider, host, sessionId, local day): U is the Usage cost of the
-// records, D the priced digest rows. D = 0 → U is "not analysed" with the file's reason. D > U →
-// the rows are scaled down to U (resumed sessions repeat history). D < U → the gap is "unmatched".
-// So analysedUsd + Σ notAnalysed.usd = usageUsd.
+// Reconciles priced digest rows with Usage per (session, local day), so the totals match. Pure: no Node built-ins.
+// No digest spend is "not analysed"; more scales the rows down (resumed sessions repeat history); less is "unmatched".
 import { costOfTokens, resolveModel } from '../catalog.mjs';
 import { dayKey, inScope, selectRecords } from '../filters.mjs';
 import { localClock } from '../time.mjs';
@@ -35,22 +29,14 @@ const GROUPS = {
 };
 const B = Object.fromEntries(BUCKETS.map((name, i) => [name, i]));
 const UNATTRIBUTED = ['unattributed', '(unattributed)', 'bucket'];
-// A group (session, local day) is one number: session * SESSION + day + DAY_OFFSET. Every valid
-// Date's day number is within ±DAY_OFFSET.
+// A group (session, local day) is session * SESSION + day + DAY_OFFSET; every valid Date's day is within ±DAY_OFFSET.
 const SESSION = 2 ** 28;
 const DAY_OFFSET = 2 ** 27;
-// Analyses kept per (records, digests, files, catalog), for other ranges and filters.
 const ANALYSES_KEPT = 8;
-// The default for a list not given: one object, so calls without it share their analyses.
+// One shared default, so calls without a list hit the same cached analyses.
 const NONE = Object.freeze([]);
 
-// digests: [{ path, compressed, sessionId, digest }] from the digest scanner; a digest's rows may
-// be plain arrays or packed (digest-rows.mjs).
-// files: [{ path, provider, host, sessionId, state }]: the scanner's status per file.
-//
-// The analysis behind a view depends on the records, digests, files and catalog (by object), the
-// range, filters, local day and time zone; it is kept and reused for every path (drilling down) and
-// for repeat requests while those are the same objects. Inputs are treated as immutable.
+// Analyses are cached by input object identity, so inputs are treated as immutable.
 export function analyzeBreakdown({
   records = NONE,
   digests = NONE,
@@ -112,7 +98,6 @@ function timeZone() {
   }
 }
 
-// Everything in a view but the tree level shown: totals, buckets, findings, health, and the tree.
 function analyze({ table: records, digests, files, catalog, range, now, providers, hosts, scope }, zone) {
   const { table, rows, days, count, hostNames, today, startDay } = selectRecords(records, { range, now, providers, hosts, scope });
   const inRange = (day) => day >= startDay && day <= today;
@@ -122,14 +107,12 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
   const { costs } = tableCosts(table, catalog);
   const nameOf = (id) => (id < 0 ? undefined : table.names[id]);
 
-  // U per group, plus the unpriced records.
   const usage = new Map();
   const unpriced = new Map();
   let unpricedTurns = 0;
   let usageUsd = 0;
   const { provider, model, sessionId, host, input, output, cacheRead, cacheWrite } = table;
-  // Session numbers by sessionId name id, checked against the row's provider and host.
-  const seen = new Map(); // sessionId id -> [provider id, host id, session number]
+  const seen = new Map();
   for (let k = 0; k < count; k++) {
     const day = days[k];
     if (day === null || !inRange(day)) continue;
@@ -140,7 +123,7 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
       const name = String(nameOf(model[i]) ?? '');
       const entry = unpriced.get(name) ?? { model: name, turns: 0, tokens: 0 };
       entry.turns++;
-      // A missing count was stored as NaN (tableFromRecords); it counts as 0, as before.
+      // A missing count is stored as NaN (tableFromRecords) and counts as 0.
       entry.tokens += zero(input[i]) + zero(output[i]) + zero(cacheRead[i]) + zero(cacheWrite[i]);
       unpriced.set(name, entry);
       continue;
@@ -160,8 +143,6 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
     }
   }
 
-  // D per group, from the digests that pass the same filters. Each priced row in range is kept as
-  // (digest, row, usd, group) in parallel lists.
   const allowed = providers ? new Set(providers) : null;
   const allowedHosts = hosts ? new Set(hosts) : null;
   const packed = new Array(digests.length);
@@ -194,7 +175,6 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
     }
   }
 
-  // File reasons for sessions the digest scanner skipped or failed to read.
   const fileReasons = new Map();
   for (const file of files) {
     const reason = FILE_REASON[file?.state];
@@ -228,13 +208,10 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
   unpricedEntry.usd = null;
   unpricedEntry.turns = unpricedTurns;
 
-  // Scaled rows feed the buckets, the tree and the findings. What a row adds to depends only on
-  // its digest and target, so that is worked out once per (digest, target): the tree path and the
-  // findings it feeds (with their session and evidence, which repeat for every such row).
   const buckets = BUCKETS.map((key) => ({ key, usd: 0, estUsd: 0 }));
   const root = makeNode('', '', 'root');
   const findingAcc = new Map();
-  const perTarget = new Array(digests.length); // digest index -> Map(target -> { chain, findings })
+  const perTarget = new Array(digests.length);
   let analysedUsd = 0;
   let estUsd = 0;
   let explainUsd = 0;
@@ -302,8 +279,7 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
 
 const zero = (n) => (Number.isNaN(n) ? 0 : n);
 
-// Each row's USD and local day, once per (digest, catalog, time zone). usd is 0 for a row whose
-// model has no price; day is NaN when the slot is not a number.
+// usd is 0 for a row whose model has no price; day is NaN when the slot is not a number.
 const pricing = new WeakMap();
 
 function pricedRows(d, catalog, zone, toLocal) {
@@ -327,10 +303,9 @@ function pricedRows(d, catalog, zone, toLocal) {
   return priced;
 }
 
-// Session numbers per (provider, host, sessionId), normalized as JSON keys would be (undefined
-// provider as null, 'local' for no host, '' for no sessionId). list[n] gives a session back.
+// Keys normalized as JSON would: undefined provider as null, 'local' for no host, '' for no sessionId.
 function sessionIndex() {
-  const index = new Map(); // provider -> host -> sessionId -> number
+  const index = new Map();
   const list = [];
   const level = (map, key) => {
     let next = map.get(key);
@@ -359,8 +334,6 @@ function sessionKey(provider, host, sessionId) {
   return JSON.stringify([provider, host || 'local', sessionId ?? '']);
 }
 
-// --- tree -------------------------------------------------------------------------------------
-
 function makeNode(key, label, kind) {
   return { key, label, kind, usd: 0, estUsd: 0, children: new Map() };
 }
@@ -374,14 +347,10 @@ function child(node, key, label, kind) {
   return next;
 }
 
-// The nodes a target's spend adds to: root › project › group or folders › leaf. Fold-made targets
-// (kind 'bucket') sit at project level. memo.labels and memo.parts keep project labels and split
-// file paths for the rest of one analysis.
 function treePath(root, project, [key, label, kind], memo) {
   const chain = [root, root.children.get(project) ?? child(root, project, labelOf(project, memo), 'project')];
   const projectNode = chain[1];
   if (kind === 'file') {
-    // File keys are namespaced ('file:src/a.mjs'); the tree splits the path itself.
     let parts = memo.parts.get(key);
     if (parts === undefined) {
       parts = String(key).replace(/^file:/, '').split(/[\\/]+/).filter(Boolean);
@@ -401,7 +370,6 @@ function treePath(root, project, [key, label, kind], memo) {
   return chain;
 }
 
-// The children of the node `path` selects (the longest valid prefix), top `max` plus `more`.
 function level(root, path, share, max = LEVEL_MAX) {
   let node = root;
   const valid = [];
@@ -421,9 +389,7 @@ function level(root, path, share, max = LEVEL_MAX) {
   };
 }
 
-// Keeps a view under VIEW_MAX_CHARS: fewer tree nodes first, then each finding's daily series cut
-// to its last DAILY_KEPT days (the panel draws it as an 80 px sparkline), then fewer nodes again.
-// The findings are copied: the analysis they come from is cached and shared.
+// Findings are copied: the analysis they come from is cached and shared.
 function capSize(view, root, path, share) {
   const steps = [
     () => Object.assign(view, level(root, path, share, 12)),
@@ -449,12 +415,6 @@ function lastSegment(path) {
   return parts[parts.length - 1] ?? String(path);
 }
 
-// --- findings ---------------------------------------------------------------------------------
-
-// The finding a (digest, target) feeds for one kind, created on first use, with that digest's
-// session and its evidence for the target added once (they are the same for each of its rows).
-// `t` is the rows' target index; big entries name the target they belong to by it. memo.ids keeps
-// finding ids for the rest of one analysis.
 function finding(acc, findingKind, d, item, target, t, memo) {
   const [key, label] = target;
   const project = d.cwd || '(unknown)';
@@ -477,7 +437,6 @@ function finding(acc, findingKind, d, item, target, t, memo) {
   return f;
 }
 
-// One row's spend into a finding.
 function feed(f, rows, at, usd, est, day) {
   f.usd += usd;
   if (est) f.estUsd += usd;
@@ -527,7 +486,6 @@ function buildFindings(acc, threshold) {
   return out;
 }
 
-// FNV-1a, 32-bit, as 8 hex chars: a stable id from a string.
 function hash(text) {
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) {

@@ -1,11 +1,7 @@
-// RecordTable to and from the forms it is stored and sent in: JSON-safe strings for cache files, and
-// typed arrays for a thread message (whose buffers are transferred, not copied). Pure: no Node
-// built-in or Orca imports.
-//
-// Encoded: { f: 1, n, names, keys, ms, input .. cacheWrite1h, provider .. host }. `names` holds only
-// the strings the rows use (a table may share a large dictionary). On disk each column is
-// '<type>:<base64>' in the narrowest type that holds it: counts u8, u16, u32 or f64; name ids n8 or
-// n16 (id + 1, so -1 is 0) or i32. Bytes are little-endian, as on every platform Orca runs on.
+// RecordTable to and from JSON-safe strings (cache files) and typed arrays (thread messages, buffers
+// transferred). Pure: no Node built-in or Orca imports. Encoded `names` holds only the strings the rows use.
+// On disk each column is '<type>:<base64>' in the narrowest type: counts u8, u16, u32 or f64; name ids n8 or
+// n16 (id + 1, so -1 is 0) or i32. Little-endian, as on every platform Orca runs on.
 
 import { fromBase64, toBase64 } from './base64.mjs';
 import { COLUMNS, NAME_FIELDS, NameDict, RecordTable } from './table.mjs';
@@ -14,7 +10,6 @@ const FORMAT = 1;
 
 export function encodeTable(table, { binary = false } = {}) {
   const n = table.length;
-  // The dictionary ids the rows use, renumbered from 0 in order of first use.
   const local = new Int32Array(table.names.length).fill(-1);
   const names = [];
   const ids = {};
@@ -43,13 +38,11 @@ export function encodeTable(table, { binary = false } = {}) {
   return encoded;
 }
 
-// The buffers of a binary encoding, for postMessage's transfer list.
 export function transferList(encoded) {
   return COLUMNS.map((field) => encoded[field]?.buffer).filter((b) => b instanceof ArrayBuffer);
 }
 
-// A table from either encoding, on `dict` (ids translated into it). Throws on anything malformed,
-// so a bad cache entry is read again instead.
+// Throws on anything malformed, so a bad cache entry is read again instead.
 export function decodeTable(encoded, dict = new NameDict()) {
   if (encoded?.f !== FORMAT || !Number.isSafeInteger(encoded.n) || encoded.n < 0) throw new Error('bad record table');
   const n = encoded.n;

@@ -7,12 +7,11 @@ import { fileURLToPath } from 'node:url';
 import activate, { deactivate, startWorker } from '../src/worker.mjs';
 import { createPriceBook } from '../src/node/price-book.mjs';
 
-// Only the price book may reach the network. Everything else in src/ must stay offline, so the
-// panel's own paths (status, reports, polls, agent events) never send a request.
+// Only the price book may reach the network; the panel's own paths must stay offline.
 const srcDir = fileURLToPath(new URL('../src/', import.meta.url));
 const priceBookFile = path.join(srcDir, 'node', 'price-book.mjs');
 const FORBIDDEN = [/\bfetch\(/, /['"](node:)?https?['"]/, /['"](node:)?net['"]/, /\bXMLHttpRequest\b/, /\bWebSocket\b/, /\bEventSource\b/, /\bsendBeacon\b/];
-const NOON = () => new Date(2026, 10, 3, 12, 0, 0); // local noon, 2026-11-03
+const NOON = () => new Date(2026, 10, 3, 12, 0, 0);
 
 // Records are built from local parts so they land on today in any TZ.
 const usageRecord = (over = {}) => ({
@@ -30,7 +29,6 @@ const usageRecord = (over = {}) => ({
   ...over,
 });
 
-// Orca host stand-in with the handlers, events and log the worker uses.
 function mockOrca() {
   const mock = { handlers: new Map(), posts: [], hostCalls: [], listeners: {} };
   mock.orca = {
@@ -58,7 +56,6 @@ function mockOrca() {
   return mock;
 }
 
-// A fetch that records every call and fails it, so a stray request is both visible and harmless.
 function fetchSpy() {
   const spy = async (...args) => {
     spy.calls.push(args);
@@ -68,7 +65,6 @@ function fetchSpy() {
   return spy;
 }
 
-// Stands in for createScanner: every scan returns the same single record.
 function oneRecordScanner() {
   const scanner = {
     scans: 0,

@@ -26,11 +26,9 @@ export function parseCodexTranscript(text, ctx) {
 }
 
 // `state` is a value returned by an earlier parser's state(). A restored parser keeps every
-// record it has seen, so table() always holds the full deduped set for the file. Records live in a
-// RecordTable (columns, see table.mjs). States from older versions (records packed per row, or a
-// plain list) are converted when the parser is restored, so an old cache carries over unread.
+// record it has seen, so table() always holds the full deduped set for the file. States from older
+// versions are converted when the parser is restored, so an old cache carries over unread.
 // state() gives JSON-safe columns; state({ binary: true }) gives typed arrays for a thread message.
-// `names` is the dictionary the parser's table uses (share one so tables merge without translating).
 export function createClaudeParser(ctx, state, { names } = {}) {
   const { sessionId = '', project = '' } = ctx ?? {};
   const host = ctx?.host ?? 'local';
@@ -71,10 +69,7 @@ export function createClaudeParser(ctx, state, { names } = {}) {
         if (line.includes(CLAUDE_MARKER)) add(parseClaudeLine(line));
       }
     },
-    // One line already parsed (null when it did not parse), from a line holding CLAUDE_MARKER.
-    // The node scanner finds and parses lines in the raw bytes and feeds them here.
     pushObject: add,
-    // The file's records as a live table: it changes with later pushes.
     table: () => table,
     records: () => table.toRecords(),
     state: ({ binary = false } = {}) => ({ table: encodeTable(table, { binary }) }),
@@ -129,8 +124,6 @@ export function createCodexParser(ctx, state, { names } = {}) {
         if (obj) add(obj);
       }
     },
-    // One parsed line (an object) from a line holding a Codex marker in its first bytes. The node
-    // scanner finds and parses lines in the raw bytes and feeds them here.
     pushObject: add,
     table: () => table,
     records: () => table.toRecords(),
@@ -138,12 +131,10 @@ export function createCodexParser(ctx, state, { names } = {}) {
   };
 }
 
-// The table a state holds: current columns, or records from an older state (packed rows, or a
-// plain list), converted. Throws when the columns are malformed.
 function restoreTable(state, names = new NameDict()) {
   if (state?.table) return decodeTable(state.table, names);
   const table = tableFromRecords(state?.packed ? unpackRecords(state.packed) : Array.isArray(state?.records) ? state.records : [], names);
-  table.frozen = false; // the parser adds to it
+  table.frozen = false;
   return table;
 }
 
@@ -153,8 +144,7 @@ function keyRows(table) {
   return rows;
 }
 
-// A plausible-year test on epoch ms: years before MIN_YEAR or past next year are bad data. The
-// upper bound follows the clock (rechecked once an hour).
+// Years before MIN_YEAR or past next year are bad data. The upper bound follows the clock (rechecked hourly).
 function yearCheck() {
   const floor = Date.UTC(MIN_YEAR, 0, 1);
   let ceiling = -Infinity;
@@ -170,16 +160,11 @@ function yearCheck() {
   };
 }
 
-// Record fields in their usual order. Strings go into a per-list table, so each distinct value
-// is stored and kept in memory once; numbers stay as they are.
 const RECORD_FIELDS = ['key', 'provider', 'ts', 'model', 'project', 'sessionId', 'input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h', 'cwd', 'host'];
 const STRING_FIELD = RECORD_FIELDS.map((field) => !['input', 'output', 'cacheRead', 'cacheWrite', 'cacheWrite1h'].includes(field));
 const WIDTH = RECORD_FIELDS.length;
 
-// Records as older caches stored them: { s: [distinct strings], r: [one flat row of WIDTH numbers
-// per record] }. A string field holds its index in s, or -1 when the record has no such field; a
-// number field holds the number. Read only, to convert an older cache (tests/legacy-records.mjs
-// writes it).
+// Older caches' records: { s: [strings], r: [WIDTH numbers per record] }, a string field its index in s or -1.
 export function unpackRecords(packed) {
   const strings = Array.isArray(packed?.s) ? packed.s : [];
   const rows = Array.isArray(packed?.r) ? packed.r : [];
@@ -196,16 +181,14 @@ export function unpackRecords(packed) {
   return out;
 }
 
-// Dedupe key for a parsed Claude assistant line: message id + request id. Null without a message
-// id. The scanner uses it to count a message copied into a resumed session once.
+// Message id + request id, null without a message id, so a message copied into a resumed session counts once.
 export function claudeKey(obj) {
   const id = nonEmptyString(obj?.message?.id);
   if (!id) return null;
   return `${id}:${nonEmptyString(obj.requestId) ?? ''}`;
 }
 
-// Token counts from a Claude message.usage object. cacheWrite1h is the part of cacheWrite written
-// with the 1-hour TTL; it is 0 when the usage has no cache_creation split.
+// cacheWrite1h is the part of cacheWrite with the 1-hour TTL; 0 when usage has no cache_creation split.
 export function claudeUsage(usage) {
   const cacheWrite = count(usage.cache_creation_input_tokens);
   return {
@@ -217,8 +200,7 @@ export function claudeUsage(usage) {
   };
 }
 
-// Token counts from a Codex last_token_usage object. Codex counts cached input inside input_tokens,
-// so input is the uncached part. Codex has no 1-hour write split.
+// Codex counts cached input inside input_tokens, so input is the uncached part. No 1-hour write split.
 export function codexUsage(last) {
   const cacheRead = count(last.cached_input_tokens);
   return {
@@ -266,7 +248,6 @@ function completeLines(text) {
   return lines;
 }
 
-// JSON.parse that yields only plain objects (null for anything else or a parse error).
 export function parseJson(line) {
   try {
     const value = JSON.parse(line);

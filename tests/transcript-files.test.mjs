@@ -10,7 +10,6 @@ const coded = (code) => Object.assign(new Error(code), { code });
 const lines = (...rows) => Buffer.from(rows.map((row) => `${row}\n`).join(''));
 const zstdSkip = zstdAvailable() ? false : 'Node has no zlib.zstdCompressSync, so the .zst reads cannot run here';
 
-// Consumer that keeps its text. Same shape the scanner gives a parser: push() and state().
 function textConsumer(state = null) {
   let text = state?.text ?? '';
   return {
@@ -23,8 +22,7 @@ function textConsumer(state = null) {
 const open = (file, state) => textConsumer(state);
 const resume = (result) => ({ key: result.key, offset: result.offset, consumer: result.consumer });
 
-// In-memory fs. entries[path] is { data: Buffer, mtimeMs } or 'dir'. hooks.stat, hooks.open and
-// hooks.read may throw to simulate a failure at that step.
+// entries[path] is { data: Buffer, mtimeMs } or 'dir'; hooks.stat, open and read may throw to simulate failures.
 function memoryFs(entries, hooks = {}) {
   const log = { stats: 0, opens: 0 };
   return {

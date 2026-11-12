@@ -1,7 +1,5 @@
-// Labels for breakdown targets. Pure: no Node built-ins or Orca imports.
-// A target names a file, folder, command family, agent, web host, MCP server or tool. It never
-// holds message text, command arguments or file contents: paths are cut or made relative, and a
-// command keeps only its program and, for a few tools, its subcommand.
+// Labels for breakdown targets. Pure: no Node built-ins or Orca imports. A target never holds message
+// text, command arguments or file contents: paths are cut or made relative, commands keep their family.
 
 const TEMP_PATH = /^(\/private)?\/(tmp|var\/folders)(\/|$)|(^|\/)appdata\/local\/temp(\/|$)/i;
 const WRAPPER = /^(sudo|env|time|rtk|npx|bunx)\s+/;
@@ -9,20 +7,16 @@ const SUBCOMMAND_PROGRAMS = new Set([
   'git', 'gh', 'npm', 'pnpm', 'yarn', 'cargo', 'go', 'uv', 'pip', 'docker', 'kubectl',
   'make', 'dotnet', 'orca',
 ]);
-// Programs whose first plain word may be a script name: only these words count as a subcommand.
-// Python's subcommand is the module after -m; node has none.
+// Only these programs' first plain word counts as a subcommand; Python's is the module after -m.
 const KNOWN_SUBCOMMANDS = {
   bun: new Set(['add', 'build', 'create', 'install', 'link', 'pm', 'remove', 'run', 'test', 'update', 'upgrade', 'x']),
   deno: new Set(['add', 'bench', 'check', 'compile', 'fmt', 'info', 'init', 'install', 'lint', 'publish', 'remove', 'run', 'serve', 'task', 'test', 'upgrade']),
 };
 const PYTHONS = new Set(['python', 'python3']);
-// After these flags the next word is code, not a subcommand.
 const CODE_FLAGS = new Set(['-e', '-c', '-p', '--eval', '--print']);
 const MAX_SEGMENTS = 5;
 const TEMP_TARGET = Object.freeze({ key: 'folder:(temp files)', label: '(temp files)', kind: 'folder' });
 
-// The target for a file or folder path. Under the cwd: relative to it. Temp folders: one shared
-// target. Under home: ~/… . Anything else: its first five segments. Null when there is no path.
 export function pathTarget(path, cwd, home) {
   if (typeof path !== 'string' || path === '') return null;
   const p = slashes(path);
@@ -36,8 +30,6 @@ export function pathTarget(path, cwd, home) {
   return fileTarget(p.startsWith('/') ? `/${head}` : head);
 }
 
-// The family of a shell command: its program and, for a few tools, its subcommand. Flags,
-// arguments and paths are dropped, so a family never carries command text.
 export function commandFamily(cmd) {
   let rest = typeof cmd === 'string' ? cmd.trim() : '';
   let before;
@@ -104,7 +96,6 @@ export function mcpTarget(server) {
   return { key: `mcp:${name}`, label: name, kind: 'mcp' };
 }
 
-// A search with a path targets that path. A search without one targets the shared search tool.
 export function searchTarget(path, cwd, home) {
   return pathTarget(path, cwd, home) ?? toolTarget('(search)');
 }
@@ -138,7 +129,6 @@ function trimSlashes(value) {
   return value.replace(/\/+$/, '');
 }
 
-// Program name from its first word: quotes, directories and a .exe suffix removed.
 function baseName(word) {
   const unquoted = String(word ?? '').replace(/^["']+|["']+$/g, '');
   return unquoted.split(/[\\/]/).pop().replace(/\.exe$/i, '');
