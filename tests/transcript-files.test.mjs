@@ -213,7 +213,30 @@ test('a .zst transcript over maxWholeBytes is skipped as too-large', { skip: zst
   const Z = '/t/c.jsonl.zst';
   const fs = memoryFs({ [Z]: { data: zlib.zstdCompressSync(Buffer.from('one\ntwo\n')), mtimeMs: 1000 } });
   const result = await readTranscript({ fs, file: transcript(Z, { compressed: true }), open, maxWholeBytes: 4 });
-  assert.deepEqual(result, { status: 'skipped', reason: 'too-large' });
+  assert.deepEqual({ ...result, key: typeof result.key }, { status: 'skipped', reason: 'too-large', key: 'string' });
+});
+
+test('a .zst transcript that decompresses past the cap is skipped, and not decompressed again until it changes', { skip: zstdSkip }, async () => {
+  const Z = '/t/c.jsonl.zst';
+  const entries = { [Z]: { data: zlib.zstdCompressSync(Buffer.from('one\n')), mtimeMs: 1000 } };
+  const fs = memoryFs(entries);
+  const file = transcript(Z, { compressed: true });
+  let parses = 0;
+  const pool = {
+    async parse() {
+      parses++;
+      throw new Error('decompressed transcript is too large');
+    },
+  };
+  const first = await readTranscript({ fs, file, pool, open });
+  assert.equal(first.status, 'skipped');
+  assert.equal(first.reason, 'too-large');
+  const again = await readTranscript({ fs, file, pool, open, oversizedKey: first.key });
+  assert.deepEqual(again, first);
+  assert.equal(parses, 1, 'the same file is not decompressed twice');
+  entries[Z] = { data: zlib.zstdCompressSync(Buffer.from('one\ntwo\n')), mtimeMs: 2000 };
+  await readTranscript({ fs, file, pool, open, oversizedKey: first.key });
+  assert.equal(parses, 2, 'a changed file is tried again');
 });
 
 test('a .zst transcript with a pool goes to the thread marked compressed', { skip: zstdSkip }, async () => {

@@ -20,6 +20,7 @@ const LEVEL_MAX = 25;
 const FINDINGS_MAX = 10;
 const EVIDENCE_MAX = 5;
 const VIEW_MAX_CHARS = 900_000;
+const DAILY_KEPT = 90;
 const REASONS = ['ssh', 'zstd', 'too-large', 'parse', 'unmatched', 'unpriced'];
 const FILE_REASON = { zstd: 'zstd', 'too-large': 'too-large', error: 'parse' };
 const GROUPS = {
@@ -420,10 +421,19 @@ function level(root, path, share, max = LEVEL_MAX) {
   };
 }
 
+// Keeps a view under VIEW_MAX_CHARS: fewer tree nodes first, then each finding's daily series cut
+// to its last DAILY_KEPT days (the panel draws it as an 80 px sparkline), then fewer nodes again.
+// The findings are copied: the analysis they come from is cached and shared.
 function capSize(view, root, path, share) {
-  for (const max of [12, 6]) {
+  const steps = [
+    () => Object.assign(view, level(root, path, share, 12)),
+    () => Object.assign(view, level(root, path, share, 6)),
+    () => (view.findings = view.findings.map((f) => (f.daily.length > DAILY_KEPT ? { ...f, daily: f.daily.slice(-DAILY_KEPT) } : f))),
+    () => Object.assign(view, level(root, path, share, 3)),
+  ];
+  for (const step of steps) {
     if (JSON.stringify(view).length <= VIEW_MAX_CHARS) return view;
-    Object.assign(view, level(root, path, share, max));
+    step();
   }
   return view;
 }

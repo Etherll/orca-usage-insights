@@ -47,6 +47,7 @@ export function createDigestScanner({
   // shows up in many sessions (106k targets, 18k distinct, on a large history).
   const targets = new Map(); // key -> [target, ...] (one per label and kind)
   const loaded = new Set();
+  const oversized = new Map(); // path -> key of a compressed file that decompressed past the cap
   let pool = sharedPool;
   let run = null;
   let progress = { done: 0, total: 0 };
@@ -55,11 +56,12 @@ export function createDigestScanner({
 
   // since: epoch ms. Files last changed before it hold no spend after it, so they are not read
   // (state 'old'); a wider range reads them later. A call joins the running scan when that scan
-  // covers its range, else it runs after it.
+  // covers its range and lists the same extra folders, else it runs after it.
   function scan({ extra = { claude: [], codex: [] }, since = 0 } = {}) {
-    if (run && run.since <= since) return run.done;
+    const folders = JSON.stringify([extra?.claude ?? [], extra?.codex ?? []]);
+    if (run && run.since <= since && run.folders === folders) return run.done;
     const before = run?.done.catch(() => {}) ?? null;
-    const current = { since, done: null };
+    const current = { since, folders, done: null };
     current.done = (before ? before.then(() => runScan(extra, since)) : runScan(extra, since)).finally(() => {
       if (run === current) run = null;
     });
@@ -154,7 +156,10 @@ export function createDigestScanner({
       mode: 'digest',
       markers: null,
       open: (f, state) => createDigestConsumer(f, state, ADOPT),
+      oversizedKey: oversized.get(file.path) ?? null,
     });
+    if (result.status === 'skipped' && result.reason === 'too-large' && result.key) oversized.set(file.path, result.key);
+    else oversized.delete(file.path);
     if (result.status === 'unchanged') return 'ok';
     if (result.status === 'gone') {
       files.delete(file.path);

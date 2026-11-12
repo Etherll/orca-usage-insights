@@ -6,6 +6,9 @@ export function zstdAvailable() {
   return typeof zlib.zstdDecompressSync === 'function';
 }
 
+// The error a transcript that decompresses past the cap throws; a parse thread passes its message.
+export const TOO_LARGE = 'decompressed transcript is too large';
+
 const LF = 0x0a;
 const LF_BYTES = Buffer.from('\n');
 
@@ -21,7 +24,7 @@ export async function forEachLines(buf, onLines, maxBytes = 768 << 20) {
     total += chunk.length;
     if (total > maxBytes) {
       stream.destroy();
-      throw new Error('decompressed transcript is too large');
+      throw new Error(TOO_LARGE);
     }
     const cut = chunk.lastIndexOf(LF);
     if (cut < 0) {
@@ -91,7 +94,7 @@ export async function readLines(fh, size, onLines, scratch = {}, maxBytes = 768 
     inLen = state[1];
     if (produced === 0 && consumed === 0 && inLen > 0) throw new Error('zstd decompression stalled');
     total += produced;
-    if (total > maxBytes) throw new Error('decompressed transcript is too large');
+    if (total > maxBytes) throw new Error(TOO_LARGE);
     if (produced > 0) {
       const from = filled;
       filled += produced;

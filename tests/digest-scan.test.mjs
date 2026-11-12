@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { zstdCompressSync } from 'node:zlib';
+import zlib from 'node:zlib';
 import { createDigestScanner } from '../src/node/digest-scan.mjs';
 import { ROW_WIDTH } from '../src/core/breakdown/digest-rows.mjs';
+import { zstdAvailable } from '../src/node/zstd.mjs';
+
+const zstdSkip = zstdAvailable() ? false : 'Node has no zlib.zstdCompressSync, so the .zst transcript cannot be written here';
 
 const fixture = (name) => fsp.readFile(new URL(`./fixtures/${name}`, import.meta.url));
 
@@ -28,13 +31,13 @@ const rowsTotal = (d) => {
 };
 
 for (const threads of [0, 2]) {
-  test(`digests every transcript, tails a grown file and reuses unchanged ones (threads ${threads})`, async () => {
+  test(`digests every transcript, tails a grown file and reuses unchanged ones (threads ${threads})`, { skip: zstdSkip }, async () => {
     const dir = await home();
     const claudeText = await fixture('breakdown-claude.jsonl');
     const codexText = await fixture('breakdown-codex.jsonl');
     const claudeFile = path.join(dir, '.claude', 'projects', 'proj', 'sess-1.jsonl');
     await fsp.writeFile(claudeFile, claudeText);
-    await fsp.writeFile(path.join(dir, '.codex', 'sessions', '2026', '11', '03', 'rollout-x.jsonl.zst'), zstdCompressSync(codexText));
+    await fsp.writeFile(path.join(dir, '.codex', 'sessions', '2026', '11', '03', 'rollout-x.jsonl.zst'), zlib.zstdCompressSync(codexText));
     const cacheDir = path.join(dir, 'cache', 'digests-v1');
     const env = { HOME: dir };
     const scanner = createDigestScanner({ cacheDir, home: dir, env, platform: 'linux', threads });
@@ -199,3 +202,23 @@ test('a version 2 shard (one file, rows as arrays) is read and converted without
   }
 });
 
+
+test('a scan with other extra folders does not join the running one', async () => {
+  const dir = await home();
+  const text = await fixture('breakdown-claude.jsonl');
+  await fsp.writeFile(path.join(dir, '.claude', 'projects', 'proj', 's.jsonl'), text);
+  const extraDir = path.join(dir, 'more');
+  await fsp.mkdir(extraDir);
+  await fsp.writeFile(path.join(extraDir, 'x.jsonl'), text);
+  const scanner = createDigestScanner({ cacheDir: null, home: dir, env: { HOME: dir }, platform: 'linux', threads: 0 });
+  try {
+    const running = scanner.scan();
+    // A folder added while the first scan runs, asked for with a narrower range.
+    const wider = scanner.scan({ extra: { claude: [extraDir], codex: [] }, since: 1 });
+    assert.equal((await running).total, 1);
+    assert.equal((await wider).total, 2);
+  } finally {
+    await scanner.close();
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

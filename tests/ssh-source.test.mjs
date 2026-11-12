@@ -131,6 +131,22 @@ test('the per-host cache survives a restart and avoids re-reading', { skip: isWi
   assert.equal(b.calls.length, 1, 'listing only, no read');
 });
 
+test('lines appended before the first scan after a restart are counted', { skip: isWin }, async (t) => {
+  const fx = await fixture(t);
+  const file = path.join(fx.proj, 's1.jsonl');
+  await fsp.writeFile(file, claudeLine('m1') + '\n');
+  const cacheFile = path.join(fx.home, 'cache', 'ssh-box.json');
+  const a = localSource(fx.home, { cacheFile });
+  await a.source.scan();
+  await a.source.flush();
+  // The restored entry is tailed from its offset; its parser must exist before the lines arrive.
+  await fsp.appendFile(file, claudeLine('m2') + '\n');
+  const b = localSource(fx.home, { cacheFile });
+  assert.equal((await b.source.scan()).records.length, 2);
+  await fsp.appendFile(file, claudeLine('m3') + '\n');
+  assert.equal((await b.source.scan({ force: true })).records.length, 3);
+});
+
 test('ssh failures become a readable error status and keep earlier records', async () => {
   let fail = false;
   const source = createSshSource({

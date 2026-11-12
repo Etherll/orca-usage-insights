@@ -57,6 +57,14 @@ test('command families keep the program and a subcommand, never arguments', () =
     ['cd app && cargo build --release', '$ cargo build'],
     ['"/usr/bin/node" script.js', '$ node'],
     ['curl -H "Authorization: x" https://example.org', '$ curl'],
+    // A bare script name is an argument, not a subcommand.
+    ['node deploy_token_rotate', '$ node'],
+    ['node --inspect rotate_keys', '$ node'],
+    ['python3 rotate_keys', '$ python3'],
+    ['python -m pytest -q', '$ python -m pytest'],
+    ['bun migrate_customers', '$ bun'],
+    ['bun run build', '$ bun run'],
+    ['deno task dev', '$ deno task'],
   ];
   for (const [cmd, family] of cases) assert.equal(commandFamily(cmd), family, cmd);
 });

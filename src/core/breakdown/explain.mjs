@@ -67,6 +67,7 @@ function posixQuote(text) {
   return `'${String(text).replaceAll("'", "'\\''")}'`;
 }
 
+// PowerShell reads ‘ ’ ‚ ‛ as single quotes too, so each one is doubled like '.
 function powershellQuote(text) {
-  return `'${String(text).replaceAll("'", "''")}'`;
+  return `'${String(text).replace(/['\u2018\u2019\u201a\u201b]/g, '$&$&')}'`;
 }

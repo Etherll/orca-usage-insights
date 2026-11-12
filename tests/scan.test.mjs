@@ -512,6 +512,69 @@ test('saves after the first journal only the changed and dropped files, and a re
   assert.deepEqual(warm.records.toRecords().map((r) => r.key).sort(), ['m1:req', 'm2:req', 'm4:req']);
 });
 
+test('a save after a journal line cut short starts a new line', async (t) => {
+  const fx = await fixture(t);
+  const journal = `${fx.cacheFile}.journal`;
+  await fsp.writeFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm1' })));
+  await fsp.writeFile(fx.file('b.jsonl'), lines(claudeLine({ id: 'm2' })));
+  const first = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile });
+  await first.scan();
+  await first.flush();
+  const { gen } = JSON.parse(await fsp.readFile(fx.cacheFile, 'utf8'));
+  // A crash cut the last journal line short.
+  await fsp.writeFile(journal, `[${gen}, "${fx.file('b.jsonl')}"`);
+
+  const second = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile });
+  await second.scan();
+  await fsp.appendFile(fx.file('a.jsonl'), lines(claudeLine({ id: 'm3' })));
+  assert.equal((await second.scan({ force: true })).records.length, 3);
+  await second.flush();
+
+  // The line for a.jsonl must parse on its own, so a restart starts from it and reads nothing.
+  const rec = recordingFs();
+  const third = createScanner({ env: fx.env, home: fx.base, cacheFile: fx.cacheFile, fs: rec.fs });
+  const warm = await third.scan();
+  assert.deepEqual(rec.log.opened, []);
+  assert.deepEqual(warm.records.toRecords().map((r) => r.key).sort(), ['m1:req', 'm2:req', 'm3:req']);
+});
+
+test('a save during a tail read stores an offset that matches the parser state', async (t) => {
+  const fx = await fixture(t);
+  const codexFile = path.join(fx.codex, 'sessions', 'rollout-7.jsonl');
+  await fsp.writeFile(codexFile, lines(codexMeta('/w/x'), codexUsage(1)));
+  // Codex turns without a running total have no dedupe key, so reading one twice counts it twice.
+  let hold = null;
+  const rec = recordingFs();
+  const fs = {
+    ...rec.fs,
+    async open(file, flags) {
+      const handle = await rec.fs.open(file, flags);
+      return {
+        read: handle.read,
+        close: async () => {
+          const h = hold;
+          hold = null;
+          await h?.();
+          return handle.close();
+        },
+      };
+    },
+  };
+  const opts = { env: fx.env, home: fx.base, cacheFile: fx.cacheFile, fs, threads: 0 };
+  const outputs = (result) => result.records.toRecords().map((r) => r.output);
+  const a = createScanner(opts);
+  await a.scan();
+  await a.flush();
+  await fsp.appendFile(codexFile, lines(codexUsage(2)));
+  await a.scan({ force: true }); // a change waits for the timed save
+  await fsp.appendFile(codexFile, lines(codexUsage(3)));
+  hold = () => a.flush(); // the timed save lands after the tail's push, before the scan stores it
+  assert.deepEqual(outputs(await a.scan({ force: true })), [1, 2, 3]);
+  // No save after this scan: the process stops here.
+  const b = createScanner(opts);
+  assert.deepEqual(outputs(await b.scan()), [1, 2, 3]);
+});
+
 test('a reset, or more changed files than the journal takes, rewrites the cache file', async (t) => {
   const fx = await fixture(t);
   const journal = `${fx.cacheFile}.journal`;

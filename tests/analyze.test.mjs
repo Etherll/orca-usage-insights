@@ -289,3 +289,26 @@ test('the analysis is reused for the same inputs and rebuilt when one changes', 
   assert.equal(withoutTime(analyzeBreakdown({ ...opts })), withoutTime(first), 'and the first is still kept');
 });
 
+
+test('a view whose findings span many days is cut to fit, without changing the cached analysis', () => {
+  const fold = createFold({ harness: 'claude', host: 'local' });
+  fold.add({ t: 'meta', cwd: '/w/proj', sessionId: 's1' });
+  const target = { key: 'file:big.mjs', label: 'big.mjs', kind: 'file' };
+  const records = [];
+  const DAYS = 45_000;
+  const day = (ago) => new Date(Date.UTC(2026, 10, 3 - ago, 12)).toISOString();
+  for (let i = DAYS; i >= 0; i--) {
+    const ts = day(i);
+    fold.add({ t: 'arrival', ts, bucket: 'tools', target, chars: 400_000, images: 0, offset: i, bytes: 400_000 });
+    const u = { input: 10, cacheRead: 100_000 + i, cacheWrite: 400, cacheWrite1h: 0, output: 200 };
+    fold.add({ t: 'request', key: `s1:${i}`, ts, model: MODEL, usage: u });
+    records.push({ provider: 'claude', ts, model: MODEL, project: 'proj', sessionId: 's1', cwd: '/w/proj', ...u, key: `s1:${i}` });
+  }
+  const digests = [{ path: '/t/s1.jsonl', compressed: false, sessionId: 's1', digest: fold.digest() }];
+  const input = { records, digests, catalog, range: 'all', now: new Date(Date.UTC(2026, 10, 3, 15)) };
+  const view = analyzeBreakdown(input);
+  assert.ok(JSON.stringify(view).length <= 900_000);
+  assert.ok(view.findings.length > 0 && view.findings.every((f) => f.daily.length <= 90));
+  // The next view from the same cached analysis still has the full series to cut from.
+  assert.equal(analyzeBreakdown(input).findings[0].daily.length, 90);
+});

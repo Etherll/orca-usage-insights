@@ -4,7 +4,7 @@
 import { PROVIDERS } from '../core/providers.mjs';
 import { markedLines } from './lines.mjs';
 import { pathFor } from './paths.mjs';
-import { readLines, zstdAvailable } from './zstd.mjs';
+import { TOO_LARGE, readLines, zstdAvailable } from './zstd.mjs';
 
 const LF = 0x0a;
 const LF_BYTES = Buffer.from('\n');
@@ -127,7 +127,9 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
 // parse thread when there is a pool and the file is at most maxWholeBytes, else inline.
 // Returns what the caller stores: `consumer` when parsed here, `state` when a thread parsed it.
 // A failure while reading returns key null (the next scan reads the file whole) with error: true.
-// Failures before reading starts (stat, open) throw.
+// Failures before reading starts (stat, open) throw. A compressed file that decompresses past the cap
+// is skipped as too large with its key; pass that key back as `oversizedKey` and the file is not
+// decompressed again until it changes.
 export async function readTranscript({
   fs,
   file,
@@ -138,6 +140,7 @@ export async function readTranscript({
   markers = null,
   open,
   maxWholeBytes = 64 << 20,
+  oversizedKey = null,
 }) {
   let st = stat;
   try {
@@ -151,7 +154,7 @@ export async function readTranscript({
   if (prior && prior.key === key) return { status: 'unchanged' };
   if (file.compressed) {
     if (!zstdAvailable()) return { status: 'skipped', reason: 'zstd' };
-    if (st.size > maxWholeBytes) return { status: 'skipped', reason: 'too-large' };
+    if (st.size > maxWholeBytes || key === oversizedKey) return { status: 'skipped', reason: 'too-large', key };
   }
 
   const fh = await fs.open(file.path, 'r');
@@ -162,7 +165,7 @@ export async function readTranscript({
     // bytes past the offset are new. Compressed files are never tailed.
     if (prior && prior.key !== null && prior.consumer && !file.compressed && canTail(prior.key, st) && (await endsLine(fh, prior.offset))) {
       consumer = prior.consumer;
-      const offset = await readChunks(fh, consumer, markers, prior.offset, st.size);
+      const offset = await readChunks(fh, consumer, markers, prior.offset, st.size, null, prior.onAdvance);
       return { status: 'read', key, offset, whole: false, consumer, state: null };
     }
 
@@ -180,7 +183,8 @@ export async function readTranscript({
           size: st.size,
         });
         return { status: 'read', key, offset, whole, consumer: null, state };
-      } catch {
+      } catch (error) {
+        if (error?.message === TOO_LARGE) return { status: 'skipped', reason: 'too-large', key };
         // The pool could not take it: parse inline below.
       }
     }
@@ -188,7 +192,8 @@ export async function readTranscript({
     consumer = open(file, null);
     const offset = await readWhole(fh, st.size, file.compressed, markers, consumer);
     return { status: 'read', key, offset, whole, consumer, state: null };
-  } catch {
+  } catch (error) {
+    if (file.compressed && error?.message === TOO_LARGE) return { status: 'skipped', reason: 'too-large', key };
     // Lines already pushed stay in the consumer; a whole re-read on the next scan keeps them exact.
     return { status: 'read', key: null, offset: 0, whole, consumer, state: null, error: true };
   } finally {
@@ -235,10 +240,12 @@ export function linesText(buf, end, markers) {
 }
 
 // Reads [from, end) in chunks. Each chunk is cut at its last LF, so the consumer only sees whole
-// lines and the returned offset advances in the same step as the push.
+// lines and the returned offset advances in the same step as the push. onAdvance(offset), when
+// given, hears each new offset right after its push, so a caller that saves the consumer's state
+// mid-read can save the offset that state belongs to.
 // One buffer for the whole file: the bytes after the last LF move to its start before the next
 // read, and it doubles when one line is longer than it.
-async function readChunks(fh, consumer, markers, from, end, scratch = null) {
+async function readChunks(fh, consumer, markers, from, end, scratch = null, onAdvance = null) {
   let pos = from;
   let offset = from;
   let buf = bufferFor(Math.min(CHUNK_BYTES, Math.max(1, end - from)), scratch);
@@ -262,6 +269,7 @@ async function readChunks(fh, consumer, markers, from, end, scratch = null) {
     }
     feed(consumer, buf.subarray(0, cut + 1), markers);
     offset += cut + 1;
+    onAdvance?.(offset);
     buf.copyWithin(0, cut + 1, length);
     have = length - cut - 1;
   }

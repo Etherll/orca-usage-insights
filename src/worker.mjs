@@ -195,7 +195,9 @@ export function startWorker(orca, scanner, {
   // running: the caller answers { loading }, and usage.changed is posted when it finishes.
   function digestsWithin(waitMs, since = 0) {
     digestScanner ??= makeDigestScanner();
-    if (!digestJob || digestJob.since > since) {
+    // A running scan answers this call only when it covers the range and the same extra folders.
+    const folders = JSON.stringify([lastExtra.claude ?? [], lastExtra.codex ?? []]);
+    if (!digestJob || digestJob.since > since || digestJob.folders !== folders) {
       const job = digestScanner
         .scan({ extra: lastExtra, since })
         .then(
@@ -217,6 +219,7 @@ export function startWorker(orca, scanner, {
         if (Date.now() - started >= HEAVY_MS) settleSoon();
       });
       job.since = since;
+      job.folders = folders;
       digestJob = job;
     }
     const job = digestJob;

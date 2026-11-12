@@ -355,6 +355,26 @@ test('a second apply keeps one undo step back to the overlay before it', async (
   assert.equal((await priceBook.status()).canUndo, false);
 });
 
+test('overlapping applies both land: each starts from the overlay the one before wrote', async () => {
+  const SONNET = 'claude-sonnet-5-5';
+  const { priceBook, fs } = book({
+    replies: live({ [OPUS]: { ...RATES, output: 22 }, [SONNET]: { input: 3, output: 16, cacheRead: 0.3, write: 3.75 } }),
+  });
+  const sync = await priceBook.sync([OPUS, SONNET]);
+  const keys = keysTicked(sync.rows);
+  const forModel = (id) => keys.filter((key) => key.includes(id));
+  assert.ok(forModel(OPUS).length > 0 && forModel(SONNET).length > 0);
+  await Promise.all([priceBook.apply(sync.diffId, forModel(OPUS)), priceBook.apply(sync.diffId, forModel(SONNET))]);
+  const overlay = JSON.parse(fs.files.get(OVERLAY).text);
+  assert.deepEqual(Object.keys(overlay.entries).sort(), [OPUS, SONNET]);
+  const catalog = await priceBook.catalog();
+  assert.equal(catalog.entries.get(OPUS).output, 22);
+  assert.equal(catalog.entries.get(SONNET).output, 16);
+  // One undo takes back the second apply only.
+  await priceBook.undo();
+  assert.equal(Object.keys(JSON.parse(fs.files.get(OVERLAY).text).entries).length, 1);
+});
+
 test('applying rows the overlay already holds writes nothing and keeps the earlier undo step', async () => {
   const { priceBook, fs } = book({ replies: live({ [OPUS]: { ...RATES, output: 22 } }) });
   const sync = await priceBook.sync([OPUS]);

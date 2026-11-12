@@ -63,20 +63,23 @@ for (const [model, rates] of CASES) {
   });
 }
 
-test('claude-haiku-5-5 base rates below 100k, tier rates from 100k', () => {
+test('claude-haiku-5-5 base rates up to 100k, tier rates over 100k', () => {
   const base = [0.1, 0.5, 0.01, 0.125];
   const tier = [0.5, 2.5, 0.05, 0.625];
   KINDS.forEach((kind, i) => {
     const small = { model: 'claude-haiku-5-5', input: 0, output: 0, cacheRead: 0, cacheWrite: 0, [kind]: 99_999 };
     assert.ok(Math.abs(estimateCostUsd(small) - (99_999 * base[i]) / 1e6) < 1e-12, `base ${kind}`);
-    // The band counts input, cache reads and cache writes, not output. A 100k input prompt moves
-    // the request to the tier, so the 100k input adds its own tier cost to the 1M of `kind`.
-    const large = { model: 'claude-haiku-5-5', input: 100_000, output: 0, cacheRead: 0, cacheWrite: 0, [kind]: 1_000_000 };
-    const extra = kind === 'input' ? 0 : (100_000 * tier[0]) / 1e6;
+    // The band counts input, cache reads and cache writes, not output. An input prompt over 100k
+    // moves the request to the tier, so that input adds its own tier cost to the 1M of `kind`.
+    const large = { model: 'claude-haiku-5-5', input: 100_001, output: 0, cacheRead: 0, cacheWrite: 0, [kind]: 1_000_000 };
+    const extra = kind === 'input' ? 0 : (100_001 * tier[0]) / 1e6;
     assert.ok(Math.abs(estimateCostUsd(large) - (tier[i] + extra)) < 1e-9, `tier ${kind}`);
   });
+  // Exactly 100k is not over 100k: base rates.
   const boundary = { model: 'claude-haiku-5-5', input: 100_000, output: 0, cacheRead: 0, cacheWrite: 0 };
-  assert.ok(Math.abs(estimateCostUsd(boundary) - 0.05) < 1e-12);
+  assert.ok(Math.abs(estimateCostUsd(boundary) - 0.01) < 1e-12);
+  const over = { model: 'claude-haiku-5-5', input: 100_001, output: 0, cacheRead: 0, cacheWrite: 0 };
+  assert.ok(Math.abs(estimateCostUsd(over) - (100_001 * 0.5) / 1e6) < 1e-12);
 });
 
 test('claude-opus-5-5 1-hour cache writes are priced at the 1h rate', () => {

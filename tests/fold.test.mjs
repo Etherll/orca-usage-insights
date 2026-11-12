@@ -56,11 +56,13 @@ test('apportion gives integers that add up to the total', () => {
   for (let n = 1; n < 50; n++) assert.equal(apportion(n, [3, 0.5, 7, 11]).reduce((a, b) => a + b, 0), n);
 });
 
-test('bandOf picks the largest band at or below the size', () => {
+test('bandOf picks the largest band below the size (a tier above N is for prompts over N)', () => {
   assert.equal(bandOf(0), 0);
   assert.equal(bandOf(99_999), 0);
-  assert.equal(bandOf(100_000), 100_000);
-  assert.equal(bandOf(271_999), 256_000);
+  assert.equal(bandOf(100_000), 0);
+  assert.equal(bandOf(100_001), 100_000);
+  assert.equal(bandOf(272_000), 256_000);
+  assert.equal(bandOf(272_001), 272_000);
   assert.equal(bandOf(5_000_000), 1_000_000);
 });
 
@@ -243,4 +245,29 @@ test('big keeps the 10 largest arrivals', () => {
   const big = d.digest().big;
   assert.equal(big.length, 10);
   assert.ok(big.every((b, i) => i === 0 || big[i - 1][3] >= b[3]));
+});
+
+test('a digest lists only the targets its rows and big arrivals use', () => {
+  const events = [];
+  for (let i = 0; i < 400; i++) {
+    events.push(req(i, usage(10, 1000 + i, 50, 5)));
+    events.push(arrival(file(`/w/f${i}.md`), 100));
+  }
+  events.push(req(401, usage(10, 2000, 50, 5)));
+  const fold = feed(events);
+  const d = fold.digest();
+  assert.equal(fold.state().targets.length > d.targets.length, true, 'the state keeps every target');
+  const used = new Set(d.rows.map((row) => row[4]));
+  for (const b of d.big) used.add(b[2]);
+  assert.equal(used.size, d.targets.length, 'every listed target is used');
+  for (const b of d.big) assert.ok(d.targets[b[2]][0].startsWith('/w/f'), 'big arrivals point at their file');
+});
+
+test('pending arrivals stay bounded between requests, and the next request still adds up', () => {
+  const events = [req(0, usage(10, 0, 5000, 5))];
+  for (let i = 0; i < 6000; i++) events.push(arrival(file(`/w/${i % 3000}.md`), 100 + (i % 7)));
+  const fold = createFold({ harness: 'claude', host: 'local' }, null);
+  for (const event of events) fold.add(event);
+  assert.ok(fold.state().pending.length <= 2001, `pending ${fold.state().pending.length}`);
+  feed([...events, req(1, usage(10, 5000, 90_000, 5))]);
 });

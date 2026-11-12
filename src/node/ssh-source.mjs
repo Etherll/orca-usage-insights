@@ -97,7 +97,8 @@ export function createSshSource({
         if (entry && entry.key === file.key) continue;
         // Same rule as the local scanner: a grown file is read from its stored offset; anything
         // else (new, shrunk, rewritten) is read from the start with a fresh parser.
-        const tail = entry && entry.kind === file.kind && file.size >= entry.offset && entry.key !== null;
+        // A tail needs the entry's parser now: lines arrive before collect() would build it.
+        const tail = entry && entry.kind === file.kind && file.size >= entry.offset && entry.key !== null && ensureParser(entry);
         const target = tail ? entry : freshEntry(file);
         if (!tail) files.set(file.path, target);
         target.pendingKey = file.key;
@@ -249,20 +250,25 @@ export function createSshSource({
     return parser;
   }
 
+  // Builds the entry's parser from its cached state on first use. False when the state is unusable.
+  function ensureParser(entry) {
+    if (entry.parser) return true;
+    try {
+      entry.parser = makeParser(entry.kind, entry.ctx, entry.state);
+      entry.state = null;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // Every file's table in order (`sources`), their merge (`records`), and the row count before
   // the merge (`rows`, what the status shows).
   function collect() {
     const sources = [];
     let rows = 0;
     for (const [p, entry] of files) {
-      if (!entry.parser) {
-        try {
-          entry.parser = makeParser(entry.kind, entry.ctx, entry.state);
-          entry.state = null;
-        } catch {
-          continue;
-        }
-      }
+      if (!ensureParser(entry)) continue;
       const table = entry.parser.table();
       sources.push({ id: p, table });
       rows += table.length;

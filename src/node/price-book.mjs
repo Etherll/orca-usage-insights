@@ -42,6 +42,14 @@ export function createPriceBook({
   let overridesCache = null; // { stamp, state }
   let built = null; // { key, catalog }
   let latest = null; // { id, rows }: the last sync's diff
+  // Overlay changes (apply, undo, reset) run one at a time: each reads the overlay the one before
+  // it wrote, so overlapping calls never write from the same old overlay.
+  let changing = Promise.resolve();
+  const serial = (change) => (...args) => {
+    const job = changing.then(() => change(...args));
+    changing = job.catch(() => {});
+    return job;
+  };
 
   // The catalog in effect. It is rebuilt only when the overlay or the overrides file changed; the
   // overrides file is stat'ed on every call, the overlay is kept in memory after its first read.
@@ -290,9 +298,9 @@ export function createPriceBook({
     status,
     sync,
     preview,
-    apply,
-    undo,
-    reset,
+    apply: serial(apply),
+    undo: serial(undo),
+    reset: serial(reset),
   };
 }
 

@@ -13,6 +13,10 @@ const RESIDENT_MAX = 300;
 const COMPOSITION_MAX = 30;
 const BIG_MAX = 10;
 const READS_MAX = 2000;
+// Arrivals waiting for the next request. Past this many, arrivals of the same bucket and target
+// merge, then the smallest merge into their bucket's (other), so a long run of tool results with
+// no request between them keeps the state small. Totals per target are unchanged by the first step.
+const PENDING_MAX = 2000;
 const TTL_5M = 5 * 60_000;
 const TTL_1H = 60 * 60_000;
 
@@ -88,6 +92,34 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
       ts: event.ts ?? null,
       rep: event.callId && s.repeats.includes(event.callId) ? 1 : 0,
     });
+    if (s.pending.length > PENDING_MAX) capPending();
+  }
+
+  // Merges pending arrivals of the same bucket, target and repeat flag (the largest keeps its
+  // offset, bytes and time for evidence); if that is not enough, the smallest half go to (other).
+  function capPending() {
+    const merge = (list, keyOf) => {
+      const out = new Map();
+      for (const a of list) {
+        const key = keyOf(a);
+        const cur = out.get(key);
+        if (!cur) out.set(key, { ...a });
+        else {
+          if (a.w > cur.w) Object.assign(cur, { offset: a.offset, bytes: a.bytes, ts: a.ts });
+          cur.w += a.w;
+        }
+      }
+      return [...out.values()];
+    };
+    let list = merge(s.pending, (a) => `${a.b}|${a.t}|${a.rep}`);
+    if (list.length > PENDING_MAX / 2) {
+      list.sort((x, y) => y.w - x.w);
+      const other = targetIdx(OWN.other);
+      const keep = list.slice(0, PENDING_MAX / 4);
+      const rest = list.slice(PENDING_MAX / 4).map((a) => ({ ...a, t: other, rep: 0 }));
+      list = [...keep, ...merge(rest, (a) => `${a.b}`)];
+    }
+    s.pending = list;
   }
 
   function onRequest({ ts, model, usage }) {
@@ -288,10 +320,24 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     return i;
   }
 
+  // The digest lists only the targets its rows and big arrivals use, renumbered in their original
+  // order: the state keeps every target it has seen (a session that reads thousands of files keeps
+  // a few hundred in rows), and the digest is what stays in memory and in the shard.
   function digest() {
     const rows = Object.entries(s.rows)
       .map(([key, v]) => [...key.split('|').map(Number), ...v])
       .sort((x, y) => x[0] - y[0] || x[3] - y[3] || x[4] - y[4] || x[1] - y[1] || x[2] - y[2] || x[5] - y[5] || x[6] - y[6]);
+    const used = new Uint8Array(s.targets.length);
+    for (const row of rows) used[row[4]] = 1;
+    for (const b of s.big) used[b[2]] = 1;
+    const renumber = new Int32Array(s.targets.length);
+    const targets = [];
+    for (let i = 0; i < s.targets.length; i++) {
+      if (!used[i]) continue;
+      renumber[i] = targets.length;
+      targets.push([...s.targets[i]]);
+    }
+    for (const row of rows) row[4] = renumber[row[4]];
     return {
       v: 1,
       harness: s.harness,
@@ -305,9 +351,9 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
       totalTokens: s.totalTokens,
       explain: s.explain === true,
       models: [...s.models],
-      targets: s.targets.map((t) => [...t]),
+      targets,
       rows,
-      big: s.big.map((b) => [...b]),
+      big: s.big.map(([offset, bytes, t, tokens, ts]) => [offset, bytes, renumber[t], tokens, ts]),
     };
   }
 }

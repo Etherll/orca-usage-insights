@@ -13,6 +13,7 @@ export function createParsePool(size, { idleMs = 5_000 } = {}) {
   const all = new Set();
   const queue = [];
   let broken = false;
+  let worked = false; // a thread has finished a job: threads can run here, so a crash is that job's
   let nextId = 0;
   const pending = new Map();
 
@@ -24,6 +25,7 @@ export function createParsePool(size, { idleMs = 5_000 } = {}) {
     worker.on('message', ({ id, ok, state, offset, error }) => {
       const job = pending.get(id);
       pending.delete(id);
+      worked = true;
       worker.unref();
       idle.push(worker);
       pump();
@@ -51,7 +53,10 @@ export function createParsePool(size, { idleMs = 5_000 } = {}) {
         job.reject(error);
       }
     }
-    if (all.size === 0) broken = true;
+    // With no thread left, the pool gives up only if no thread ever finished a job (threads can't
+    // run here). Otherwise later jobs start a new thread, the queued ones included.
+    if (all.size === 0 && !worked) broken = true;
+    else pump();
   }
 
   // When nothing is queued or running, idle threads exit after idleMs.

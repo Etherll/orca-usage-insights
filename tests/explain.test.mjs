@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { zstdCompressSync } from 'node:zlib';
+import zlib from 'node:zlib';
 import { buildExplainPrompt } from '../src/core/breakdown/explain.mjs';
 import { createClaudeEvents } from '../src/core/breakdown/claude-events.mjs';
 
@@ -33,6 +33,10 @@ test('excerpts are capped at 2,000 bytes and paths with quotes stay one shell wo
   assert.ok(prompt.includes(`'/t/it'\\''s "odd" $(x).jsonl'`));
   const win = buildExplainPrompt(finding({ evidence: [{ file: tricky, offset: 5, bytes: 10, compressed: false }] }), { platform: 'win32' }).prompt;
   assert.ok(win.includes(`'/t/it''s "odd" $(x).jsonl'`));
+  // PowerShell also ends a single-quoted string at ‘ ’ ‚ ‛, so those are doubled too.
+  const curly = 'C:\\t\\a\u2019; calc; \u2018\u201a\u201b.jsonl';
+  const ps = buildExplainPrompt(finding({ evidence: [{ file: curly, offset: 0, bytes: 10, compressed: false }] }), { platform: 'win32' }).prompt;
+  assert.ok(ps.includes(`'C:\\t\\a\u2019\u2019; calc; \u2018\u2018\u201a\u201a\u201b\u201b.jsonl'`));
 });
 
 test('the commands print the right bytes of plain and compressed files', async () => {
@@ -42,8 +46,13 @@ test('the commands print the right bytes of plain and compressed files', async (
     const plain = path.join(dir, "a b's.jsonl");
     const packed = path.join(dir, 'c.jsonl.zst');
     await fsp.writeFile(plain, text);
-    await fsp.writeFile(packed, zstdCompressSync(Buffer.from(text)));
-    for (const [file, compressed] of [[plain, false], [packed, true]]) {
+    const files = [[plain, false]];
+    // Without zstd in this Node only the plain command can be checked.
+    if (typeof zlib.zstdCompressSync === 'function') {
+      await fsp.writeFile(packed, zlib.zstdCompressSync(Buffer.from(text)));
+      files.push([packed, true]);
+    }
+    for (const [file, compressed] of files) {
       const { prompt } = buildExplainPrompt(finding({ evidence: [{ file, offset: 11, bytes: 17, compressed }] }));
       const cmd = prompt.split('\n').find((l) => l.startsWith('1. ')).slice(3);
       const out = execFileSync('sh', ['-c', cmd], { encoding: 'utf8' });

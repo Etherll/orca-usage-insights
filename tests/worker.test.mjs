@@ -891,6 +891,21 @@ test('a slow digest scan answers loading, then posts usage.changed', async () =>
   await worker.stop();
 });
 
+test('a breakdown after an extra folder is added does not reuse the scan that started without it', async () => {
+  const mock = mockOrca();
+  const { records, scan } = breakdownWorld();
+  const digests = fakeDigests(scan, 60);
+  const worker = startWorker(mock.orca, fakeScanner(() => result(records)), { now: NOON, pollMs: 60_000, makeDigestScanner: () => digests.scanner, breakdownWaitMs: 5 });
+  await worker.ready;
+  await mock.handlers.get('usage.breakdown')({ range: 'all' }); // still running: answers loading
+  mock.settings = { extraClaudeFolders: '/extra/claude' };
+  await mock.handlers.get('usage.breakdown')({ range: '7d' });
+  await sleep(150);
+  assert.equal(digests.calls.scan, 2);
+  assert.deepEqual(digests.calls.extra[1].claude, ['/extra/claude']);
+  await worker.stop();
+});
+
 test('usage.breakdown and usage.explain reject bad input', async () => {
   const mock = mockOrca();
   const worker = startWorker(mock.orca, fakeScanner(), { now: NOON, pollMs: 60_000, makeDigestScanner: () => fakeDigests({ digests: [], files: [] }).scanner });

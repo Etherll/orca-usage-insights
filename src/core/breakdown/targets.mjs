@@ -6,9 +6,16 @@
 const TEMP_PATH = /^(\/private)?\/(tmp|var\/folders)(\/|$)|(^|\/)appdata\/local\/temp(\/|$)/i;
 const WRAPPER = /^(sudo|env|time|rtk|npx|bunx)\s+/;
 const SUBCOMMAND_PROGRAMS = new Set([
-  'git', 'gh', 'npm', 'pnpm', 'yarn', 'bun', 'cargo', 'go', 'uv', 'pip', 'docker', 'kubectl',
-  'make', 'dotnet', 'deno', 'node', 'python', 'python3', 'orca',
+  'git', 'gh', 'npm', 'pnpm', 'yarn', 'cargo', 'go', 'uv', 'pip', 'docker', 'kubectl',
+  'make', 'dotnet', 'orca',
 ]);
+// Programs whose first plain word may be a script name: only these words count as a subcommand.
+// Python's subcommand is the module after -m; node has none.
+const KNOWN_SUBCOMMANDS = {
+  bun: new Set(['add', 'build', 'create', 'install', 'link', 'pm', 'remove', 'run', 'test', 'update', 'upgrade', 'x']),
+  deno: new Set(['add', 'bench', 'check', 'compile', 'fmt', 'info', 'init', 'install', 'lint', 'publish', 'remove', 'run', 'serve', 'task', 'test', 'upgrade']),
+};
+const PYTHONS = new Set(['python', 'python3']);
 // After these flags the next word is code, not a subcommand.
 const CODE_FLAGS = new Set(['-e', '-c', '-p', '--eval', '--print']);
 const MAX_SEGMENTS = 5;
@@ -46,13 +53,17 @@ export function commandFamily(cmd) {
   const words = rest.split(/\s+/);
   const program = baseName(words[0]);
   if (!program) return '$ (none)';
-  if (SUBCOMMAND_PROGRAMS.has(program)) {
+  const known = KNOWN_SUBCOMMANDS[program];
+  if (SUBCOMMAND_PROGRAMS.has(program) || known) {
     for (const word of words.slice(1)) {
       if (CODE_FLAGS.has(word)) break;
       if (word.startsWith('-')) continue;
-      if (/^[A-Za-z][\w-]*$/.test(word)) return `$ ${program} ${word}`;
+      if (/^[A-Za-z][\w-]*$/.test(word) && (!known || known.has(word))) return `$ ${program} ${word}`;
       break;
     }
+  } else if (PYTHONS.has(program)) {
+    const m = words.indexOf('-m');
+    if (m > 0 && /^[A-Za-z_][\w.]*$/.test(words[m + 1] ?? '')) return `$ ${program} -m ${words[m + 1]}`;
   }
   return `$ ${program}`;
 }

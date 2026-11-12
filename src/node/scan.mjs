@@ -62,9 +62,11 @@ export function createScanner({
   let rootsGen = 0;
   let dirty = false;
   const touched = new Set(); // paths read or dropped since the last save
+  const oversized = new Map(); // path -> key of a compressed file that decompressed past the cap
   const journalFile = cacheFile ? `${cacheFile}.journal` : null;
   let baseGen = null; // gen of the cache file the journal extends; null: the next save rewrites it
   let journalBytes = 0;
+  let journalTorn = false; // the journal ends in a line cut short: the next append starts a new line
   let lastSave = 0;
   let saveTimer = null;
   let saveChain = Promise.resolve();
@@ -199,12 +201,17 @@ export function createScanner({
       fs,
       file,
       stat,
-      prior: prior ? { key: prior.key, offset: prior.offset, consumer: prior.parser } : null,
+      // A tail pushes into the entry's own parser, so the entry's offset moves with every push: a
+      // save during the read then stores an offset that matches the parser's state.
+      prior: prior ? { key: prior.key, offset: prior.offset, consumer: prior.parser, onAdvance: (offset) => (prior.offset = offset) } : null,
       pool,
       markers: MARKER_BYTES[file.kind],
       open: (f, state) => createParser(f.kind, f.ctx, state),
       maxWholeBytes: THREAD_MAX_BYTES,
+      oversizedKey: oversized.get(file.path) ?? null,
     });
+    if (result.status === 'skipped' && result.reason === 'too-large' && result.key) oversized.set(file.path, result.key);
+    else oversized.delete(file.path);
     switch (result.status) {
       case 'unchanged':
         return;
@@ -294,6 +301,7 @@ export function createScanner({
     }
     baseGen = raw.gen;
     journalBytes = text.length;
+    journalTorn = text !== '' && !text.endsWith('\n');
   }
 
   // The old cache's entries, whose parser states the parsers convert on restore. The next save
@@ -351,7 +359,8 @@ export function createScanner({
   // The changed entries as journal lines; a dropped file is a null entry. Entries are serialized
   // before the first await, so the lines are one consistent snapshot.
   async function appendJournal(paths) {
-    let text = '';
+    // After a save cut short, a leading LF keeps the first new line from joining the torn one.
+    let text = journalTorn ? '\n' : '';
     for (const path of paths) {
       const entry = files.get(path);
       text += `${JSON.stringify([baseGen, path, entry ? toCache(entry) : null])}\n`;
@@ -363,6 +372,7 @@ export function createScanner({
       throw error;
     }
     journalBytes += text.length;
+    journalTorn = false;
   }
 
   // Rewrites the cache file under a new gen, atomically, which also retires every journal line.
@@ -383,6 +393,7 @@ export function createScanner({
     }
     baseGen = gen;
     journalBytes = 0;
+    journalTorn = false;
     await fs.unlink(journalFile).catch(() => {});
   }
 }
