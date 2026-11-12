@@ -116,3 +116,24 @@ test('a compressed excerpt deep in a large transcript prints the right bytes', {
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('a compressed excerpt in a later frame, after a skippable frame, prints the right bytes', { skip: typeof zlib.zstdCompressSync !== 'function' && 'Node has no zstd' }, async () => {
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'explain-frames-'));
+  try {
+    const first = 'a'.repeat(5000) + '\n';
+    const second = `${'b'.repeat(3000)}\n{"wanted":"here"}\n`;
+    const skippable = Buffer.from([0x51, 0x2a, 0x4d, 0x18, 2, 0, 0, 0, 9, 9]);
+    const packed = path.join(dir, 'frames.jsonl.zst');
+    const frame = zlib.zstdCompressSync(Buffer.from(first), { params: { [zlib.constants.ZSTD_c_checksumFlag]: 1 } });
+    await fsp.writeFile(packed, Buffer.concat([frame, skippable, zlib.zstdCompressSync(Buffer.from(second))]));
+    const offset = first.length + 3001;
+    const { prompt } = buildExplainPrompt(finding({ evidence: [{ file: packed, offset, bytes: 17, compressed: true }] }));
+    const cmd = prompt.split('\n').find((l) => l.startsWith('1. ')).slice(3);
+    assert.equal(execFileSync('sh', ['-c', cmd], { encoding: 'utf8' }).trim(), '{"wanted":"here"}');
+    // An excerpt that spans the frame boundary.
+    const span = buildExplainPrompt(finding({ evidence: [{ file: packed, offset: first.length - 3, bytes: 6, compressed: true }] })).prompt;
+    assert.equal(execFileSync('sh', ['-c', span.split('\n').find((l) => l.startsWith('1. ')).slice(3)], { encoding: 'utf8' }), 'aa\nbbb\n');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

@@ -384,6 +384,26 @@ test('applying one rate of a new model seeds its other base rates, so the entry 
   assert.deepEqual([entry.input, entry.output, entry.cacheRead, entry.cacheWrite['5m']], [RATES.input, RATES.output, RATES.cacheRead, RATES.write]);
 });
 
+test('applying one tier rate of a new model brings its base and tier rates, so the entry is valid', async () => {
+  const NEW = 'claude-newer-5-5';
+  const tiered = {
+    ...litellmBody({ [NEW]: RATES })[NEW],
+    input_cost_per_token_above_200k_tokens: 8 / 1e6,
+    output_cost_per_token_above_200k_tokens: 30 / 1e6,
+    cache_read_input_token_cost_above_200k_tokens: 0.4 / 1e6,
+    cache_creation_input_token_cost_above_200k_tokens: 10 / 1e6,
+  };
+  const { priceBook } = book({ replies: sources({ litellm: ok({ ...litellmBody({ [OPUS]: RATES }), [NEW]: tiered }), modelsdev: ok(modelsDevBody({ [OPUS]: RATES })) }) });
+  const sync = await priceBook.sync([OPUS, NEW]);
+  const row = rowOf(sync.rows, `${NEW}.tier.200000.input`);
+  assert.ok(row, sync.rows.map((r) => r.key).join(', '));
+  await priceBook.apply(sync.diffId, [row.key]);
+  const catalog = await priceBook.catalog();
+  assert.deepEqual(catalog.problems, []);
+  const tier = catalog.entries.get(NEW).tiers.find((t) => t.above === 200000);
+  assert.deepEqual([tier.input, tier.output, tier.cacheRead], [8, 30, 0.4]);
+});
+
 test('a sync applies a changed long-prompt tier rate, and a tier the catalog lacks starts complete', async () => {
   const tierBody = (above, input) => ({
     [OPUS]: {

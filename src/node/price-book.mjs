@@ -334,7 +334,8 @@ function setRate(patch, field, value, current = null) {
     const tiers = structuredClone(patch.tiers ?? current?.tiers ?? []);
     let target = tiers.find((t) => t.above === above);
     if (!target) {
-      target = { above, input: current?.input, output: current?.output, cacheRead: current?.cacheRead, cacheWrite: current?.cacheWrite ? { ...current.cacheWrite } : null };
+      const base = current ?? patch; // a new model has only the patch's rates
+      target = { above, input: base.input, output: base.output, cacheRead: base.cacheRead, cacheWrite: base.cacheWrite ? { ...base.cacheWrite } : null };
       tiers.push(target);
       tiers.sort((a, b) => a.above - b.above);
     }
@@ -356,13 +357,15 @@ function chosenRows(diff, keys) {
     if (!row) throw coded('invalid_params', `no price row ${key} in this diff`);
     if (row.status !== 'overridden') rows.push(row);
   }
-  // A new model's entry needs every base rate, so applying any of its rows brings the rest along.
+  // A new model's entry must be complete, so applying any of its rows brings the rest (tiers included).
   const fresh = new Set(rows.filter((row) => row.status === 'new').map((row) => row.model));
   const chosen = new Set(rows.map((row) => row.key));
   for (const row of diff.rows) {
-    if (fresh.has(row.model) && row.status === 'new' && !row.field.startsWith('tier.') && !chosen.has(row.key)) rows.push(row);
+    if (fresh.has(row.model) && row.status === 'new' && !chosen.has(row.key)) rows.push(row);
   }
-  return rows;
+  // Base rates first: a tier the catalog lacks starts from them.
+  const isTier = (row) => (row.field.startsWith('tier.') ? 1 : 0);
+  return rows.sort((x, y) => isTier(x) - isTier(y));
 }
 
 function inUseSet(ids, catalog) {
