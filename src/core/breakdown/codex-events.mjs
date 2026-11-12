@@ -127,7 +127,8 @@ export function createCodexEvents(ctx = {}, state = null) {
       };
       const out = [];
       if (obj.type === 'session_meta') {
-        if (nonBlank(payload.cwd) && !cwd) {
+        // Every change is passed on: Usage files later turns under the latest session_meta cwd.
+        if (nonBlank(payload.cwd) && payload.cwd !== cwd) {
           cwd = payload.cwd;
           out.push({ t: 'meta', cwd });
         }

@@ -28,7 +28,8 @@ export function createClaudeEvents(ctx = {}, state = null) {
 
   function learn(obj, out) {
     const meta = {};
-    if (nonBlank(obj.cwd) && !cwd) {
+    // Every change is passed on: Usage files each turn under its own line's cwd.
+    if (nonBlank(obj.cwd) && obj.cwd !== cwd) {
       cwd = obj.cwd;
       meta.cwd = cwd;
     }

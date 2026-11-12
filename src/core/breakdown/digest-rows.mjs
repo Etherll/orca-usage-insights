@@ -1,12 +1,13 @@
 // Digest rows in one typed array instead of an array per row. Pure: no Node built-ins.
 // A row is ROW_WIDTH numbers [slot, model, band, bucket, target, est, repeat, input, cacheRead, cacheWrite5m,
-// cacheWrite1h, output] (fold.mjs digest()). Uint32Array while every value fits, else Float64Array; a missing
+// cacheWrite1h, output, cwd] (fold.mjs digest()); cwd indexes digest.cwds. Uint32Array while every value fits, else Float64Array; a missing
 // value is NaN. Digests are immutable: packed and priced once per object.
 // On disk (digest-scan.mjs shards) rows are '<u32|f64>:<base64>' with `rowCount`.
 
 import { fromBase64, toBase64 } from '../base64.mjs';
 
-export const ROW_WIDTH = 12;
+export const ROW_WIDTH = 13;
+const OLD_WIDTH = 12; // rows before the cwd column; their cwd is the first (0)
 const U32_MAX = 0xffffffff;
 const packed = new WeakMap();
 
@@ -24,7 +25,7 @@ export function packDigest(digest) {
   for (let r = 0, at = 0; r < n; r++) {
     const row = list[r];
     for (let k = 0; k < ROW_WIDTH; k++, at++) {
-      const v = row?.[k];
+      const v = k === OLD_WIDTH && row?.length === OLD_WIDTH ? 0 : row?.[k];
       if (rows instanceof Uint32Array && !(typeof v === 'number' && v >= 0 && v <= U32_MAX && Math.floor(v) === v && !Object.is(v, -0))) {
         rows = Float64Array.from(rows);
       }
@@ -47,7 +48,14 @@ export function decodeDigest(encoded) {
   if (typeof text !== 'string' || !Number.isSafeInteger(n) || n < 0) throw new Error('bad digest rows');
   const tag = text.slice(0, 4);
   if (tag !== 'u32:' && tag !== 'f64:') throw new Error('bad digest rows');
-  const rows = fromBase64(text.slice(4), tag === 'u32:' ? Uint32Array : Float64Array);
-  if (rows.length !== n * ROW_WIDTH) throw new Error('bad digest rows');
+  let rows = fromBase64(text.slice(4), tag === 'u32:' ? Uint32Array : Float64Array);
+  if (rows.length === n * OLD_WIDTH && n > 0) rows = widen(rows, n);
+  else if (rows.length !== n * ROW_WIDTH) throw new Error('bad digest rows');
   return { ...encoded, rows };
+}
+
+function widen(rows, n) {
+  const out = new rows.constructor(n * ROW_WIDTH);
+  for (let r = 0; r < n; r++) out.set(rows.subarray(r * OLD_WIDTH, (r + 1) * OLD_WIDTH), r * ROW_WIDTH);
+  return out;
 }

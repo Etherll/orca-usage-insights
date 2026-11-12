@@ -36,7 +36,13 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
   function add(event) {
     switch (event?.t) {
       case 'meta':
-        if (event.cwd && !s.cwd) s.cwd = event.cwd;
+        if (event.cwd) {
+          if (!s.cwd) s.cwd = event.cwd; // the session's first cwd names its project
+          s.cwds ??= [s.cwd];
+          let i = s.cwds.indexOf(event.cwd);
+          if (i < 0) i = s.cwds.push(event.cwd) - 1;
+          s.cwdAt = i; // later requests are filed under this cwd, as Usage files their turns
+        }
         if (event.sessionId && !s.sessionId) s.sessionId = event.sessionId;
         break;
       case 'call':
@@ -121,7 +127,7 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
     const time = Number.isFinite(at) ? at : null;
     // 15-minute UTC slots: every real time-zone offset is a multiple of 15 minutes, so a slot falls on one local day.
     const slot = time === null ? 0 : Math.floor(time / SLOT_MS);
-    const req = { slot, model: modelIdx(model), band: bandOf(ctx), cells: new Map() };
+    const req = { slot, model: modelIdx(model), band: bandOf(ctx), cwd: s.cwdAt ?? 0, cells: new Map() };
     const prev = s.prev;
 
     let fresh = []; // new context entries this turn: { b, t, n, e, rep }
@@ -263,7 +269,7 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
       const keep = new Set([...totals].sort((x, y) => y[1] - x[1] || x[0] - y[0]).slice(0, COMPOSITION_MAX).map(([t]) => t));
       for (const cell of cells) {
         const t = keep.has(cell.t) ? cell.t : other;
-        const key = [req.slot, req.model, req.band, cell.b, t, cell.e, cell.rep].join('|');
+        const key = [req.slot, req.model, req.band, cell.b, t, cell.e, cell.rep, req.cwd].join('|');
         const row = s.rows[key] ?? (s.rows[key] = [0, 0, 0, 0, 0]);
         for (let i = 0; i < 5; i++) row[i] += cell.v[i];
         if (cell.e) s.splitTokens += sum(cell.v);
@@ -307,8 +313,12 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
   }
 
   function digest() {
+    // A key from before per-request cwds has 7 parts; its cwd is the first (0).
     const rows = Object.entries(s.rows)
-      .map(([key, v]) => [...key.split('|').map(Number), ...v])
+      .map(([key, v]) => {
+        const k = key.split('|').map(Number);
+        return [k[0], k[1], k[2], k[3], k[4], k[5], k[6], ...v, k[7] || 0];
+      })
       .sort((x, y) => x[0] - y[0] || x[3] - y[3] || x[4] - y[4] || x[1] - y[1] || x[2] - y[2] || x[5] - y[5] || x[6] - y[6]);
     const used = new Uint8Array(s.targets.length);
     for (const row of rows) used[row[4]] = 1;
@@ -327,6 +337,7 @@ export function createFold(info = {}, state = null, { adopt = false } = {}) {
       host: s.host,
       sessionId: s.sessionId,
       cwd: s.cwd,
+      cwds: s.cwds ? [...s.cwds] : s.cwd ? [s.cwd] : [],
       firstTs: s.firstTs,
       lastTs: s.lastTs,
       requests: s.requests,

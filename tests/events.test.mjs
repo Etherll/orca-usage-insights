@@ -96,7 +96,7 @@ function codexExpected(rows) {
   const anon = `anonymous:codex-sess-1:${rows[30].offset}`;
   return [
     [meta({ cwd: '/home/dev/app' })],
-    [],
+    [meta({ cwd: '/home/dev/other' })], // a later session_meta moves later turns, as in Usage
     [],
     [arrival('injected', T.injected, 29)],
     [arrival('messages', T.messages, 33)],

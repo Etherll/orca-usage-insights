@@ -158,12 +158,16 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
     const host = d.host || 'local';
     if (allowed && !allowed.has(d.harness)) continue;
     if (allowedHosts && !allowedHosts.has(host)) continue;
-    if (scope && !inScope(d.cwd, scope)) continue;
+    // Scope is per row, by the cwd each request ran in, as Usage scopes each turn.
+    const cwds = cwdsOf(d);
+    const kept = scope ? cwds.map((cwd) => inScope(cwd, scope)) : null;
+    if (kept && !kept.includes(true)) continue;
     const session = sessions.id(d.harness, host, d.sessionId ?? digests[index].sessionId ?? '') * SESSION + DAY_OFFSET;
     const { usd: rowUsd, day: rowDay } = pricedRows(d, catalog, zone, toLocal);
     for (let r = 0; r < d.rowCount; r++) {
       const usd = rowUsd[r];
       if (!(usd > 0)) continue; // unpriced (its records are unpriced too) or free
+      if (kept && !kept[d.rows[r * W + 12] || 0]) continue;
       const day = rowDay[r];
       if (!inRange(day)) continue;
       const g = session + day;
@@ -230,6 +234,8 @@ function analyze({ table: records, digests, files, catalog, range, now, provider
       bucket.usd += usd;
       if (est) bucket.estUsd += usd;
     }
+    // The tree and findings group by the session's first cwd: Claude Code's cwd follows the agent's
+    // shell, so per-request cwds would split a project into its subfolders.
     const target = d.targets?.[rows[at + 4]] ?? UNATTRIBUTED;
     let slots = perTarget[index];
     if (slots === undefined) perTarget[index] = slots = new Map();
@@ -403,6 +409,11 @@ function capSize(view, root, path, share) {
     step();
   }
   return view;
+}
+
+// A digest from before per-request cwds has only `cwd`.
+function cwdsOf(d) {
+  return d.cwds?.length ? d.cwds : [d.cwd ?? ''];
 }
 
 function labelOf(project, memo) {

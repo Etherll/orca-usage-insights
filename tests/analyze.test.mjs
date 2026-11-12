@@ -257,11 +257,11 @@ test('packed digests, and digests read back from a shard, give the same view as 
 });
 
 test('a digest with a value that is not a whole 32-bit number keeps it exactly', () => {
-  const rows = [[1, 0, 0, 1, 0, 0, 0, 2 ** 33, 1.5, 0, 0, 7], [2, 0, 0, 1, 0, 0, 0, 3, 4, 5, 6]];
+  const rows = [[1, 0, 0, 1, 0, 0, 0, 2 ** 33, 1.5, 0, 0, 7, 0], [2, 0, 0, 1, 0, 0, 0, 3, 4, 5, 6]];
   const d = packDigest({ rows });
   assert.ok(d.rows instanceof Float64Array);
-  assert.deepEqual([...d.rows.subarray(0, 12)], rows[0]);
-  assert.ok(Number.isNaN(d.rows[23]), 'a missing value is NaN');
+  assert.deepEqual([...d.rows.subarray(0, 13)], rows[0]);
+  assert.ok(Number.isNaN(d.rows[24]), 'a missing value is NaN');
   assert.deepEqual([...decodeDigest(JSON.parse(JSON.stringify(encodeDigest({ rows })))).rows].map(String), [...d.rows].map(String));
 });
 
@@ -323,4 +323,37 @@ test('a top-level folder named like a group stays separate from the group', () =
   const folder = named.find((n) => n.kind === 'folder');
   const inside = analyzeBreakdown({ records: s.records, digests: [s.digest], range: '7d', now: NOW, catalog, path: ['/w/proj', folder.key] });
   assert.deepEqual(inside.nodes.map((n) => [n.key, n.kind]), [['a.mjs', 'file']]);
+});
+
+test('a session that moves to another worktree is scoped and grouped per request, as Usage is', () => {
+  const fold = createFold({ harness: 'claude', host: 'local' });
+  fold.add({ t: 'meta', cwd: '/w/main', sessionId: 'mv' });
+  const records = [];
+  const turn = (i, cwd, u) => {
+    if (cwd) fold.add({ t: 'meta', cwd });
+    const ts = at(0, i).toISOString();
+    fold.add({ t: 'request', key: `mv:${i}`, ts, model: MODEL, usage: u });
+    records.push({ provider: 'claude', ts, model: MODEL, project: cwd ? 'feature' : 'main', sessionId: 'mv', cwd: cwd ?? '/w/main', ...u, key: `mv:${i}` });
+  };
+  turn(0, null, usage(1000, 0, 5000, 100));
+  turn(1, '/w/feature', usage(1000, 5000, 2000, 100));
+  turn(2, null, usage(1000, 7000, 1000, 100));
+  records[2].cwd = '/w/feature';
+  records[2].project = 'feature';
+  const digests = [{ path: '/t/mv.jsonl', compressed: false, sessionId: 'mv', digest: fold.digest() }];
+  for (const roots of [['/w/main'], ['/w/feature']]) {
+    const v = analyzeBreakdown({ records, digests, range: '7d', now: NOW, catalog, scope: { roots } });
+    near(v.totals.analysedUsd, v.totals.usageUsd, `analysed equals Usage in ${roots[0]}`);
+    near(sumNot(v), 0, `nothing unmatched in ${roots[0]}`);
+  }
+  // The tree keeps the session under its first cwd.
+  const top = analyzeBreakdown({ records, digests, range: '7d', now: NOW, catalog });
+  assert.deepEqual(top.nodes.map((n) => n.key), ['/w/main']);
+});
+
+test('a shard written before the cwd column decodes with every row in the first cwd', () => {
+  const old = new Uint32Array([1, 0, 0, 1, 0, 0, 0, 5, 6, 7, 8, 9, 2, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4, 5]);
+  const b64 = Buffer.from(old.buffer).toString('base64');
+  const d = decodeDigest({ rows: `u32:${b64}`, rowCount: 2, cwd: '/w' });
+  assert.deepEqual([...d.rows], [1, 0, 0, 1, 0, 0, 0, 5, 6, 7, 8, 9, 0, 2, 0, 0, 1, 0, 0, 0, 1, 2, 3, 4, 5, 0]);
 });
