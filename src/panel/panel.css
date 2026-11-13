@@ -113,7 +113,7 @@ svg.chart { width: 100%; height: auto; display: block; overflow: visible; }
 .mix { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
 
 .footnote { font-size: 11px; text-align: center; padding: 4px 0 8px; }
-.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--orca-popover, var(--card)); color: var(--orca-popover-foreground, var(--fg)); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.25); min-width: 120px; }
+.tip { position: fixed; z-index: 10; pointer-events: none; background: var(--orca-popover, var(--card)); color: var(--orca-popover-foreground, var(--fg)); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.25); min-width: 120px; overflow-wrap: anywhere; }
 .tip b { display: block; margin-bottom: 3px; }
 .tip .row { display: flex; justify-content: space-between; gap: 12px; }
 .tip .row span:last-child { font-variant-numeric: tabular-nums; }

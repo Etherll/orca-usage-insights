@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { createScanner } from '../src/node/scan.mjs';
 import { zstdAvailable } from '../src/node/zstd.mjs';
 
@@ -37,7 +38,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fixture(t) {
   const base = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'usage-scan-')));
-  t.after(() => fsp.rm(base, { recursive: true, force: true }));
+  // Retries: a debounced cache save can still be writing into the folder as the test ends (ENOTEMPTY).
+  t.after(() => fsp.rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const claude = path.join(base, 'claude');
   const codex = path.join(base, 'codex');
   await fsp.mkdir(path.join(claude, 'projects', 'proj-a'), { recursive: true });
@@ -1179,6 +1181,9 @@ test('a trusted inode replacement with equal mtime and size rereads the file', a
   const fx = await fixture(t);
   const file = fx.file('a.jsonl');
   await fsp.writeFile(file, lines(claudeLine({ id: 'one' })));
+  // NTFS file IDs are 64-bit and usually too large to hold exactly, so the scanner rightly does not trust them.
+  const { ino } = await fsp.stat(file);
+  if (!Number.isSafeInteger(ino) || ino < 1) return t.skip('this file system has no inode the scanner can trust');
   const fs = { ...fsp, stat: async (file) => Object.assign(Object.create(await fsp.stat(file)), { mtimeMs: 1000 }) };
   const scanner = createScanner({ env: fx.env, home: fx.base, fs, threads: 0 });
   assert.equal((await scanner.scan()).records.toRecords()[0].key, 'one:req');
@@ -1188,10 +1193,10 @@ test('a trusted inode replacement with equal mtime and size rereads the file', a
   assert.equal((await scanner.scan({ force: true })).records.toRecords()[0].key, 'two:req');
 });
 
-// fixtures/codex.jsonl.zst is codex.jsonl compressed with zlib.zstdCompressSync.
+// The .zst rollout is fixtures/codex.jsonl compressed here, so the repo ships no binary fixture.
 test('a codex .zst rollout gives the same records as the plain .jsonl, inline and on a parse thread', { skip: zstdAvailable() ? false : 'Node has no zlib.zstdCompressSync, so the .zst scan cannot run here' }, async (t) => {
   const fx = await fixture(t);
-  const packed = await fsp.readFile(new URL('./fixtures/codex.jsonl.zst', import.meta.url));
+  const packed = zlib.zstdCompressSync(await fsp.readFile(new URL('./fixtures/codex.jsonl', import.meta.url)));
   const zst = path.join(fx.codex, 'sessions', 'rollout-z.jsonl.zst');
   const jsonl = path.join(fx.codex, 'sessions', 'rollout-z.jsonl');
   await fsp.writeFile(zst, packed);

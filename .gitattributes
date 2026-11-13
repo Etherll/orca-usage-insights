@@ -1,0 +1,3 @@
+# Keep LF everywhere: tests compare bytes and character counts of the README and fixtures.
+* text=auto eol=lf
+*.png binary
