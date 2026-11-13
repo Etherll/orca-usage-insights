@@ -56,7 +56,7 @@ One **Filters** menu narrows it down: only sessions that ran in an Orca worktree
   </tr>
 </table>
 
-Cost is an estimate at list API prices, so it's what the same tokens would cost on the API, not your bill. Claude, OpenAI and OpenCode models are priced, per exact model, with long-prompt tiers and 1-hour cache writes ([more below](#prices)). OpenCode models keep their channel in the name (`opencode/` for Console, `opencode-go/` for Go), because the same model can have different prices on each. A model with no price counts toward tokens, and its cost shows as `+`.
+Cost is an estimate at list API prices, so it's what the same tokens would cost on the API, not your bill. Claude, OpenAI and OpenCode models are priced, per exact model, with long-prompt tiers and 1-hour cache writes ([more below](#prices)). OpenCode model names keep their channel (`opencode/` for Console, `opencode-go/` for Go), since the same model can cost different amounts on each. A model with no price counts toward tokens, and its cost shows as `+`.
 
 ## Breakdown
 
@@ -83,7 +83,7 @@ Each pattern has an **Explain** button. It gives you a prompt to paste into Clau
 
 ## Prices
 
-Prices ship with the plugin, taken from [LiteLLM](https://github.com/BerriAI/litellm) and [models.dev](https://models.dev) (which carries the OpenCode Console and Go lists). The line at the bottom of the panel says which prices are in use.
+Prices ship with the plugin, taken from [LiteLLM](https://github.com/BerriAI/litellm) and [models.dev](https://models.dev) (for OpenCode's Console and Go prices). The line at the bottom of the panel says which prices are in use.
 
 **Sync prices** fetches the current lists from LiteLLM and [models.dev](https://models.dev) and shows what would change, and by how much for your last 30 days. Only the rows you tick are applied. Rows where the two sources agree come pre-ticked; big jumps and anything odd never are. **Undo** puts the previous prices back, and **Reset** goes back to the bundled ones.
 
@@ -114,7 +114,7 @@ The first entry changes one price of a known model, the second adds a new model,
 
 By default the plugin reads this machine's `~/.claude`, `~/.config/claude` and `~/.codex`, plus `CLAUDE_CONFIG_DIR` and `CODEX_HOME` when they're set, and every Claude profile and Codex account home Orca manages. A new account shows up on the next scan.
 
-OpenCode 2.x is read from `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`, or the file `OPENCODE_DB` names. On Windows that's `%USERPROFILE%\.local\share\opencode`, not `%APPDATA%`. Channel builds such as `opencode-dev.db` are read too, and an install that has not upgraded to 2.x still reads its older tables. Recent turns can still be in the database's `-wal` file, so it is opened read-only as a real SQLite database. Only messages that changed are read, and **Refresh** also drops messages deleted in OpenCode. Turn the OpenCode folder off in the source list like any other. Reading it needs `node:sqlite` (Node 22.5 or newer, which Orca ships); without it the source shows a warning and everything else still works. OpenCode is local-only for now: SSH hosts read transcripts, not databases.
+OpenCode 2.x is read from `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db` (on Windows, `%USERPROFILE%\.local\share\opencode`, not `%APPDATA%`), or from the file `OPENCODE_DB` names. Channel builds such as `opencode-dev.db` count too, and installs older than 2.x are read from their old tables. The database is opened read-only and only changed messages are read. **Refresh** also drops messages deleted in OpenCode. It needs `node:sqlite` (Node 22.5 or newer, which Orca ships); without it the source shows a warning and everything else still works. SSH hosts don't read OpenCode yet.
 
 Histories from all of them are combined. A transcript that several accounts share counts once, and so does a hard link or a copied Codex turn. Codex turns are matched by turn ID, so a session resumed or copied under a new session ID still counts once. Older Codex logs have no turn IDs and can't be matched across sessions. The transcripts don't say which subscription paid for a turn, so the totals cover all accounts together. The source strip under the filters shows each folder's status, files, turns and latest usage, and a transcript that several folders share is counted in each of them there.
 
@@ -147,7 +147,7 @@ The first scan after this update reads every Codex transcript again, so copied t
 Measured on a history of about 5,100 transcripts and 418,000 turns:
 
 * **Opening the panel** takes about 0.3 s, from the cache. The very first open, with no cache, reads everything once in about 2 s.
-* **After an agent turn**, only the new lines are read, and only the changed transcript is merged again (a few milliseconds). OpenCode is the same: only messages that changed are queried (about 15 ms on a 50,000-turn database), and a restart reuses the saved table without opening the database.
+* **After an agent turn**, only the new lines are read, and only the changed transcript is merged again (a few milliseconds). For OpenCode, only changed messages are queried (about 15 ms on a 50,000-turn database), and a restart doesn't open an unchanged database.
 * **Breakdown** reads every transcript the first time (a few seconds). After that it opens in about 0.2 s; switching back to a view or clicking into a project takes about 30 ms, and a view after new activity is rebuilt in about 0.1 s.
 * **Memory**: the records take about 110 MB, and Breakdown about 50 MB more once opened. The first full read uses up to about 1 GB for a few seconds while it reads in parallel.
 
