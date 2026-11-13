@@ -38,7 +38,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fixture(t) {
   const base = await fsp.realpath(await fsp.mkdtemp(path.join(os.tmpdir(), 'usage-scan-')));
-  t.after(() => fsp.rm(base, { recursive: true, force: true }));
+  // Retries: a debounced cache save can still be writing into the folder as the test ends (ENOTEMPTY).
+  t.after(() => fsp.rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }));
   const claude = path.join(base, 'claude');
   const codex = path.join(base, 'codex');
   await fsp.mkdir(path.join(claude, 'projects', 'proj-a'), { recursive: true });
