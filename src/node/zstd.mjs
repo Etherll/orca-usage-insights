@@ -187,6 +187,8 @@ export async function readLines(fh, size, onLines, scratch = {}, maxBytes = 768 
       }
     } else if (eof) break;
   }
+  // A cut-off file's last bytes are part of a line that never ended: throw before passing them on.
+  if (!check.complete()) throw new Error(TRUNCATED);
   if (filled > 0) {
     if (filled === out.length) {
       const grown = Buffer.allocUnsafeSlow(out.length + 1);
@@ -196,5 +198,4 @@ export async function readLines(fh, size, onLines, scratch = {}, maxBytes = 768 
     out[filled] = LF;
     onLines(out.subarray(0, filled + 1));
   }
-  if (!check.complete()) throw new Error(TRUNCATED);
 }

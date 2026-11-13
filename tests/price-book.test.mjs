@@ -40,7 +40,12 @@ function modelsDevBody(models) {
 const json = (body) => new Response(JSON.stringify(body), { status: 200 });
 const ok = (body) => () => json(body);
 const reply = (status, body, headers = {}) => () => new Response(body, { status, headers });
-const hang = (init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+// A real request keeps the event loop alive while it waits; the interval stands in for its socket, so
+// the test runner doesn't end the test before the (unref'd) timeout fires.
+const hang = (init) => new Promise((_, reject) => {
+  const alive = setInterval(() => {}, 1000);
+  init.signal.addEventListener('abort', () => { clearInterval(alive); reject(init.signal.reason); });
+});
 const refused = () => {
   throw new TypeError('fetch failed', { cause: new Error('redirect mode is set to error') });
 };
