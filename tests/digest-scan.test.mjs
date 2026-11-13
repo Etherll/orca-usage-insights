@@ -147,7 +147,7 @@ test('a folder that fails to list keeps its digests', { skip: process.getuid?.()
   }
 });
 
-test('a version 2 shard (one file, rows as arrays) is read and converted without reading the transcript', { skip: process.getuid?.() === 0 && 'root ignores permissions' }, async () => {
+test('a shard from before the 512k price band is read again from the transcript', async () => {
   const dir = await home();
   const claudeText = await fixture('breakdown-claude.jsonl');
   const file = path.join(dir, '.claude', 'projects', 'proj', 's.jsonl');
@@ -160,36 +160,17 @@ test('a version 2 shard (one file, rows as arrays) is read and converted without
 
   const [name] = await shards(cacheDir);
   const shard = JSON.parse(await fsp.readFile(path.join(cacheDir, name), 'utf8'));
-  const stateName = name.replace(/\.json$/, '.state.json');
-  const { state } = JSON.parse(await fsp.readFile(path.join(cacheDir, stateName), 'utf8'));
-  const rows = [];
-  for (let at = 0; at < original.rowCount * ROW_WIDTH; at += ROW_WIDTH) rows.push([...original.rows.subarray(at, at + ROW_WIDTH)]);
-  const { rowCount, ...plain } = original;
-  await fsp.writeFile(path.join(cacheDir, name), JSON.stringify({ ...shard, v: 2, state, digest: { ...plain, rows } }));
-  await fsp.rm(path.join(cacheDir, stateName));
-
-  await fsp.chmod(file, 0o000);
-  const reading = createDigestScanner(opts);
-  try {
-    const result = await reading.scan();
-    assert.deepEqual(result.digests[0].digest, original);
-  } finally {
-    await reading.close();
-    await fsp.chmod(file, 0o644);
+  for (const v of [2, 3]) {
+    await fsp.writeFile(path.join(cacheDir, name), JSON.stringify({ ...shard, v }));
+    const again = createDigestScanner(opts);
+    try {
+      assert.deepEqual((await again.scan()).digests[0].digest, original);
+    } finally {
+      await again.close();
+    }
+    assert.equal(JSON.parse(await fsp.readFile(path.join(cacheDir, name), 'utf8')).v, 4, `version ${v} is rewritten`);
   }
-  assert.equal(JSON.parse(await fsp.readFile(path.join(cacheDir, name), 'utf8')).v, 3, 'converted');
-  assert.deepEqual(JSON.parse(await fsp.readFile(path.join(cacheDir, stateName), 'utf8')).state, state, 'state moved to its own file');
-
-  await fsp.appendFile(file, claudeText);
-  const tail = createDigestScanner(opts);
-  const whole = createDigestScanner({ ...opts, cacheDir: null });
-  try {
-    assert.deepEqual((await tail.scan()).digests[0].digest, (await whole.scan()).digests[0].digest);
-  } finally {
-    await tail.close();
-    await whole.close();
-    await fsp.rm(dir, { recursive: true, force: true });
-  }
+  await fsp.rm(dir, { recursive: true, force: true });
 });
 
 

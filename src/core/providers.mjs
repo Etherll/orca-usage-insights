@@ -1,6 +1,8 @@
-// Per-provider wiring: transcript roots, line markers and parser factory. The scanner, its parse
-// threads and the byte-level line filter all read it, so a provider is added in one place.
-// Imports only the core parsers and their markers. records.mjs never imports this file.
+// Per-provider wiring for transcript providers: transcript roots, line markers and parser factory. The
+// scanner, its parse threads and the byte-level line filter all read it, so a transcript provider is
+// added in one place. Providers that keep usage in a database instead (OpenCode) are not listed here:
+// they are a source of their own (src/node/opencode-source.mjs). Display names for every provider live
+// in provider-names.mjs. Imports only the core parsers and their markers. records.mjs never imports this file.
 import { CLAUDE_MARKERS, CODEX_MARKERS, createClaudeParser, createCodexParser } from './records.mjs';
 
 export const PROVIDERS = {

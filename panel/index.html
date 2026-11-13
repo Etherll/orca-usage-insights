@@ -680,11 +680,21 @@ function trim(x) {
   return x.toFixed(1).replace(/\.0$/, '');
 }
 
+// src/core/provider-names.mjs
+// Display names per provider (the `provider` column of a usage record), for the panel, the worker and
+// Explain prompts. Pure, and bundled into the panel by scripts/build.mjs. A provider added to the
+// scanner gets its name here.
+const PROVIDER_LABELS = Object.freeze({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' })
+
+function providerLabel(provider, fallback = provider) {
+  return Object.hasOwn(PROVIDER_LABELS, provider) ? PROVIDER_LABELS[provider] : fallback
+}
+
 // src/panel/charts.mjs
 // Pure SVG-string chart builders. Each takes a slice of the Report and returns markup.
 // Colors are CSS variables defined in panel.css, so light/dark switch without re-rendering.
 
-// panel.js reads compact from here. build.mjs drops this line, since format.mjs is bundled once.
+// panel.js reads these from here. build.mjs drops this line, since both modules are bundled once.
 
 const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite']
 const TOKEN_LABELS = { input: 'Input', output: 'Output', cacheRead: 'Cache read', cacheWrite: 'Cache write' }
@@ -913,7 +923,6 @@ function sparkline(values, { width = 96, height = 26 } = {}) {
 }
 
 const PROVIDER_COLORS = { claude: 'var(--s2)', codex: 'var(--s1)', opencode: 'var(--s3)' }
-const PROVIDER_LABELS = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' }
 const providerColor = (p, i = 0) => PROVIDER_COLORS[p] ?? ['var(--s3)', 'var(--s4)', 'var(--s5)'][i % 3]
 
 // Monotone cubic (Fritsch–Carlson) path through points, so smoothing never overshoots below 0.

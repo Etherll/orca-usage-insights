@@ -4,6 +4,8 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { findOpencodeDbs, modelKey, opencodeKey, readOpencodeDb } from '../src/node/opencode-db.mjs';
+import { createOpencodeSource } from '../src/node/opencode-source.mjs';
+import { isTurnedOff } from '../src/node/paths.mjs';
 import { createScanner } from '../src/node/scan.mjs';
 
 let DatabaseSync = null;
@@ -24,9 +26,11 @@ async function temp(t) {
 }
 
 // A quick update and close can land in the filesystem's mtime tick. Move it so the scanner's stat key
-// always changes, as it would for a real database written by OpenCode.
+// always changes, as it would for a real database written by OpenCode. Each call moves it a further
+// second, so two calls in the same millisecond still give different keys.
+let bumps = 0;
 async function bumpMtime(file) {
-  const at = new Date(Date.now() + 3_600_000);
+  const at = new Date(Date.now() + 3_600_000 + ++bumps * 1_000);
   await fsp.utimes(file, at, at);
 }
 
@@ -338,4 +342,61 @@ test('opencodeKey includes the WAL file and is null for a missing database', asy
   const after = await opencodeKey({ fs: fsp, path: file });
   assert.notEqual(before, after);
   assert.equal(await opencodeKey({ fs: fsp, path: path.join(base, 'nope.db') }), null);
+});
+
+sqliteTest('a restarted source reuses its cached table and queries nothing while the database is unchanged', async (t) => {
+  const base = await temp(t);
+  const dir = path.join(base, '.local', 'share', 'opencode');
+  await fsp.mkdir(dir, { recursive: true });
+  const file = path.join(dir, 'opencode.db');
+  createV2(file, { sessions: [{ id: 's1', directory: '/w/eps' }], messages: [v2Message({ id: 'm1' }), v2Message({ id: 'm2' })] });
+  const cacheFile = path.join(base, 'cache', 'opencode.json');
+
+  // A fixed stat key: the second source can only skip the query when the key matches exactly.
+  const fixed = { ...fsp, stat: async (f) => (f === file ? { mtimeMs: 1, size: 1 } : fsp.stat(f)) };
+  const first = createOpencodeSource({ home: base, env: {}, cacheFile, fs: fixed });
+  const a = await first.scan();
+  assert.equal(a.changed, true);
+  await first.flush();
+
+  // Unreadable as a database from here on: a second source can only answer from its cache.
+  await fsp.writeFile(file, 'not a database');
+  const second = createOpencodeSource({ home: base, env: {}, cacheFile, fs: fixed });
+  const b = await second.scan();
+  assert.equal(b.changed, false);
+  assert.equal(b.folder.state, 'ok');
+  assert.deepEqual([...byKey(b.sources[0].table).keys()].sort(), ['opencode:m1', 'opencode:m2']);
+});
+
+sqliteTest('Refresh drops a deleted message; an ordinary poll keeps reading only changed rows', async (t) => {
+  const base = await temp(t);
+  const dir = path.join(base, '.local', 'share', 'opencode');
+  await fsp.mkdir(dir, { recursive: true });
+  const file = path.join(dir, 'opencode.db');
+  createV2(file, { sessions: [{ id: 's1', directory: '/w/zeta' }], messages: [v2Message({ id: 'm1' }), v2Message({ id: 'm2' })] });
+  const source = createOpencodeSource({ home: base, env: {} });
+  assert.equal((await source.scan()).sources[0].table.length, 2);
+
+  const db = new DatabaseSync(file);
+  exec(db, 'DELETE FROM session_message WHERE id = ?', 'm1');
+  db.close();
+  await bumpMtime(file);
+  assert.equal((await source.scan()).sources[0].table.length, 2, 'a poll does not look for deletions');
+  const refreshed = await source.scan({ force: true });
+  assert.equal(refreshed.changed, true);
+  assert.deepEqual([...byKey(refreshed.sources[0].table).keys()], ['opencode:m2']);
+  const again = await source.scan({ force: true });
+  assert.equal(again.changed, false, 'a Refresh with nothing deleted reads no rows again');
+});
+
+test('a folder is turned off by its own path, without case on Windows only', () => {
+  assert.equal(isTurnedOff('C:\\Users\\me\\.local\\share\\opencode', ['c:\\users\\me\\.local\\share\\OpenCode'], 'win32'), true);
+  assert.equal(isTurnedOff('/home/me/.local/share/opencode', ['/home/me/.local/share/OpenCode'], 'linux'), false);
+  assert.equal(isTurnedOff('/home/me/.local/share/opencode', ['/home/me/.local/share'], 'linux'), false, 'a parent folder is its own source');
+  assert.equal(isTurnedOff('/x', undefined, 'linux'), false);
+});
+
+test('the OpenCode folder follows HOME like the transcript roots', async () => {
+  const found = await findOpencodeDbs({ fs: { readdir: async () => { const e = new Error('none'); e.code = 'ENOENT'; throw e; } }, platform: 'linux', env: { HOME: '/h' }, home: '/fallback' });
+  assert.equal(found.dir, '/h/.local/share/opencode');
 });

@@ -6,7 +6,10 @@ import { normalizeModelId } from './price-sources.mjs';
 export { PROMPT_BANDS, bandOf } from './bands.mjs';
 export { normalizeModelId } from './price-sources.mjs';
 
-const PROVIDERS = ['anthropic', 'openai', 'opencode', 'opencode-go'];
+// How each price vendor bills cache writes. 'split' prices 5-minute and 1-hour writes apart (Anthropic);
+// 'single' bills every write at the entry's one `default` rate. A new vendor is added here with its rule.
+const CACHE_WRITES = Object.freeze({ anthropic: 'split', openai: 'single', opencode: 'single', 'opencode-go': 'single' });
+const PROVIDERS = Object.keys(CACHE_WRITES);
 const SOURCES = ['litellm', 'manual', 'user'];
 const ENTRY_FIELDS = ['provider', 'aliases', 'input', 'output', 'cacheRead', 'cacheWrite', 'tiers', 'contextWindow', 'source', 'asOf'];
 const RATE_KEYS = ['input', 'output', 'cacheRead'];
@@ -89,7 +92,7 @@ function linesCost(entry, rates, input, output, cacheRead, write5m, write1h) {
     usd += (cacheRead * rates.cacheRead) / 1e6;
   }
   const write = rates.cacheWrite;
-  if (entry.provider !== 'anthropic') {
+  if (CACHE_WRITES[entry.provider] === 'single') {
     const count = write5m + write1h;
     if (count !== 0) {
       const rate = write?.default;
@@ -281,14 +284,14 @@ function validTiers(tiers, provider) {
   });
 }
 
-// null (no cache-write rates) is valid; every provider except Anthropic must give a default rate.
+// null (no cache-write rates) is valid; a vendor that bills one write rate must give its default.
 function validWrite(write, provider) {
   if (write === null || write === undefined) return true;
   if (!isObject(write)) return false;
   const keys = Object.keys(write);
   if (keys.length === 0 || keys.some((key) => !WRITE_KEYS.includes(key))) return false;
   if (!keys.every((key) => isRate(write[key]))) return false;
-  return provider === 'anthropic' || write.default !== undefined;
+  return CACHE_WRITES[provider] !== 'single' || write.default !== undefined;
 }
 
 function tierFor(entry, band) {

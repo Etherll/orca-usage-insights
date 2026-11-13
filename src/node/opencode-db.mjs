@@ -4,7 +4,7 @@
 // not have. `node:sqlite` is loaded lazily, so an older Node keeps the rest of the plugin working.
 import os from 'node:os';
 import { RecordTable } from '../core/table.mjs';
-import { pathFor } from './paths.mjs';
+import { homeDir, pathFor } from './paths.mjs';
 
 const MIN_YEAR = 2020;
 // Only these providers are priced per OpenCode channel. Their model ids are qualified in the catalog,
@@ -16,7 +16,7 @@ const DB_FILE = /^opencode.*\.db$/i;
 // is absolute or relative to that folder; a stable channel keeps the plain opencode.db name.
 export async function findOpencodeDbs({ fs, platform = process.platform, env = process.env, home = os.homedir() } = {}) {
   const p = pathFor(platform);
-  const dataRoot = nonEmpty(env.XDG_DATA_HOME) ?? p.join(home, '.local', 'share');
+  const dataRoot = nonEmpty(env.XDG_DATA_HOME) ?? p.join(homeDir({ platform, env, home }), '.local', 'share');
   const dir = p.join(dataRoot, 'opencode');
   const override = nonEmpty(env.OPENCODE_DB);
   if (override) {
@@ -60,11 +60,12 @@ export async function opencodeKey({ fs, path }) {
 }
 
 // Reads assistant messages into a table. `prior` (a previous result) makes the read incremental: only
-// rows whose time_updated moved are queried, and their records are replaced. Pass `reset` after a
-// Refresh to read everything again, which also drops messages deleted from the database.
+// rows whose time_updated moved are queried, and their records are replaced. `reset` reads everything
+// again. `checkDeleted` (Refresh) lists message ids, which needs no JSON parsing, and reads everything
+// again only when a counted message is gone, so deleted messages drop out without a full read each time.
 // Prefers the v2 tables; an install upgraded from v1 has both, and its v1 rows were copied into v2, so
 // reading v1 too would count them twice.
-export async function readOpencodeDb({ fs, path, key, names, prior = null, reset = false } = {}) {
+export async function readOpencodeDb({ fs, path, key, names, prior = null, reset = false, checkDeleted = false } = {}) {
   key ??= await opencodeKey({ fs, path });
   if (key === null) return { status: 'missing', key };
   let DatabaseSync;
@@ -76,18 +77,16 @@ export async function readOpencodeDb({ fs, path, key, names, prior = null, reset
   let db;
   try {
     const size = (await fs.stat(path)).size;
-    const full = reset || prior === null || (prior.size !== undefined && size < prior.size);
-    const table = full ? new RecordTable(0, names) : prior.table;
-    const rows = full ? new Map() : prior.rows;
-    let cursor = full ? 0 : prior.cursor;
     db = new DatabaseSync(path, { readOnly: true });
     db.exec('PRAGMA busy_timeout = 2000');
     const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
-    if (tables.has('session_v2') && tables.has('session_message')) {
-      cursor = readV2(db, table, rows, cursor);
-    } else if (tables.has('session') && tables.has('message')) {
-      cursor = readV1(db, table, rows, cursor);
-    }
+    const schema = tables.has('session_v2') && tables.has('session_message') ? V2 : tables.has('session') && tables.has('message') ? V1 : null;
+    let full = reset || prior === null || (prior.size !== undefined && size < prior.size);
+    if (!full && checkDeleted && schema && prior.rows.size > 0) full = anyDeleted(db, schema, prior.rows);
+    const table = full ? new RecordTable(0, names) : prior.table;
+    const rows = full ? new Map() : prior.rows;
+    let cursor = full ? 0 : prior.cursor;
+    if (schema) cursor = schema.read(db, table, rows, cursor);
     return { status: 'ok', key, table, rows, cursor, size };
   } catch (error) {
     return { status: 'error', key, error: String(error?.message ?? error) };
@@ -145,18 +144,33 @@ function readV1(db, table, rows, cursor) {
   return store(table, rows, cursor, list, (row) => row.cwd ?? row.directory);
 }
 
-// Adds each assistant row, or replaces the record of a row that was already counted. Rows without a
-// tokens object are still moved past, so a streaming message is not queried again before it finishes.
+const V2 = { read: readV2, ids: "SELECT id FROM session_message WHERE type = 'assistant'" };
+// v1 keeps the role inside the JSON, so every id is listed: a superset is enough to find a deleted row.
+const V1 = { read: readV1, ids: 'SELECT id FROM message' };
+
+function anyDeleted(db, schema, rows) {
+  const ids = new Set();
+  for (const row of db.prepare(schema.ids).all()) ids.add(`opencode:${row.id}`);
+  for (const key of rows.keys()) if (!ids.has(key)) return true;
+  return false;
+}
+
+// Adds each assistant row, or replaces the record of a row that was already counted. `rows` maps a
+// record key to [table index, time_updated]: the cursor query is inclusive (`>=`, so a row written in the
+// cursor's millisecond is never missed), and a row whose time_updated has not moved is skipped, so the
+// table only changes when a message did. Rows without a tokens object are still moved past, so a
+// streaming message is not queried again before it finishes.
 function store(table, rows, cursor, list, directoryOf) {
   let next = cursor;
   for (const row of list) {
     if (Number.isFinite(row.updated) && row.updated > next) next = row.updated;
+    const key = `opencode:${row.id}`;
+    const known = rows.get(key);
+    if (known !== undefined && known[1] === row.updated) continue;
     if (row.input === null && row.output === null && row.reasoning === null && row.cacheRead === null && row.cacheWrite === null) continue;
     if (!plausible(row.ms)) continue;
     const directory = directoryOf(row);
-    const key = `opencode:${row.id}`;
     const output = count(row.output) + count(row.reasoning);
-    const at = rows.get(key);
     const args = [
       key,
       row.ms,
@@ -172,8 +186,11 @@ function store(table, rows, cursor, list, directoryOf) {
       count(row.cacheWrite),
       0,
     ];
-    if (at === undefined) rows.set(key, table.push(...args));
-    else table.replace(at, ...args.slice(1));
+    if (known === undefined) rows.set(key, [table.push(...args), row.updated]);
+    else {
+      table.replace(known[0], ...args.slice(1));
+      known[1] = row.updated;
+    }
   }
   return next;
 }

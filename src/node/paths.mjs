@@ -8,6 +8,18 @@ export function pathFor(platform) {
   return platform === 'win32' ? path.win32 : path.posix;
 }
 
+// Windows paths compare without case; everywhere else they are exact.
+export function pathIdentity(file, platform) {
+  return platform === 'win32' ? file.toLowerCase() : file;
+}
+
+// A source is turned off when its own path is in the turned-off list. Transcript roots and the OpenCode
+// folder use this one rule, so a path the panel writes to settings always matches the source it came from.
+export function isTurnedOff(path, disabled, platform) {
+  const id = pathIdentity(path, platform);
+  return (disabled ?? []).some((entry) => typeof entry === 'string' && pathIdentity(entry, platform) === id);
+}
+
 export function homeDir({ platform = process.platform, env = process.env, home = os.homedir() } = {}) {
   return (platform === 'win32' ? nonEmpty(env.USERPROFILE) : undefined) ?? nonEmpty(env.HOME) ?? home;
 }

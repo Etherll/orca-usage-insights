@@ -1,4 +1,5 @@
-// Scanner adapter: walks Claude and Codex transcript roots and reads only what changed.
+// Scanner adapter: walks Claude and Codex transcript roots and reads only what changed, and merges in
+// the OpenCode databases (opencode-source.mjs), which keep their own cache file.
 // Stat-first: a file whose `mtimeMs:size` key is unchanged costs one stat and no reads.
 // Entries keep the parser per file, so records survive tails. The persisted cache stores
 // { key, offset, kind, ctx, state } per file; `offset` is the end of the last complete line.
@@ -8,7 +9,7 @@ import { createRecordStore } from '../core/record-store.mjs';
 import { NameDict } from '../core/table.mjs';
 import { PROVIDERS } from '../core/providers.mjs';
 import { MARKER_BYTES, createRecordsConsumer, markedLines } from './lines.mjs';
-import { findOpencodeDbs, opencodeKey, readOpencodeDb } from './opencode-db.mjs';
+import { createOpencodeSource } from './opencode-source.mjs';
 import { createParsePool } from './parse-pool.mjs';
 import { pathFor, rootSpecs } from './paths.mjs';
 import { listTranscripts, readTranscript } from './transcript-files.mjs';
@@ -16,6 +17,7 @@ import { listTranscripts, readTranscript } from './transcript-files.mjs';
 export { markedLines };
 
 const CACHE_VERSION = 6;
+const OPENCODE_CACHE_FILE = 'opencode-cache-v1.json';
 // Earlier caches, read when there is no current one. Their Claude entries carry over unread (parsers convert
 // pre-columns states); Codex files are read again, as their keys predate turn-based identity.
 const LEGACY_CACHE_VERSIONS = new Set([4, 5]);
@@ -37,6 +39,7 @@ export function createScanner({
   fs = fsp,
   cacheFile,
   legacyCacheFile = null, // a path or a list of paths, newest first
+  opencodeCacheFile = cacheFile ? pathFor(platform).join(pathFor(platform).dirname(cacheFile), OPENCODE_CACHE_FILE) : null,
   concurrency = 8,
   // Threads that parse files read whole for the first time (first open, rewritten files).
   // 0 parses on the calling thread. Tail reads always parse inline: they are small.
@@ -46,7 +49,6 @@ export function createScanner({
   const p = pathFor(platform);
   const limit = Math.max(1, Math.floor(concurrency));
   let files = new Map();
-  const opencode = new Map(); // database path -> { key, table }, read again only when the database changes
   let loaded = false;
   let generation = 0;
   let inFlight = null; // { job, roots } while a run is going
@@ -54,6 +56,8 @@ export function createScanner({
   // Every file's table interns into one dictionary, so the store copies their columns in bulk.
   const names = new NameDict();
   let store = createRecordStore({ names });
+  // OpenCode databases are a second kind of source; their tables intern into the same dictionary.
+  const opencode = createOpencodeSource({ platform, env, home, fs, names, cacheFile: opencodeCacheFile });
   let extra = { claude: [], codex: [], disabled: [] }; // folders from settings, see setExtraRoots
   let extraKey = '[[],[],[]]';
   let rootsGen = 0;
@@ -119,7 +123,7 @@ export function createScanner({
   function reset() {
     generation++;
     files = new Map();
-    opencode.clear();
+    opencode.reset();
     store = createRecordStore({ names });
     baseGen = null;
     loaded = true;
@@ -149,7 +153,9 @@ export function createScanner({
     await mapLimit(order, limit, (file) =>
       refreshFile(run, file, stats.get(file.path)).catch((error) => countFileError(run, file.path, error)),
     );
-    const opencodeRun = await scanOpencode(run, folderSpecs, force);
+    const opencodeRun = await opencode.scan({ force, disabled: folderSpecs.disabled });
+    run.errors += opencodeRun.errors;
+    if (opencodeRun.changed) run.changed = true;
     const walked = new Set(found.map((file) => file.path));
     // Cached files under a turned-off folder stay cached, so turning it on again reads only what changed.
     const off = (path) => !walked.has(path) && underAny(run.disabled, path, p.sep);
@@ -181,7 +187,7 @@ export function createScanner({
       const { rows, latest } = folderCounts(folder, [...paths].map((path) => tables.get(path)).filter(Boolean));
       return publicFolder({ ...folder, files: folder.paths.size, records: rows, latestRecordAt: latest > -Infinity ? new Date(latest).toISOString() : null });
     });
-    statuses.push(...opencodeRun.folders);
+    statuses.push(publicFolder(opencodeRun.folder));
     return {
       records,
       sources,
@@ -192,97 +198,6 @@ export function createScanner({
       folders: statuses,
       skipped: run.skipped,
     };
-  }
-
-  // OpenCode keeps usage in one SQLite database (and a WAL). It is read whole when either file
-  // changes and the table is reused otherwise, so a quiet poll costs two stats and no query.
-  async function scanOpencode(run, extra, force) {
-    const out = { sources: [], folders: [], files: 0 };
-    let found;
-    try {
-      found = await findOpencodeDbs({ fs, platform, env, home });
-    } catch (error) {
-      run.errors++;
-      out.folders.push(publicFolder({
-        path: 'opencode', kind: 'opencode', source: 'default', state: 'warning',
-        files: 0, records: 0, latestRecordAt: null, message: `Cannot list OpenCode data (${error?.code ?? 'error'})`,
-      }));
-      return out;
-    }
-    if (found.missing) {
-      out.folders.push(publicFolder({ path: found.dir, kind: 'opencode', source: 'default', state: 'empty', files: 0, records: 0, latestRecordAt: null }));
-      return out;
-    }
-    if (isTurnedOff(extra?.disabled, run.disabled, found.dir, platform, p.sep)) {
-      out.folders.push(publicFolder({ path: found.dir, kind: 'opencode', source: 'default', state: 'off', files: 0, records: 0, latestRecordAt: null }));
-      return out;
-    }
-    const seen = new Set();
-    let records = 0;
-    let latest = -Infinity;
-    let state = found.dbs.length === 0 ? 'empty' : 'ok';
-    let message = null;
-    for (const db of found.dbs) {
-      seen.add(db.path);
-      let key;
-      try {
-        key = await opencodeKey({ fs, path: db.path });
-      } catch {
-        run.errors++;
-        state = 'warning';
-        message ??= 'Some OpenCode data could not be read';
-        continue;
-      }
-      if (key === null) {
-        if (opencode.delete(db.path)) run.changed = true;
-        state = 'warning';
-        message ??= 'OpenCode database not found';
-        continue;
-      }
-      let entry = opencode.get(db.path);
-      if (!entry || entry.key !== key || force) {
-        const before = entry?.table;
-        const version = before?.version;
-        const result = await readOpencodeDb({ fs, path: db.path, key, names, prior: entry, reset: force });
-        if (result.status === 'ok') {
-          if (result.table !== before || result.table.version !== version) run.changed = true;
-          entry = { key, table: result.table, rows: result.rows, cursor: result.cursor, size: result.size };
-          opencode.set(db.path, entry);
-        } else if (result.status === 'missing') {
-          if (opencode.delete(db.path)) run.changed = true;
-          continue;
-        } else if (result.status === 'unsupported') {
-          state = 'warning';
-          message ??= result.error;
-        } else {
-          run.errors++;
-          state = 'warning';
-          message ??= 'Some OpenCode data could not be read';
-        }
-      }
-      // On a transient read failure the last good table stays, so usage never flickers out of the totals.
-      if (!entry) continue;
-      out.sources.push({ id: db.path, table: entry.table });
-      out.files++;
-      records += entry.table.length;
-      latest = Math.max(latest, maxMs(entry.table));
-    }
-    for (const path of [...opencode.keys()]) {
-      if (seen.has(path)) continue;
-      opencode.delete(path);
-      run.changed = true;
-    }
-    out.folders.push(publicFolder({
-      path: found.dir,
-      kind: 'opencode',
-      source: 'default',
-      state,
-      files: out.files,
-      records,
-      latestRecordAt: latest > -Infinity ? new Date(latest).toISOString() : null,
-      ...(message ? { message } : {}),
-    }));
-    return out;
   }
 
   // Turns (rows with the same key count once) and the newest timestamp across a root's files. Kept per root
@@ -469,7 +384,7 @@ export function createScanner({
   }
 
   function persist() {
-    const job = saveChain.then(writeCache);
+    const job = saveChain.then(writeCache).then(() => opencode.flush());
     saveChain = job.catch(() => {});
     return job;
   }
@@ -572,24 +487,6 @@ function noop() {}
 
 function underAny(dirs, file, sep) {
   return dirs.some((dir) => file.startsWith(dir.endsWith(sep) ? dir : dir + sep));
-}
-
-// Settings paths are expanded by the worker but not resolved, so compare case-insensitively on Windows
-// and also treat a folder under a turned-off root as off.
-function isTurnedOff(settings, canonical, dir, platform, sep) {
-  const key = (value) => (platform === 'win32' ? value.toLowerCase() : value);
-  const target = key(dir);
-  return [...(settings ?? []), ...(canonical ?? [])].some((value) => {
-    if (typeof value !== 'string') return false;
-    const off = key(value);
-    return off === target || target.startsWith(off.endsWith(sep) ? off : off + sep);
-  });
-}
-
-function maxMs(table) {
-  let max = -Infinity;
-  for (let i = 0; i < table.length; i++) if (table.ms[i] > max) max = table.ms[i];
-  return max;
 }
 
 function isCacheEntry(entry) {

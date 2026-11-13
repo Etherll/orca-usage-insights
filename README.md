@@ -114,7 +114,7 @@ The first entry changes one price of a known model, the second adds a new model,
 
 By default the plugin reads this machine's `~/.claude`, `~/.config/claude` and `~/.codex`, plus `CLAUDE_CONFIG_DIR` and `CODEX_HOME` when they're set, and every Claude profile and Codex account home Orca manages. A new account shows up on the next scan.
 
-OpenCode 2.x is read from `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`, or the file `OPENCODE_DB` names. On Windows that's `%USERPROFILE%\.local\share\opencode`, not `%APPDATA%`. Channel builds such as `opencode-dev.db` are read too, and an install that has not upgraded to 2.x still reads its older tables. Recent turns can still be in the database's `-wal` file, so it is opened read-only as a real SQLite database. OpenCode is local-only for now: SSH hosts read transcripts, not databases.
+OpenCode 2.x is read from `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db`, or the file `OPENCODE_DB` names. On Windows that's `%USERPROFILE%\.local\share\opencode`, not `%APPDATA%`. Channel builds such as `opencode-dev.db` are read too, and an install that has not upgraded to 2.x still reads its older tables. Recent turns can still be in the database's `-wal` file, so it is opened read-only as a real SQLite database. Only messages that changed are read, and **Refresh** also drops messages deleted in OpenCode. Turn the OpenCode folder off in the source list like any other. Reading it needs `node:sqlite` (Node 22.5 or newer, which Orca ships); without it the source shows a warning and everything else still works. OpenCode is local-only for now: SSH hosts read transcripts, not databases.
 
 Histories from all of them are combined. A transcript that several accounts share counts once, and so does a hard link or a copied Codex turn. Codex turns are matched by turn ID, so a session resumed or copied under a new session ID still counts once. Older Codex logs have no turn IDs and can't be matched across sessions. The transcripts don't say which subscription paid for a turn, so the totals cover all accounts together. The source strip under the filters shows each folder's status, files, turns and latest usage, and a transcript that several folders share is counted in each of them there.
 
@@ -147,11 +147,11 @@ The first scan after this update reads every Codex transcript again, so copied t
 Measured on a history of about 5,100 transcripts and 418,000 turns:
 
 * **Opening the panel** takes about 0.3 s, from the cache. The very first open, with no cache, reads everything once in about 2 s.
-* **After an agent turn**, only the new lines are read, and only the changed transcript is merged again (a few milliseconds).
+* **After an agent turn**, only the new lines are read, and only the changed transcript is merged again (a few milliseconds). OpenCode is the same: only messages that changed are queried (about 15 ms on a 50,000-turn database), and a restart reuses the saved table without opening the database.
 * **Breakdown** reads every transcript the first time (a few seconds). After that it opens in about 0.2 s; switching back to a view or clicking into a project takes about 30 ms, and a view after new activity is rebuilt in about 0.1 s.
 * **Memory**: the records take about 110 MB, and Breakdown about 50 MB more once opened. The first full read uses up to about 1 GB for a few seconds while it reads in parallel.
 
-The first open after updating from 1.1.0 reads everything once, like a first install, because the cache now keeps more per turn (such as 1-hour cache writes).
+The first open after updating from 1.1.0 reads everything once, like a first install, because the cache now keeps more per turn (such as 1-hour cache writes). The first Breakdown after updating to the OpenCode release reads its transcripts once more, because prompts over 512k tokens now have their own price band.
 
 ## Privacy
 
@@ -161,7 +161,7 @@ Your transcripts stay on your machines. The plugin makes no network requests of 
 
 **What it keeps** in its cache folder, so later opens are fast:
 
-* token counts, times, model names and project folders;
+* token counts, times, model names and project folders (for OpenCode, in a file of its own);
 * for Breakdown, a small file per transcript (plus one with where to read on from, for transcripts that can grow) with token counts per bucket, file paths (relative to the project or under `~`; any other absolute path keeps at most its first five folders, such as `/usr/lib/node_modules/typescript/lib`, with a user name under `home` or `Users` replaced by `*`), and command families. A command family is the program and, for a few tools like `git` or `npm`, the subcommand (`$ git status`). Arguments are dropped.
 
 It never stores message text, tool output, command arguments or file contents. The Explain prompt only contains numbers, paths and read commands; it is shown for you to copy, and nothing is sent anywhere until you paste it into an agent.
