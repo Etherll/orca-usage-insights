@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { createScanner } from '../src/node/scan.mjs';
 import { zstdAvailable } from '../src/node/zstd.mjs';
 
@@ -1188,10 +1189,10 @@ test('a trusted inode replacement with equal mtime and size rereads the file', a
   assert.equal((await scanner.scan({ force: true })).records.toRecords()[0].key, 'two:req');
 });
 
-// fixtures/codex.jsonl.zst is codex.jsonl compressed with zlib.zstdCompressSync.
+// The .zst rollout is fixtures/codex.jsonl compressed here, so the repo ships no binary fixture.
 test('a codex .zst rollout gives the same records as the plain .jsonl, inline and on a parse thread', { skip: zstdAvailable() ? false : 'Node has no zlib.zstdCompressSync, so the .zst scan cannot run here' }, async (t) => {
   const fx = await fixture(t);
-  const packed = await fsp.readFile(new URL('./fixtures/codex.jsonl.zst', import.meta.url));
+  const packed = zlib.zstdCompressSync(await fsp.readFile(new URL('./fixtures/codex.jsonl', import.meta.url)));
   const zst = path.join(fx.codex, 'sessions', 'rollout-z.jsonl.zst');
   const jsonl = path.join(fx.codex, 'sessions', 'rollout-z.jsonl');
   await fsp.writeFile(zst, packed);
