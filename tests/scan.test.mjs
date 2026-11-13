@@ -1180,6 +1180,9 @@ test('a trusted inode replacement with equal mtime and size rereads the file', a
   const fx = await fixture(t);
   const file = fx.file('a.jsonl');
   await fsp.writeFile(file, lines(claudeLine({ id: 'one' })));
+  // NTFS file IDs are 64-bit and usually too large to hold exactly, so the scanner rightly does not trust them.
+  const { ino } = await fsp.stat(file);
+  if (!Number.isSafeInteger(ino) || ino < 1) return t.skip('this file system has no inode the scanner can trust');
   const fs = { ...fsp, stat: async (file) => Object.assign(Object.create(await fsp.stat(file)), { mtimeMs: 1000 }) };
   const scanner = createScanner({ env: fx.env, home: fx.base, fs, threads: 0 });
   assert.equal((await scanner.scan()).records.toRecords()[0].key, 'one:req');

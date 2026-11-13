@@ -1027,7 +1027,8 @@ test('sources.toggle keeps the turned-off folders in the disabledFolders setting
   const home = path.join(os.tmpdir(), 'usage-home');
   const mock = mockOrca({ settings: { disabledFolders: '# kept comment\n~/old' } });
   const scanner = fakeScanner(() => result([]));
-  const worker = startWorker(mock.orca, scanner, { now: NOON, pollMs: 60_000, home, platform: 'linux' });
+  // The real platform, so ~ expands with the same separator path.join uses below.
+  const worker = startWorker(mock.orca, scanner, { now: NOON, pollMs: 60_000, home, platform: process.platform });
   try {
     await worker.ready;
     const toggle = mock.handlers.get('sources.toggle');

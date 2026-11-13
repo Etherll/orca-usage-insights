@@ -199,7 +199,8 @@ test('a .zst past the decompression cap is not decompressed again by a restarted
   t.after(() => fsp.rm(dir, { recursive: true, force: true }));
   const big = path.join(dir, '.codex', 'sessions', '2026', '11', '03', 'rollout-big.jsonl.zst');
   await fsp.writeFile(big, zlib.zstdCompressSync(Buffer.from('\n')));
-  // macOS temp folders sit behind a symlink (/var -> /private/var), and the scanner may open either path.
+  // macOS temp folders sit behind a symlink (/var -> /private/var), and on Windows the scanner (told the
+  // platform is linux) joins with '/': match the file by any of those spellings.
   const bigPaths = new Set([big, await fsp.realpath(big)]);
   const cacheDir = path.join(dir, 'digests');
   // Reading the file fails the way decompressing past the 768 MiB cap does; opens are counted.
@@ -208,7 +209,7 @@ test('a .zst past the decompression cap is not decompressed again by a restarted
     ...fsp,
     async open(file, flags) {
       const handle = await fsp.open(file, flags);
-      if (!bigPaths.has(file)) return handle;
+      if (!bigPaths.has(file) && !bigPaths.has(path.resolve(file))) return handle;
       opens++;
       return { read: async () => { throw new Error(TOO_LARGE); }, close: () => handle.close() };
     },
