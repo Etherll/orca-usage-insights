@@ -15,7 +15,7 @@ const FINDINGS_MAX = 10;
 const EVIDENCE_MAX = 5;
 const VIEW_MAX_CHARS = 900_000;
 const DAILY_KEPT = 90;
-const REASONS = ['ssh', 'zstd', 'too-large', 'parse', 'unmatched', 'unpriced'];
+const REASONS = ['ssh', 'opencode', 'zstd', 'too-large', 'parse', 'unmatched', 'unpriced'];
 const FILE_REASON = { zstd: 'zstd', 'too-large': 'too-large', error: 'parse' };
 const GROUPS = {
   command: '(commands)',
@@ -196,7 +196,7 @@ function analyze({ table: records, digests, files, catalog, range, startDate, en
     const dUsd = digestUsd.get(g) ?? 0;
     if (dUsd === 0) {
       const [provider, host, sessionId] = sessions.list[Math.floor(g / SESSION)];
-      const reason = fileReasons.get(sessionKey(provider, host, sessionId)) ?? (host !== 'local' ? 'ssh' : 'unmatched');
+      const reason = fileReasons.get(sessionKey(provider, host, sessionId)) ?? (host !== 'local' ? 'ssh' : provider === 'opencode' ? 'opencode' : 'unmatched');
       const bucket = notAnalysed.get(reason);
       bucket.usd += u.usd;
       bucket.turns += u.turns;

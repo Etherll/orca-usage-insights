@@ -1,7 +1,12 @@
 // Price-source adapters. Each one turns a snapshot into catalog entries (USD per 1M tokens).
 // Pure: the caller reads the files and passes the parsed JSON in.
 
-const PROVIDERS = ['anthropic', 'openai'];
+import { PROMPT_BANDS } from './bands.mjs';
+
+const PROVIDERS = ['anthropic', 'openai', 'opencode', 'opencode-go'];
+// OpenCode prices depend on the channel (Console or Go) and share model ids, so their catalog ids are
+// qualified. Only these providers use the "no rate listed means no charge" rule below.
+const CHANNELS = new Set(['opencode', 'opencode-go']);
 const PREFIX = /^(anthropic\/|openai\/|us\.anthropic\.|eu\.anthropic\.|anthropic\.)/;
 const SUFFIX = /(\[1m\]|-v\d+:\d+|@\d{8}|-\d{8})$/;
 const DATED = /^(.*)-\d{8}$/;
@@ -66,18 +71,23 @@ export function parseLiteLLM(json, { ids, asOf = today(), source = 'litellm' } =
 }
 
 // The 1-hour write rate is not in models.dev, so anthropic entries get a `5m` write only.
-export function parseModelsDev(json, { ids, asOf = today(), source = 'manual' } = {}) {
+// OpenCode entries are qualified by channel. Its list omits a cache rate when the channel charges
+// nothing for it, so those default to 0, the same rule OpenCode uses to price a request.
+export function parseModelsDev(json, { ids, asOf = today(), source = 'manual', providers = PROVIDERS } = {}) {
   const wanted = wantedSet(ids);
   const entries = [];
   const errors = [];
-  for (const provider of PROVIDERS) {
-    for (const [id, model] of Object.entries(json?.[provider]?.models ?? {})) {
+  for (const provider of providers) {
+    const channel = CHANNELS.has(provider);
+    for (const [rawId, model] of Object.entries(json?.[provider]?.models ?? {})) {
+      const id = channel ? `${provider}/${rawId}` : rawId;
       if (wanted && !wanted.has(normalizeModelId(id))) continue;
       if (!model?.cost || typeof model.cost !== 'object') {
         errors.push({ id, provider, reason: 'no cost' });
         continue;
       }
-      collect(build({ id, provider, ...readModelsDev(model.cost), source, asOf }), { id, provider }, entries, errors);
+      const cost = readModelsDev(model.cost, { fillCache: channel });
+      collect(build({ id, provider, ...cost, source, asOf }), { id, provider }, entries, errors);
     }
   }
   return { entries, errors };
@@ -116,7 +126,7 @@ function readLiteLLM(row, provider) {
   return { base, tiers: [...tiers], unknown, invalid };
 }
 
-function readModelsDev(cost) {
+function readModelsDev(cost, { fillCache = false } = {}) {
   const invalid = [];
   const pick = (src, prefix) => {
     const slots = {};
@@ -128,12 +138,20 @@ function readModelsDev(cost) {
     }
     return slots;
   };
-  const base = pick(cost, 'cost.');
-  const tiers = (cost.tiers ?? []).map((t, i) => {
-    const size = t.tier?.size;
-    if (!isRate(size)) invalid.push(`cost.tiers[${i}].tier.size`);
-    return [size, pick(t, `cost.tiers[${i}].`)];
-  });
+  const complete = (slots) => {
+    if (!fillCache) return slots;
+    return { ...slots, cacheRead: slots.cacheRead ?? 0, write: slots.write ?? 0 };
+  };
+  const base = complete(pick(cost, 'cost.'));
+  // A tier size outside the catalog's bands could never be applied, so it is left out rather than
+  // making the whole entry invalid.
+  const tiers = (cost.tiers ?? [])
+    .map((t, i) => {
+      const size = t.tier?.size;
+      if (!isRate(size)) invalid.push(`cost.tiers[${i}].tier.size`);
+      return [size, complete(pick(t, `cost.tiers[${i}].`))];
+    })
+    .filter(([size]) => size === undefined || PROMPT_BANDS.includes(size));
   return { base, tiers, invalid };
 }
 

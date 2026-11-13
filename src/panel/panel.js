@@ -238,8 +238,9 @@ function renderSources(r) {
   if (!list.length) return
   const pill = (s) => {
     const state = STATE_WORDS[s.state] ? s.state : 'ok'
-    const meta = state === 'off' ? 'turned off' : state === 'empty' ? 'no transcripts' : state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
-    const detail = [s.path || '', s.source ? `Source: ${s.source}` : '', STATE_WORDS[state], s.message, s.files !== undefined ? `${s.files} files` : '', s.ms ? `scanned in ${s.ms} ms` : '', s.latestRecordAt ? `Latest recorded usage: ${new Date(s.latestRecordAt).toLocaleString()}` : ''].filter(Boolean).join(' · ')
+    const empty = s.provider === 'opencode' ? 'no database' : 'no transcripts'
+    const meta = state === 'off' ? 'turned off' : state === 'empty' ? empty : state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
+    const detail = [s.path || '', s.source ? `Source: ${s.source}` : '', state === 'empty' ? empty.replace(/^no /, 'No ') : STATE_WORDS[state], s.message, s.files !== undefined ? `${s.files} files` : '', s.ms ? `scanned in ${s.ms} ms` : '', s.latestRecordAt ? `Latest recorded usage: ${new Date(s.latestRecordAt).toLocaleString()}` : ''].filter(Boolean).join(' · ')
     const icon = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SOURCE_ICONS[s.kind] || SOURCE_ICONS.local}</svg>`
     const label = sourceLabel(s)
     const inner = `${icon}<span class="state" aria-hidden="true"></span><span class="name">${esc(label)}</span><span class="meta">${esc(meta)}</span>`

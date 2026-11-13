@@ -20,6 +20,8 @@ const CASES = [
   ['claude-sonnet-4-5-20250929', [3, 15, 0.3, 3.75]],
   ['claude-haiku-4-5-20251001', [1, 5, 0.1, 1.25]],
   ['claude-fable-5-2', [8, 40, 0.2, 10]],
+  ['opencode-go/deepseek-v4.1-flash', [0.15, 0.6, 0.003, 0]],
+  ['opencode/claude-opus-4-8', [5, 25, 0.5, 6.25]],
 ];
 
 const OLD_IDS = [

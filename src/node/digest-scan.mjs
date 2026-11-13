@@ -12,8 +12,9 @@ import { createParsePool } from './parse-pool.mjs';
 import { rootSpecs } from './paths.mjs';
 import { listTranscripts, readTranscript } from './transcript-files.mjs';
 
-const SHARD_VERSION = 3;
-const LEGACY_SHARD_VERSION = 2;
+// 4: requests over 512k prompt tokens got their own price band. Older shards hold the band each request
+// was priced in, so they are read again from the transcript rather than converted.
+const SHARD_VERSION = 4;
 const CONCURRENCY = 8;
 
 // cacheDir: the digests folder, or null to keep everything in memory (tests, previews).
@@ -218,10 +219,6 @@ export function createDigestScanner({
     }
     if (!raw.digest) return null;
     const meta = { key: raw.key, offset: raw.offset, compressed: raw.compressed, kind: raw.kind, sessionId: raw.sessionId };
-    if (raw.v === LEGACY_SHARD_VERSION) {
-      await writeShard(file.path, { ...meta, ctx: raw.ctx }, raw.digest, raw.state ?? null).catch(() => {});
-      return { ...meta, digest: compact(packDigest(raw.digest)) };
-    }
     if (raw.v !== SHARD_VERSION) return null;
     try {
       return { ...meta, digest: compact(decodeDigest(raw.digest)) };

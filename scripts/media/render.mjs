@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { DEMO_SOURCES, DEMO_WORKTREE_ROOTS, demoBreakdown, demoRecords } from './demo-data.mjs'
 import { buildReport as buildReportNode } from '../../src/core/report.mjs'
 import { buildExplainPrompt } from '../../src/core/breakdown/explain.mjs'
+import { providerLabel } from '../../src/core/provider-names.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const out = join(root, 'images')
@@ -47,7 +48,7 @@ const NOW = new Date(2026, 10, 3, 17, 40)
 const records = demoRecords(NOW)
 // Breakdown is made up over the 30-day demo report; Explain prompts come from the real prompt builder.
 const VIEWS = demoBreakdown(buildReportNode(records, { range: '30d', now: NOW }), NOW)
-const EXPLAINS = Object.fromEntries(VIEWS[''].findings.map((f) => [f.id, { ...buildExplainPrompt(f, { harnessLabel: f.harness === 'codex' ? 'Codex' : 'Claude Code', platform: 'darwin' }), estUsd: null }]))
+const EXPLAINS = Object.fromEntries(VIEWS[''].findings.map((f) => [f.id, { ...buildExplainPrompt(f, { harnessLabel: providerLabel(f.harness, 'this agent'), platform: 'darwin' }), estUsd: null }]))
 
 // The panel page, with a stand-in for the worker that runs the real buildReport over demo data.
 function demoPanel(name, { theme = 'dark', actions = '' } = {}) {

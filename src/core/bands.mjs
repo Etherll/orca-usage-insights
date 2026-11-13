@@ -1,4 +1,4 @@
-export const PROMPT_BANDS = Object.freeze([0, 100000, 128000, 200000, 256000, 272000, 400000, 1000000]);
+export const PROMPT_BANDS = Object.freeze([0, 100000, 128000, 200000, 256000, 272000, 400000, 512000, 1000000]);
 
 // A tier `above: N` prices prompts over N tokens, so a prompt of exactly N stays in the band below.
 export function bandOf(promptTokens) {

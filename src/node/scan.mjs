@@ -1,4 +1,5 @@
-// Scanner adapter: walks Claude and Codex transcript roots and reads only what changed.
+// Scanner adapter: walks Claude and Codex transcript roots and reads only what changed, and merges in
+// the OpenCode databases (opencode-source.mjs), which keep their own cache file.
 // Stat-first: a file whose `mtimeMs:size` key is unchanged costs one stat and no reads.
 // Entries keep the parser per file, so records survive tails. The persisted cache stores
 // { key, offset, kind, ctx, state } per file; `offset` is the end of the last complete line.
@@ -8,6 +9,7 @@ import { createRecordStore } from '../core/record-store.mjs';
 import { NameDict } from '../core/table.mjs';
 import { PROVIDERS } from '../core/providers.mjs';
 import { MARKER_BYTES, createRecordsConsumer, markedLines } from './lines.mjs';
+import { createOpencodeSource } from './opencode-source.mjs';
 import { createParsePool } from './parse-pool.mjs';
 import { pathFor, rootSpecs } from './paths.mjs';
 import { listTranscripts, readTranscript } from './transcript-files.mjs';
@@ -15,6 +17,7 @@ import { listTranscripts, readTranscript } from './transcript-files.mjs';
 export { markedLines };
 
 const CACHE_VERSION = 6;
+const OPENCODE_CACHE_FILE = 'opencode-cache-v1.json';
 // Earlier caches, read when there is no current one. Their Claude entries carry over unread (parsers convert
 // pre-columns states); Codex files are read again, as their keys predate turn-based identity.
 const LEGACY_CACHE_VERSIONS = new Set([4, 5]);
@@ -36,6 +39,7 @@ export function createScanner({
   fs = fsp,
   cacheFile,
   legacyCacheFile = null, // a path or a list of paths, newest first
+  opencodeCacheFile = cacheFile ? pathFor(platform).join(pathFor(platform).dirname(cacheFile), OPENCODE_CACHE_FILE) : null,
   concurrency = 8,
   // Threads that parse files read whole for the first time (first open, rewritten files).
   // 0 parses on the calling thread. Tail reads always parse inline: they are small.
@@ -52,6 +56,8 @@ export function createScanner({
   // Every file's table interns into one dictionary, so the store copies their columns in bulk.
   const names = new NameDict();
   let store = createRecordStore({ names });
+  // OpenCode databases are a second kind of source; their tables intern into the same dictionary.
+  const opencode = createOpencodeSource({ platform, env, home, fs, names, cacheFile: opencodeCacheFile });
   let extra = { claude: [], codex: [], disabled: [] }; // folders from settings, see setExtraRoots
   let extraKey = '[[],[],[]]';
   let rootsGen = 0;
@@ -95,7 +101,7 @@ export function createScanner({
     const roots = rootsGen;
     const prior = inFlight?.job.then(noop, noop);
     const current = { roots, job: null };
-    current.job = (prior ? prior.then(() => runScan(gen)) : runScan(gen)).then(
+    current.job = (prior ? prior.then(() => runScan(gen, force)) : runScan(gen, force)).then(
       (result) => {
         if (inFlight === current) inFlight = null;
         if (gen === generation && roots === rootsGen) last = { at: now(), result };
@@ -117,6 +123,7 @@ export function createScanner({
   function reset() {
     generation++;
     files = new Map();
+    opencode.reset();
     store = createRecordStore({ names });
     baseGen = null;
     loaded = true;
@@ -130,7 +137,7 @@ export function createScanner({
     await persist();
   }
 
-  async function runScan(gen) {
+  async function runScan(gen, force) {
     const map = files;
     const folderSpecs = extra;
     if (!loaded) {
@@ -146,6 +153,9 @@ export function createScanner({
     await mapLimit(order, limit, (file) =>
       refreshFile(run, file, stats.get(file.path)).catch((error) => countFileError(run, file.path, error)),
     );
+    const opencodeRun = await opencode.scan({ force, disabled: folderSpecs.disabled });
+    run.errors += opencodeRun.errors;
+    if (opencodeRun.changed) run.changed = true;
     const walked = new Set(found.map((file) => file.path));
     // Cached files under a turned-off folder stay cached, so turning it on again reads only what changed.
     const off = (path) => !walked.has(path) && underAny(run.disabled, path, p.sep);
@@ -165,6 +175,7 @@ export function createScanner({
       }
       sources.push({ id: path, table: entry.parser.table() });
     }
+    sources.push(...opencodeRun.sources);
     const records = store.update(sources);
     // Each root counts every file it reaches, shared ones included, and the cached files under a dir of it
     // that failed to list.
@@ -176,11 +187,12 @@ export function createScanner({
       const { rows, latest } = folderCounts(folder, [...paths].map((path) => tables.get(path)).filter(Boolean));
       return publicFolder({ ...folder, files: folder.paths.size, records: rows, latestRecordAt: latest > -Infinity ? new Date(latest).toISOString() : null });
     });
+    statuses.push(publicFolder(opencodeRun.folder));
     return {
       records,
       sources,
       names,
-      files: found.length,
+      files: found.length + opencodeRun.files,
       errors: run.errors,
       changed: run.changed,
       folders: statuses,
@@ -372,7 +384,7 @@ export function createScanner({
   }
 
   function persist() {
-    const job = saveChain.then(writeCache);
+    const job = saveChain.then(writeCache).then(() => opencode.flush());
     saveChain = job.catch(() => {});
     return job;
   }

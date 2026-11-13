@@ -12,6 +12,7 @@ import { createRecordStore } from './core/record-store.mjs';
 import { asTable, distinctNames } from './core/table.mjs';
 import { analyzeBreakdown } from './core/breakdown/analyze.mjs';
 import { buildExplainPrompt } from './core/breakdown/explain.mjs';
+import { providerLabel } from './core/provider-names.mjs';
 import { createDigestScanner } from './node/digest-scan.mjs';
 import { zstdAvailable } from './node/zstd.mjs';
 import { cacheDir, homeDir, pathFor } from './node/paths.mjs';
@@ -176,7 +177,7 @@ export function startWorker(orca, scanner, {
     if (!view || view.prices?.version !== catalog.version) view = await breakdown(options, { waitMs: 600_000 });
     const finding = view?.findings?.find((f) => f.id === options.findingId);
     if (!finding) throw invalidParams('unknown findingId');
-    return { ...buildExplainPrompt(finding, { harnessLabel: finding.harness === 'codex' ? 'Codex' : 'Claude Code', platform }), estUsd: null };
+    return { ...buildExplainPrompt(finding, { harnessLabel: providerLabel(finding.harness, 'this agent'), platform }), estUsd: null };
   }
 
   // The range's first local day less a day of margin for time zones and clock skew. 0 for 'all'.

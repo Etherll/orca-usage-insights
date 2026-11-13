@@ -439,7 +439,7 @@ button.src:disabled { cursor: progress; opacity: .7; }
     <div id="banner" class="banner-wrap"></div>
     <div class="hero-text">
       <h1>Usage Insights</h1>
-      <p id="updated" class="muted">Reading your Claude Code and Codex transcripts…</p>
+      <p id="updated" class="muted">Reading your Claude Code, Codex and OpenCode usage…</p>
     </div>
     <div class="hero-stat"><strong id="hero-total"></strong><span id="hero-sub" class="muted"></span></div>
   </section>
@@ -575,7 +575,7 @@ button.src:disabled { cursor: progress; opacity: .7; }
       </article>
     </div>
 
-    <p class="footnote muted">Read from Claude Code and Codex transcripts on this machine, including Orca's account homes, and the folders and SSH hosts in Settings. Account histories are combined. No usage data is sent anywhere. Cost is an estimate at list API prices.</p>
+    <p class="footnote muted">Read from Claude Code and Codex transcripts and the local OpenCode database on this machine, including Orca's account homes, and the folders and SSH hosts in Settings. Account histories are combined. No usage data is sent anywhere. Cost is an estimate at list API prices.</p>
   </section>
   <section id="bd" aria-label="Breakdown" hidden>
     <p id="bd-status" class="status" role="status" hidden></p>
@@ -680,11 +680,21 @@ function trim(x) {
   return x.toFixed(1).replace(/\.0$/, '');
 }
 
+// src/core/provider-names.mjs
+// Display names per provider (the `provider` column of a usage record), for the panel, the worker and
+// Explain prompts. Pure, and bundled into the panel by scripts/build.mjs. A provider added to the
+// scanner gets its name here.
+const PROVIDER_LABELS = Object.freeze({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' })
+
+function providerLabel(provider, fallback = provider) {
+  return Object.hasOwn(PROVIDER_LABELS, provider) ? PROVIDER_LABELS[provider] : fallback
+}
+
 // src/panel/charts.mjs
 // Pure SVG-string chart builders. Each takes a slice of the Report and returns markup.
 // Colors are CSS variables defined in panel.css, so light/dark switch without re-rendering.
 
-// panel.js reads compact from here. build.mjs drops this line, since format.mjs is bundled once.
+// panel.js reads these from here. build.mjs drops this line, since both modules are bundled once.
 
 const TOKEN_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite']
 const TOKEN_LABELS = { input: 'Input', output: 'Output', cacheRead: 'Cache read', cacheWrite: 'Cache write' }
@@ -912,9 +922,8 @@ function sparkline(values, { width = 96, height = 26 } = {}) {
   return svg(width, height, `<polyline points="${d}" fill="none" class="spark" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="${lx}" cy="${ly}" r="2.5" class="spark-dot"/>`, 'Trend')
 }
 
-const PROVIDER_COLORS = { claude: 'var(--s2)', codex: 'var(--s1)' }
-const PROVIDER_LABELS = { claude: 'Claude Code', codex: 'Codex' }
-const providerColor = (p, i = 0) => PROVIDER_COLORS[p] ?? ['var(--s3)', 'var(--s4)'][i % 2]
+const PROVIDER_COLORS = { claude: 'var(--s2)', codex: 'var(--s1)', opencode: 'var(--s3)' }
+const providerColor = (p, i = 0) => PROVIDER_COLORS[p] ?? ['var(--s3)', 'var(--s4)', 'var(--s5)'][i % 3]
 
 // Monotone cubic (Fritsch–Carlson) path through points, so smoothing never overshoots below 0.
 function smoothPath(pts) {
@@ -1207,6 +1216,7 @@ const BUCKET_INFO = {
 
 const REASON_INFO = {
   ssh: { label: 'On SSH hosts', next: 'Breakdown reads transcripts on this machine only. SSH usage still counts in the total.' },
+  opencode: { label: 'OpenCode sessions', next: 'Breakdown reads Claude Code and Codex transcripts. OpenCode usage still counts in the total.' },
   zstd: { label: 'Compressed Codex files', next: "This Orca's Node.js can't read .zst files. Updating Orca fixes it." },
   'too-large': { label: 'Files too large', next: 'Compressed transcripts over 64 MB are skipped.' },
   parse: { label: "Files that couldn't be read", next: 'See the This machine status above for which files failed.' },
@@ -1344,7 +1354,7 @@ function findings(view) {
       const where = f.kind === 'cache-expired' ? lastSegment(f.where.project) : `${f.where.label} · ${lastSegment(f.where.project)}`
       const spark = (f.daily || []).length > 1 ? `<span class="spark-wrap" aria-hidden="true">${sparkline(f.daily.map((d) => d[1]), { width: 80, height: 22 })}</span>` : ''
       const facts = [`${f.facts?.sessions ?? 0} session${f.facts?.sessions === 1 ? '' : 's'}`, f.lastSeen ? `last seen ${f.lastSeen}` : ''].filter(Boolean).join(' · ')
-      return `<article class="finding"><header><span class="tag">${esc(f.harness === 'codex' ? 'Codex' : 'Claude Code')}</span><h3>${esc(info.title)}</h3></header>
+      return `<article class="finding"><header><span class="tag">${esc(PROVIDER_LABELS[f.harness] ?? f.harness ?? 'Unknown')}</span><h3>${esc(info.title)}</h3></header>
 <p class="where" title="${esc(f.where.key)}">${esc(where)}</p>
 <div class="fig"><div><span class="label">Cost of this pattern</span><strong>${esc(usd(f.usd, { est: f.est }))}</strong></div>${spark}</div>
 <p class="muted">${esc(info.what)} ${esc(facts)}.</p>
@@ -1673,8 +1683,9 @@ function renderSources(r) {
   if (!list.length) return
   const pill = (s) => {
     const state = STATE_WORDS[s.state] ? s.state : 'ok'
-    const meta = state === 'off' ? 'turned off' : state === 'empty' ? 'no transcripts' : state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
-    const detail = [s.path || '', s.source ? `Source: ${s.source}` : '', STATE_WORDS[state], s.message, s.files !== undefined ? `${s.files} files` : '', s.ms ? `scanned in ${s.ms} ms` : '', s.latestRecordAt ? `Latest recorded usage: ${new Date(s.latestRecordAt).toLocaleString()}` : ''].filter(Boolean).join(' · ')
+    const empty = s.provider === 'opencode' ? 'no database' : 'no transcripts'
+    const meta = state === 'off' ? 'turned off' : state === 'empty' ? empty : state === 'loading' ? 'connecting…' : state === 'error' ? 'failed' : state === 'warning' ? (s.message || 'check settings').toLowerCase().replace(/\.$/, '') : `${compact(s.records || 0)} turns · ${ago(s.lastScanAt)}`
+    const detail = [s.path || '', s.source ? `Source: ${s.source}` : '', state === 'empty' ? empty.replace(/^no /, 'No ') : STATE_WORDS[state], s.message, s.files !== undefined ? `${s.files} files` : '', s.ms ? `scanned in ${s.ms} ms` : '', s.latestRecordAt ? `Latest recorded usage: ${new Date(s.latestRecordAt).toLocaleString()}` : ''].filter(Boolean).join(' · ')
     const icon = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SOURCE_ICONS[s.kind] || SOURCE_ICONS.local}</svg>`
     const label = sourceLabel(s)
     const inner = `${icon}<span class="state" aria-hidden="true"></span><span class="name">${esc(label)}</span><span class="meta">${esc(meta)}</span>`

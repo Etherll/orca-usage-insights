@@ -274,6 +274,73 @@ test('parseModelsDev honours ids and sends a bad, missing or incomplete cost to 
   assert.deepEqual(entries[0].cacheWrite, { '5m': 1.25 });
 });
 
+test('parseModelsDev qualifies the OpenCode channels and fills omitted cache rates with zero', () => {
+  const json = {
+    anthropic: { models: { 'claude-ok': { cost: { input: 1, output: 5, cache_read: 0.1, cache_write: 1 } } } },
+    opencode: {
+      models: {
+        'paid-model': { cost: { input: 1, output: 2, cache_read: 0.1, cache_write: 0.2 } },
+        'read-only-model': { cost: { input: 0.5, output: 1, cache_read: 0.05 } },
+        'free-model': { cost: { input: 0, output: 0 } },
+      },
+    },
+    'opencode-go': {
+      models: {
+        'paid-model': { cost: { input: 0.2, output: 0.4, cache_read: 0.02, cache_write: 0 } },
+      },
+    },
+  };
+  const { entries, errors } = parseModelsDev(json, {
+    asOf: ASOF,
+    providers: ['opencode', 'opencode-go'],
+  });
+  assert.deepEqual(errors, []);
+  const m = byId(entries);
+  assert.deepEqual(Object.keys(m).sort(), [
+    'opencode-go/paid-model',
+    'opencode/free-model',
+    'opencode/paid-model',
+    'opencode/read-only-model',
+  ]);
+  assert.deepEqual(rates(m['opencode/paid-model']), {
+    input: 1,
+    output: 2,
+    cacheRead: 0.1,
+    cacheWrite: { default: 0.2 },
+  });
+  // A channel that lists no cache-write rate charges nothing for it, so cache writes still price.
+  assert.deepEqual(m['opencode/read-only-model'].cacheWrite, { default: 0 });
+  assert.deepEqual(m['opencode/free-model'].cacheWrite, { default: 0 });
+
+  const only = parseModelsDev(json, { asOf: ASOF, providers: ['opencode-go'], ids: ['opencode-go/paid-model'] });
+  assert.deepEqual(only.entries.map((e) => e.id), ['opencode-go/paid-model']);
+});
+
+test('parseModelsDev keeps tiers that fit the catalog bands and drops a size it cannot apply', () => {
+  const json = {
+    opencode: {
+      models: {
+        'tiered-model': {
+          cost: {
+            input: 1,
+            output: 2,
+            cache_read: 0.1,
+            cache_write: 0.2,
+            tiers: [
+              { input: 2, output: 4, cache_read: 0.2, cache_write: 0.4, tier: { type: 'context', size: 512000 } },
+              { input: 3, output: 6, cache_read: 0.3, cache_write: 0.6, tier: { type: 'context', size: 150000 } },
+            ],
+          },
+        },
+      },
+    },
+  };
+  const { entries } = parseModelsDev(json, { asOf: ASOF, providers: ['opencode'] });
+  assert.deepEqual(entries[0].tiers, [
+    { above: 512000, input: 2, output: 4, cacheRead: 0.2, cacheWrite: { default: 0.4 } },
+  ]);
+});
+
 test('inBundleScope admits every Anthropic model and only GPT-5.6 and GPT-6 OpenAI models', () => {
   assert.equal(inBundleScope({ id: 'claude-opus-5-5', provider: 'anthropic' }), true);
   assert.equal(inBundleScope({ id: 'gpt-5.6-sol', provider: 'openai' }), true);

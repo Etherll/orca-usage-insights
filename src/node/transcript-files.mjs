@@ -1,7 +1,7 @@
 // The one place that lists and reads transcript files, for the records and digest scanners.
 import { PROVIDERS } from '../core/providers.mjs';
 import { markedLines } from './lines.mjs';
-import { pathFor } from './paths.mjs';
+import { isTurnedOff, pathFor, pathIdentity as identityOf } from './paths.mjs';
 import { TOO_LARGE, readLines, zstdAvailable } from './zstd.mjs';
 
 const LF = 0x0a;
@@ -81,7 +81,6 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
 
   const specs = [...roots];
   for (const kind of Object.keys(PROVIDERS)) for (const path of extra?.[kind] ?? []) specs.push({ path, kind, source: 'extra' });
-  const off = new Set((extra?.disabled ?? []).map((path) => identityOf(path, platform)));
   run.disabled ??= [];
   const folders = [];
   for (const spec of specs) {
@@ -97,7 +96,7 @@ export async function listTranscripts({ fs, platform = process.platform, roots, 
       fail(folder);
       continue;
     }
-    if (off.has(identityOf(folder, platform))) {
+    if (isTurnedOff(folder, extra?.disabled, platform)) {
       entry.state = 'off';
       const top = await canonicalDir(fs, folder);
       if (top === null) continue;
@@ -346,10 +345,6 @@ async function canonicalDir(fs, dir) {
     if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') return null;
     return dir;
   }
-}
-
-function identityOf(file, platform) {
-  return platform === 'win32' ? file.toLowerCase() : file;
 }
 
 async function isDirectory(fs, file) {
