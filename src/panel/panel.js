@@ -734,10 +734,20 @@ function bindTooltip() {
     tip.innerHTML = `<b>${esc(data.title)}</b>` + data.rows.map(([k, v]) => `<div class="row"><span>${esc(k)}</span><span>${esc(fmt(v))}</span></div>`).join('') + (data.total !== undefined ? `<div class="row"><span>Total</span><span>${esc(fmt(data.total))}</span></div>` : '')
     tip.hidden = false
     const pad = 12
-    const { innerWidth: W, innerHeight: H } = window
-    const rect = tip.getBoundingClientRect()
-    tip.style.left = `${Math.min(W - rect.width - 4, e.clientX + pad)}px`
-    tip.style.top = `${e.clientY + pad + rect.height > H ? e.clientY - rect.height - pad : e.clientY + pad}px`
+    const edge = 4
+    // clientWidth/clientHeight leave out a classic scrollbar, which innerWidth/innerHeight count.
+    const W = document.documentElement.clientWidth || window.innerWidth
+    const H = document.documentElement.clientHeight || window.innerHeight
+    // Measure at the top left: left where it last sat, the tooltip would shrink to the room it had there.
+    tip.style.maxWidth = `${Math.max(0, W - 2 * edge)}px`
+    tip.style.left = '0px'
+    tip.style.top = '0px'
+    const { width, height } = tip.getBoundingClientRect()
+    // Right of the pointer when it fits, else left of it; never past either edge.
+    const left = e.clientX + pad + width <= W - edge ? e.clientX + pad : e.clientX - pad - width
+    const top = e.clientY + pad + height <= H - edge ? e.clientY + pad : e.clientY - pad - height
+    tip.style.left = `${Math.max(edge, Math.min(left, W - width - edge))}px`
+    tip.style.top = `${Math.max(edge, Math.min(top, H - height - edge))}px`
   })
   document.addEventListener('pointerleave', () => { tip.hidden = true })
 }
