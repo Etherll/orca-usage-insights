@@ -2,11 +2,11 @@
 import { stackedBars, calendarHeatmap, punchCard, donut, hBars, sparkline, areaTrend, segmentBar, providerColor, compact, esc, TOKEN_KEYS, TOKEN_LABELS, TOKEN_COLORS, PROVIDER_LABELS } from './charts.mjs'
 import { pixelBanner } from './art.mjs'
 import { headline, tree, findings, notAnalysed, legend, priceLine, syncBody, changedSyncRows } from './breakdown.js'
-import { normalizeQuery, localDay, dayKey, MIN_USAGE_DATE } from '../core/query.mjs'
+import { normalizeQuery, localDay, dayKey, MIN_USAGE_DATE, RANGE_DAYS } from '../core/query.mjs'
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { view: 'usage', range: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+const state = { view: 'usage', range: '7d', defaultRange: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
 const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
 
 function money(n) {
@@ -155,7 +155,7 @@ function clearFilter(key) {
     $('model-search').value = ''
   }
   if (key === 'range' || (key === 'all' && state.range === 'custom')) {
-    state.range = '7d'
+    state.range = state.defaultRange
     $('custom-range').hidden = true
     $('date-error').hidden = true
   }
@@ -588,6 +588,23 @@ function renderBreakdownView() {
   $('bd-foot').textContent = legend(v)
 }
 
+// The Default range setting picks the range the panel opens on and returns to. A range picked
+// before the setting is read is kept.
+async function firstLoad() {
+  try {
+    const range = await host?.settings?.get?.('defaultRange')
+    if (range === 'all' || RANGE_DAYS.has(range)) {
+      state.defaultRange = range
+      if (!state.report && !state.busy) {
+        state.range = range
+        for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === range))
+        syncRadioTabs()
+      }
+    }
+  } catch {}
+  if (!state.report && !state.busy) load()
+}
+
 async function loadPrices() {
   try {
     state.prices = await request('prices.status')
@@ -901,6 +918,6 @@ if (typeof document !== 'undefined' && document.getElementById('app')) {
   bindControls()
   bindBreakdown()
   bindTooltip()
-  load()
+  firstLoad()
   loadPrices()
 }

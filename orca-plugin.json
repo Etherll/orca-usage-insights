@@ -83,6 +83,27 @@
         "multiline": true,
         "default": "",
         "placeholder": "~/.codex"
+      },
+      {
+        "key": "defaultRange",
+        "title": "Default range",
+        "description": "The range the panel opens on, and goes back to when you clear a custom range.",
+        "type": "string",
+        "default": "7d",
+        "enum": [
+          "1d",
+          "7d",
+          "30d",
+          "90d",
+          "all"
+        ],
+        "enumLabels": [
+          "Today",
+          "7d",
+          "30d",
+          "90d",
+          "All"
+        ]
       }
     ]
   },

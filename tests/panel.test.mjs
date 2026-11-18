@@ -79,7 +79,7 @@ test('panel requests a report and renders every section', async () => {
   const ctx = vm.createContext({ document, orca, window: { innerWidth: 800, innerHeight: 600 }, console, Date, Intl, JSON, Math })
   vm.runInContext(script, ctx)
   await new Promise((r) => setTimeout(r, 20))
-  assert.equal(JSON.stringify(calls[0]), JSON.stringify(['usage.report', { range: '7d', includeCache: true }]))
+  assert.equal(JSON.stringify(calls.find(([name]) => name === 'usage.report')), JSON.stringify(['usage.report', { range: '7d', includeCache: true }]))
   const get = (id) => els.get(id)
   assert.match(get('tiles').innerHTML, /226\.8k/)
   assert.match(get('tiles').innerHTML, /Cache hit rate/)
@@ -128,13 +128,13 @@ test('panel shows an error state when the worker fails', async () => {
   assert.equal(els.get('status').hidden, false)
 })
 
-async function mountPanel(makeReport = (input) => sampleReport(input.range, input.includeCache)) {
+async function mountPanel(makeReport = (input) => sampleReport(input.range, input.includeCache), settings) {
   const html = readFileSync(new URL('../panel/index.html', import.meta.url), 'utf8')
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1]
   const { els, document } = fakeDom()
   const calls = []
   // Price requests (the footer line) are not part of what these tests check.
-  const orca = { plugin: { request: async (name, input) => { if (name.startsWith('prices.')) return null; calls.push(JSON.parse(JSON.stringify({ name, input }))); return makeReport(input) }, on() {} }, on() {} }
+  const orca = { plugin: { request: async (name, input) => { if (name.startsWith('prices.')) return null; calls.push(JSON.parse(JSON.stringify({ name, input }))); return makeReport(input) }, on() {} }, on() {}, settings }
   const viewport = { innerWidth: 320, innerHeight: 600 }
   const events = {}
   vm.runInContext(script, vm.createContext({ document, orca, window: viewport, addEventListener: (name, handler) => { events[name] = handler }, console, Date, Intl, JSON, Math, setTimeout, clearTimeout }))
@@ -211,6 +211,34 @@ test('cache switch requests consistent totals and token charts, and reset querie
   await settle()
   assert.deepEqual(calls.at(-1).input, { range: '7d', includeCache: true })
   assert.equal(get('chips').innerHTML, '')
+})
+
+test('the Default range setting picks the opening range and the one a cleared custom range returns to', async () => {
+  const { calls, get, click, settle } = await mountPanel(undefined, { get: async (key) => (key === 'defaultRange' ? '1d' : undefined) })
+  assert.deepEqual(calls, [{ name: 'usage.report', input: { range: '1d', includeCache: true } }])
+  click('ranges', { range: 'custom' })
+  get('start-date').value = get('end-date').value = '2026-11-03'
+  get('date-apply').listeners.click()
+  await settle()
+  assert.equal(calls.at(-1).input.range, 'custom')
+  get('chips').listeners.click({ target: { closest: () => ({ dataset: { clear: 'range' } }) } })
+  await settle()
+  assert.deepEqual(calls.at(-1).input, { range: '1d', includeCache: true })
+})
+
+test('an unknown or unreadable Default range opens on 7d, and a range picked before it is read is kept', async () => {
+  for (const settings of [{ get: async () => '1y' }, { get: async () => { throw new Error('settings offline') } }]) {
+    const { calls } = await mountPanel(undefined, settings)
+    assert.deepEqual(calls, [{ name: 'usage.report', input: { range: '7d', includeCache: true } }])
+  }
+  let answer
+  const { calls, click, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  assert.equal(calls.length, 0, 'the first report waits for the setting')
+  click('ranges', { range: '30d' })
+  await settle()
+  answer('1d')
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['30d'])
 })
 
 test('date and model detail shows exact escaped rows and visible sort choices', async () => {
