@@ -346,6 +346,19 @@ test('a settings read that throws at once, a stuck first read, or an open Custom
   assert.equal(mounted.get('custom-range').hidden, false)
 })
 
+test('a valid Default range answer is kept when a newer read fails', async () => {
+  const answers = []
+  let listener
+  const { calls, settle } = await mountPanel(undefined, { get: () => new Promise((resolve, reject) => answers.push({ resolve, reject })), onDidChange: (fn) => { listener = fn } })
+  listener({ key: 'defaultRange' })
+  await settle()
+  answers[0].resolve('30d')
+  await settle()
+  answers[1].reject(new Error('host did not answer'))
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['30d'])
+})
+
 test('date and model detail shows exact escaped rows and visible sort choices', async () => {
   const hostile = '<img src=x onerror=alert(1)>'
   const { get, click, settle } = await mountPanel((input) => {

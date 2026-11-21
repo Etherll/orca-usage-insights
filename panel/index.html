@@ -2057,16 +2057,22 @@ async function firstLoad() {
 }
 
 // Reads the saved Default range into state.defaultRange; a missing, unknown or unreadable value
-// leaves it as it was. Reads are numbered so a slower, older answer can't overwrite a newer one.
-// defaultRangeWaiters is null when no read is out, else the callbacks to run when the newest answers.
+// leaves it as it was. Reads are numbered and the newest valid answer wins, so neither a slower
+// older answer nor a failed newer read undoes it. defaultRangeWaiters is null when no read is out,
+// else what to call once the newest read has answered.
 let defaultRangeReads = 0
+let defaultRangeApplied = 0
 let defaultRangeWaiters = null
 function readDefaultRange() {
   const read = ++defaultRangeReads
   defaultRangeWaiters ??= []
   Promise.resolve()
     .then(() => host?.settings?.get?.('defaultRange'))
-    .then((range) => { if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range }, () => {})
+    .then((range) => {
+      if (read < defaultRangeApplied || (range !== 'all' && !RANGE_DAYS.has(range))) return
+      defaultRangeApplied = read
+      state.defaultRange = range
+    }, () => {})
     .then(() => {
       if (read !== defaultRangeReads) return
       const waiters = defaultRangeWaiters

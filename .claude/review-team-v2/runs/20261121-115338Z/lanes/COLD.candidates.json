@@ -1,0 +1,41 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "Default range setting may never reach the panel: panel reads host.settings.get/onDidChange, an API no other code in the repo uses; errors are swallowed, so the panel silently opens on 7d.",
+      "file": "src/panel/panel.js",
+      "line": 623,
+      "quote": "    .then(() => host?.settings?.get?.('defaultRange'))",
+      "lens": "cold",
+      "trigger": "1. User sets Default range to 30d in plugin settings (orca-plugin.json:88 declares it). 2. Panel mounts; firstLoad() calls readDefaultRange(). 3. If Orca's panel host has no settings object, host?.settings?.get?.() yields undefined; the then at src/panel/panel.js:624 ignores it (not 1d/7d/30d/90d/all). 4. state.defaultRange stays '7d'; firstLoad loads 7d. Same for onDidChange at panel.js:596. Tests pass only because mountPanel injects orca.settings (tests/panel.test.mjs:138), the same guessed shape.",
+      "wrong": "Should: panel reads the saved value through the host API the worker uses (orca.host.call('settings.get'), src/worker.mjs:353) or a verified panel equivalent. Does: silent fallback to 7d, no log, no error state.",
+      "path": "src/panel/panel.js:623 -> src/panel/panel.js:624 -> src/panel/panel.js:603-611",
+      "origin": "introduced",
+      "severity": "high",
+      "confidence": "medium; settle by Orca panel host API docs or a live panel run with a saved defaultRange of 30d. Repo has no definition of host.settings (rg across panel, src, docs, scripts).",
+      "class": "unverified host API shape, failure swallowed as default",
+      "sweep": "Other host calls in panel: host.plugin.request (panel.js request), host.plugin.on (panel.js:885), host.on('theme') (panel.js:886), all used at baseline eae3fa0 -> checked-fine as existing shapes. Only host.settings.* is new (panel.js:596, 623). Worker uses orca.host.call('settings.get') (src/worker.mjs:353, 371) -> not-same shape, not-checked for panel."
+    },
+    {
+      "key": "K2",
+      "claim": "Slow Default range read: 1.5 s fallback loads 7d, then the setting moves state.range to 30d; the stale 7d response renders under the 30d button.",
+      "file": "src/panel/panel.js",
+      "line": 606,
+      "quote": "    state.range = range",
+      "lens": "cold",
+      "trigger": "1. Panel opens; host settings.get takes over 1500 ms. 2. Timer at panel.js:599 fires: state.report null, not busy, so load() sends usage.report range 7d. 3. Read answers '30d'; firstLoad (panel.js:603-606) sets state.range = '30d' and aria-checked on the 30d button. 4. The 7d request answers; load() (panel.js:47-80) calls render() without checking the range it asked for. 5. Panel shows 7d numbers with 30d selected; the queued second load (state.again, panel.js:50-53) then corrects it.",
+      "wrong": "Should: no render of a report for a range that is no longer selected. Does: brief mismatched render, then corrected by a second load.",
+      "path": "src/panel/panel.js:599 -> src/panel/panel.js:606 -> src/panel/panel.js:47-80 (no range check on response)",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "high on code path; visible only on a host slower than 1.5 s",
+      "class": "stale response rendered after the selection moved",
+      "sweep": "Other load() callers: onChanged (panel.js:760-762), clearFilter (panel.js:162), ranges click (panel.js:849-850) -> checked: all go through load()'s busy queue (panel.js:50-53), so only the firstLoad path races. Not checked: breakdown view responses (loadBreakdown) for the same move."
+    }
+  ]
+}

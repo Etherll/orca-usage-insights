@@ -1,0 +1,337 @@
+{
+  "consumers": [
+    {
+      "defined_in": "src/panel/panel.js",
+      "outside_diff": [],
+      "removed": false,
+      "symbol": "applyDates",
+      "tests": [],
+      "total": 3,
+      "truncated": false,
+      "unchanged_lines_in_diff_files": [
+        "src/panel/panel.js:280",
+        "src/panel/panel.js:852",
+        "src/panel/panel.js:859"
+      ]
+    },
+    {
+      "defined_in": "src/panel/panel.js",
+      "outside_diff": [],
+      "removed": false,
+      "symbol": "renderBreakdownView",
+      "tests": [],
+      "total": 2,
+      "truncated": false,
+      "unchanged_lines_in_diff_files": [
+        "src/panel/panel.js:562",
+        "src/panel/panel.js:576"
+      ]
+    },
+    {
+      "defined_in": "src/panel/panel.js",
+      "outside_diff": [],
+      "removed": false,
+      "symbol": "bindControls",
+      "tests": [],
+      "total": 2,
+      "truncated": false,
+      "unchanged_lines_in_diff_files": [
+        "src/panel/panel.js:820",
+        "src/panel/panel.js:944"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "added": 1,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "The panel reads your Claude Code and Codex transcripts, plus the local OpenCode",
+          "id": "H071",
+          "new_count": 7,
+          "new_start": 41
+        }
+      ],
+      "kind": "docs",
+      "old_path": null,
+      "path": "README.md",
+      "removed": 1,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    },
+    {
+      "added": 21,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "",
+          "id": "H072",
+          "new_count": 27,
+          "new_start": 83
+        }
+      ],
+      "kind": "config",
+      "old_path": null,
+      "path": "orca-plugin.json",
+      "removed": 0,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    },
+    {
+      "added": 46,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "function syncBody(result) {",
+          "id": "H073",
+          "new_count": 7,
+          "new_start": 1451
+        },
+        {
+          "context": "function clearFilter(key) {",
+          "id": "H074",
+          "new_count": 7,
+          "new_start": 1600
+        },
+        {
+          "context": "function applyDates() {",
+          "id": "H075",
+          "new_count": 7,
+          "new_start": 1738
+        },
+        {
+          "context": "function renderBreakdownView() {",
+          "id": "H076",
+          "new_count": 47,
+          "new_start": 2034
+        },
+        {
+          "context": "function bindControls() {",
+          "id": "H077",
+          "new_count": 7,
+          "new_start": 2279
+        },
+        {
+          "context": "if (typeof document !== 'undefined' && document.getElementById('app')) {",
+          "id": "H078",
+          "new_count": 7,
+          "new_start": 2389
+        }
+      ],
+      "kind": "config",
+      "old_path": null,
+      "path": "panel/index.html",
+      "removed": 3,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": true
+    },
+    {
+      "added": 47,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "",
+          "id": "H079",
+          "new_count": 11,
+          "new_start": 2
+        },
+        {
+          "context": "function clearFilter(key) {",
+          "id": "H080",
+          "new_count": 7,
+          "new_start": 155
+        },
+        {
+          "context": "function applyDates() {",
+          "id": "H081",
+          "new_count": 7,
+          "new_start": 293
+        },
+        {
+          "context": "function renderBreakdownView() {",
+          "id": "H082",
+          "new_count": 47,
+          "new_start": 589
+        },
+        {
+          "context": "function bindControls() {",
+          "id": "H083",
+          "new_count": 7,
+          "new_start": 834
+        },
+        {
+          "context": "if (typeof document !== 'undefined' && document.getElementById('app')) {",
+          "id": "H084",
+          "new_count": 6,
+          "new_start": 944
+        }
+      ],
+      "kind": "source",
+      "old_path": null,
+      "path": "src/panel/panel.js",
+      "removed": 4,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [
+        {
+          "exported": false,
+          "hunks": [
+            "H080"
+          ],
+          "line": 147,
+          "name": "clearFilter"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H081"
+          ],
+          "line": 280,
+          "name": "applyDates"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H082"
+          ],
+          "line": 576,
+          "name": "renderBreakdownView"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H082"
+          ],
+          "line": 595,
+          "name": "firstLoad"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H082"
+          ],
+          "line": 617,
+          "name": "defaultRangeReads"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H082"
+          ],
+          "line": 618,
+          "name": "defaultRangeWaiters"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H082"
+          ],
+          "line": 619,
+          "name": "readDefaultRange"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H083",
+            "H084"
+          ],
+          "line": 820,
+          "name": "bindControls"
+        }
+      ],
+      "walk": true
+    },
+    {
+      "added": 137,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "test('panel requests a report and renders every section', async () => {",
+          "id": "H085",
+          "new_count": 7,
+          "new_start": 79
+        },
+        {
+          "context": "test('panel shows an error state when the worker fails', async () => {",
+          "id": "H086",
+          "new_count": 14,
+          "new_start": 128
+        },
+        {
+          "context": "async function mountPanel(makeReport = (input) => sampleReport(input.range, inpu",
+          "id": "H087",
+          "new_count": 7,
+          "new_start": 143
+        },
+        {
+          "context": "test('cache switch requests consistent totals and token charts, and reset querie",
+          "id": "H088",
+          "new_count": 138,
+          "new_start": 214
+        }
+      ],
+      "kind": "test",
+      "old_path": null,
+      "path": "tests/panel.test.mjs",
+      "removed": 4,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [
+        {
+          "exported": false,
+          "hunks": [
+            "H085",
+            "H086"
+          ],
+          "line": 45,
+          "name": "fakeDom"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H086",
+            "H087",
+            "H088"
+          ],
+          "line": 131,
+          "name": "mountPanel"
+        }
+      ],
+      "walk": true
+    },
+    {
+      "added": 13,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "test('manifest is the trusted worker with exactly the declared keys', () => {",
+          "id": "H089",
+          "new_count": 8,
+          "new_start": 191
+        },
+        {
+          "context": "test('manifest declares the source settings as multiline strings', () => {",
+          "id": "H090",
+          "new_count": 17,
+          "new_start": 206
+        }
+      ],
+      "kind": "test",
+      "old_path": null,
+      "path": "tests/worker.test.mjs",
+      "removed": 2,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    }
+  ],
+  "siblings": []
+}
