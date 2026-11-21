@@ -2042,8 +2042,8 @@ async function firstLoad() {
   readDefaultRange()
   // A slow host doesn't hold the first report back: it loads now and moves once the setting arrives.
   const slow = globalThis.setTimeout?.(() => { if (!state.report && !state.busy) load() }, 1500)
-  // A change that lands meanwhile starts a newer read; wait for the newest one.
-  while (pendingDefaultRead) await pendingDefaultRead
+  // A change that lands meanwhile starts a newer read; wait for the newest one to answer.
+  if (defaultRangeWaiters) await new Promise((resolve) => defaultRangeWaiters.push(resolve))
   globalThis.clearTimeout?.(slow)
   const range = state.defaultRange
   let moved = false
@@ -2058,18 +2058,21 @@ async function firstLoad() {
 
 // Reads the saved Default range into state.defaultRange; a missing, unknown or unreadable value
 // leaves it as it was. Reads are numbered so a slower, older answer can't overwrite a newer one.
+// defaultRangeWaiters is null when no read is out, else the callbacks to run when the newest answers.
 let defaultRangeReads = 0
-let pendingDefaultRead = null
+let defaultRangeWaiters = null
 function readDefaultRange() {
   const read = ++defaultRangeReads
-  pendingDefaultRead = (async () => {
-    try {
-      const range = await host?.settings?.get?.('defaultRange')
-      if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range
-    } catch {}
-    if (read === defaultRangeReads) pendingDefaultRead = null
-  })()
-  return pendingDefaultRead
+  defaultRangeWaiters ??= []
+  Promise.resolve()
+    .then(() => host?.settings?.get?.('defaultRange'))
+    .then((range) => { if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range }, () => {})
+    .then(() => {
+      if (read !== defaultRangeReads) return
+      const waiters = defaultRangeWaiters
+      defaultRangeWaiters = null
+      for (const resolve of waiters) resolve()
+    })
 }
 
 async function loadPrices() {
@@ -2276,6 +2279,7 @@ function bindControls() {
   $('ranges').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-range]')
     if (!b) return
+    state.rangePicked = true
     if (b.dataset.range === 'custom') {
       // Custom opens the date fields; the range changes on Apply.
       $('custom-range').hidden = false
@@ -2286,7 +2290,6 @@ function bindControls() {
     }
     $('custom-range').hidden = true
     $('date-error').hidden = true
-    state.rangePicked = true
     if (b.dataset.range === state.range) return
     state.range = b.dataset.range
     load()

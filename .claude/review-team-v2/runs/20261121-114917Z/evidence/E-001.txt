@@ -1,0 +1,25 @@
+$ timeout 15 node --test '--test-name-pattern=throws at once' /tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/nc6/tests/panel.test.mjs
+(cwd /home/etherl/orca/workspaces/orca-usage-insights-Etherll/geoduck)
+
+
+Interrupted while running:
+
+⚠ /tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/nc6/tests/panel.test.mjs (../../../../../../tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/nc6/tests/panel.test.mjs:1:1)
+✖ /tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/nc6/tests/panel.test.mjs (14975.205042ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 0
+ℹ cancelled 1
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 14978.257282
+
+✖ failing tests:
+
+test at ../../../../../../tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/nc6/tests/panel.test.mjs:1:1
+✖ /tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/nc6/tests/panel.test.mjs (14975.205042ms)
+  'Promise resolution is still pending but the event loop has already resolved'
+
+
+exit code: 124

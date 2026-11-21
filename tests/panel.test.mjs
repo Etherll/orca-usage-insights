@@ -290,6 +290,7 @@ test('an older Default range read that answers last does not win over a newer on
   let listener
   const { calls, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => answers.push(resolve)), onDidChange: (fn) => { listener = fn } })
   listener({ key: 'defaultRange' })
+  await settle()
   answers[1]('90d')
   await settle()
   answers[0]('30d')
@@ -319,6 +320,30 @@ test('a slow Default range read does not hold the first report back', async () =
   await settle()
   await settle()
   assert.deepEqual(calls.map((c) => c.input.range), ['7d', '30d'])
+})
+
+test('a settings read that throws at once, a stuck first read, or an open Custom picker', async () => {
+  // A get that throws synchronously opens on 7d.
+  let mounted = await mountPanel(undefined, { get: () => { throw new Error('no settings') } })
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d'])
+  // A stuck first read doesn't block a newer answer.
+  let listener
+  const answers = []
+  mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => answers.push(resolve)), onDidChange: (fn) => { listener = fn } })
+  listener({ key: 'defaultRange' })
+  await mounted.settle()
+  answers[1]('90d')
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['90d'])
+  // Opening the Custom picker counts as a pick, so the default doesn't move the range under it.
+  let answer
+  mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  mounted.click('ranges', { range: 'custom' })
+  answer('30d')
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d'])
+  assert.equal(mounted.get('custom-range').hidden, false)
 })
 
 test('date and model detail shows exact escaped rows and visible sort choices', async () => {

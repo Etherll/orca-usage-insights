@@ -1,0 +1,78 @@
+[
+  {
+    "class": "clear-before-assign ordering on a shared pending slot",
+    "evidence": [
+      {
+        "kind": "trace",
+        "steps": [
+          "src/panel/panel.js:620 assigns the IIFE result after it already cleared the slot",
+          "src/panel/panel.js:601 loops while the slot is set"
+        ]
+      },
+      {
+        "evidence_id": "E-001",
+        "kind": "executed"
+      }
+    ],
+    "file": "src/panel/panel.js",
+    "fix": "Run the get inside a .then so it is always async, and signal waiters from the newest read instead of looping on a promise slot.",
+    "id": "F-001",
+    "impact": "The panel frame hangs; no report, no fallback.",
+    "line": 620,
+    "mechanism": "The async IIFE catches the throw and clears pendingDefaultRead before returning; the outer assignment then stores the settled promise, which nothing clears, so `while (pendingDefaultRead) await pendingDefaultRead` spins on microtasks and timers never run.",
+    "origin": "introduced",
+    "quote": "  pendingDefaultRead = (async () => {",
+    "severity": "medium",
+    "sweep": "Only readDefaultRange/firstLoad use the slot.",
+    "title": "A settings.get that throws synchronously freezes the panel",
+    "trigger": "1. Open the panel on a host whose orca.settings.get throws instead of returning a rejected promise."
+  },
+  {
+    "class": "awaiting a superseded async read",
+    "evidence": [
+      {
+        "kind": "trace",
+        "steps": [
+          "src/panel/panel.js:601 awaits the captured promise",
+          "src/panel/panel.js:625 only the newest read clears the slot"
+        ]
+      }
+    ],
+    "file": "src/panel/panel.js",
+    "fix": "Waiters resolved by the newest read.",
+    "id": "F-002",
+    "impact": "The panel stays on 7d until the first read times out (up to 120 s).",
+    "line": 601,
+    "mechanism": "await pendingDefaultRead awaits the captured promise, not the newest.",
+    "origin": "introduced",
+    "quote": "  while (pendingDefaultRead) await pendingDefaultRead",
+    "severity": "low",
+    "sweep": "Same slot as F-001.",
+    "title": "firstLoad waits on the read it captured, so a stuck first read blocks a newer answer",
+    "trigger": "1. First read stalls. 2. Default range changes; the newer read answers. 3. firstLoad is still awaiting the first."
+  },
+  {
+    "class": "proxy state used for user intent",
+    "evidence": [
+      {
+        "kind": "trace",
+        "steps": [
+          "src/panel/panel.js:605 moves the range when not picked",
+          "src/panel/panel.js:836 Custom click opens the fields without marking a pick"
+        ]
+      }
+    ],
+    "file": "src/panel/panel.js",
+    "fix": "Set rangePicked on any range-button click, Custom included.",
+    "id": "F-003",
+    "impact": "Custom fields stay open under a 30d selection.",
+    "line": 605,
+    "mechanism": "Opening Custom does not set rangePicked, so firstLoad moves the range and leaves #custom-range visible.",
+    "origin": "introduced",
+    "quote": "  if (!state.rangePicked && state.range !== range) {",
+    "severity": "low",
+    "sweep": "Range clicks and Apply set rangePicked; the Custom open path did not.",
+    "title": "The default moves the range while the Custom date fields are open",
+    "trigger": "1. Setting read is slow. 2. Click Custom (fields open, rangePicked stays false). 3. The setting answers 30d."
+  }
+]
