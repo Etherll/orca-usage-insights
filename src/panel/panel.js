@@ -593,31 +593,28 @@ function renderBreakdownView() {
 // picks before the setting is read is kept; a load that started without one (a background
 // usage.changed) is redone on the default.
 async function firstLoad() {
-  host?.settings?.onDidChange?.((change) => {
-    if (change?.key === 'defaultRange') readDefaultRange().then((range) => { if (range) state.defaultRange = range })
-  })
-  const range = await readDefaultRange()
+  host?.settings?.onDidChange?.((change) => { if (change?.key === 'defaultRange') readDefaultRange() })
+  await readDefaultRange()
+  const range = state.defaultRange
   let moved = false
-  if (range) {
-    state.defaultRange = range
-    if (!state.rangePicked && state.range !== range) {
-      state.range = range
-      for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === range))
-      syncRadioTabs()
-      moved = true
-    }
+  if (!state.rangePicked && state.range !== range) {
+    state.range = range
+    for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === range))
+    syncRadioTabs()
+    moved = true
   }
   if (moved || (!state.report && !state.busy)) load()
 }
 
-// The saved Default range, or null when it is missing, unknown or can't be read.
+// Reads the saved Default range into state.defaultRange; a missing, unknown or unreadable value
+// leaves it as it was. Reads are numbered so a slower, older answer can't overwrite a newer one.
+let defaultRangeReads = 0
 async function readDefaultRange() {
+  const read = ++defaultRangeReads
   try {
     const range = await host?.settings?.get?.('defaultRange')
-    return range === 'all' || RANGE_DAYS.has(range) ? range : null
-  } catch {
-    return null
-  }
+    if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range
+  } catch {}
 }
 
 async function loadPrices() {

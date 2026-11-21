@@ -1,0 +1,41 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "Two unordered settings.get reads (firstLoad's initial read and the onDidChange re-read) write one slot; a late stale resolve overwrites the newer value with no version check.",
+      "file": "src/panel/panel.js",
+      "line": 602,
+      "quote": "    state.defaultRange = range",
+      "lens": "state",
+      "trigger": "1. Setting Default range = 30d. Panel mounts; firstLoad calls get A (panel.js:599), pending. 2. Before A resolves, user sets Default range = 7d; host fires onDidChange({key:'defaultRange'}). 3. Handler (panel.js:597) calls readDefaultRange -> get B -> '7d' resolves first; state.defaultRange = '7d'. 4. A resolves '30d' late. firstLoad (panel.js:602) sets state.defaultRange = '30d'; state.range is still '7d' and !rangePicked, so range moves to 30d (panel.js:603-604) and load() runs on 30d. 5. Panel opens on 30d while setting says 7d; cleared custom range also goes to 30d until next change event.",
+      "wrong": "Should use the latest saved value. Instead the last resolution wins, so an old read can replace the value the user just set, and it moves the shown range when unpicked.",
+      "path": "src/panel/panel.js:599 -> src/panel/panel.js:602 (write); src/panel/panel.js:597 -> src/panel/panel.js:616 (second write path)",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs host settings IPC to resolve out of order. Host settings.get impl not in repo; installed plugin-panel-shell.js has no settings code, so unverified.",
+      "class": "concurrent async reads of one config value, last-resolution-wins write, no sequence or version check",
+      "sweep": "Other writers of state.defaultRange: onDidChange handler panel.js:597 same write, checked-broken (same trigger). Readers: clearFilter panel.js:158 reads only, checked-fine. Other settings.get calls in panel.js: none besides panel.js:616, checked-fine. Lead's 'two quick changes' suspicion shares this root; this trigger is initial-read vs change event, distinct."
+    },
+    {
+      "key": "K2",
+      "claim": "First report now waits on an untimed settings.get; if that call never resolves, no report loads and the skeleton stays up.",
+      "file": "src/panel/panel.js",
+      "line": 599,
+      "quote": "  const range = await readDefaultRange()",
+      "lens": "time",
+      "trigger": "1. Panel mounts; bindControls runs, then firstLoad (panel.js:937 in source order). 2. firstLoad calls readDefaultRange (panel.js:614-621), which awaits host.settings.get('defaultRange') (panel.js:616). 3. Host settings call is pending and never settles (no reject, no timeout in this lane's code). 4. Await at panel.js:599 blocks; load() at panel.js:610 never runs. 5. Skeleton shown (panel.js:57-60 only runs in load), no status, no report.",
+      "wrong": "Baseline called load() at once (old panel.js: bottom of bootstrap). Should bound the wait and fall back to 7d, or load in parallel and apply the range later.",
+      "path": "src/panel/panel.js:937 -> src/panel/panel.js:599 -> src/panel/panel.js:616 -> host settings.get (external)",
+      "origin": "introduced",
+      "severity": "medium",
+      "confidence": "medium; settle by checking the host's settings.get deadline in the Orca build the plugin runs on. Pack cites plugin-panel-shell.js:115 but the installed copy (81 lines) has no settings code, so the deadline is unverified.",
+      "class": "first render gated on an external await with no timeout",
+      "sweep": "Other awaits before the first load: none in bootstrap (panel.js:933-938); loadPrices (panel.js:623) runs unawaited, checked-fine. Test 'the first report waits for the setting' (tests/panel.test.mjs:231-240) asserts the wait; no hang case, checked-broken as coverage gap."
+    }
+  ]
+}

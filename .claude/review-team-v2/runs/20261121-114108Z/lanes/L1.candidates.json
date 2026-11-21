@@ -1,0 +1,41 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "First report waits on an unbounded host settings.get; if that call never settles the panel never loads and shows the skeleton forever, with no retry or error.",
+      "file": "src/panel/panel.js",
+      "line": 616,
+      "quote": "    const range = await host?.settings?.get?.('defaultRange')",
+      "lens": "trace",
+      "trigger": "1. User opens the panel. 2. firstLoad() (panel.js:595) awaits readDefaultRange() (panel.js:599). 3. readDefaultRange() awaits host.settings.get('defaultRange') (panel.js:616) with no timeout. 4. The host call stays pending (host busy or lost reply). 5. load() is never called (panel.js:610 runs only after the await). 6. Skeleton stays; no status, no retry. Baseline called load() synchronously at startup (old panel.js bind block, `load()`), so this is newly exposed.",
+      "wrong": "Report should load on the default range without waiting on a settings read that can hang. Should: bounded wait, then fall back to 7d and load.",
+      "path": "src/panel/panel.js:595 firstLoad -> src/panel/panel.js:599 readDefaultRange -> src/panel/panel.js:616 host.settings.get (no deadline) -> src/panel/panel.js:610 load() never reached",
+      "origin": "introduced",
+      "severity": "medium",
+      "confidence": "medium; depends on whether the host settings.get call has a deadline. Its definition is not in the repo (orca-services.d.ts and plugin-panel-shell.js named in the pack are absent), so it is unverified. The panel's own request() does pass timeoutMs: 120000 (panel.js request), so the gap is specific to this call.",
+      "class": "unbounded await gating first render on a host call that has no local timeout",
+      "sweep": "loadPrices (panel.js loadPrices) uses request(), which has timeoutMs 120000: checked-fine. onDidChange read (panel.js:597) has no timeout but only sets state, does not gate render: checked-fine. Other host.settings reads in panel: none found by rg -n 'settings' panel/index.html: checked-fine."
+    },
+    {
+      "key": "K2",
+      "claim": "Default range read from settings is written to state.defaultRange without ordering, so a slower earlier read can overwrite a newer setting and a cleared custom range returns to the wrong range.",
+      "file": "src/panel/panel.js",
+      "line": 597,
+      "quote": "    if (change?.key === 'defaultRange') readDefaultRange().then((range) => { if (range) state.defaultRange = range })",
+      "lens": "cases",
+      "trigger": "1. Panel open, setting is 7d. 2. User sets Default range to 30d, then quickly to 1d. 3. Each change fires onDidChange (panel.js:596) and starts its own readDefaultRange() (panel.js:599-616). 4. The read for 30d resolves after the read for 1d (replies out of order). 5. .then (panel.js:597) sets state.defaultRange = 30d while the setting is 1d. 6. User picks Custom, applies dates, clears the range chip: clearFilter('range') (panel.js:158) loads 30d, not 1d. Variant: a change lands while firstLoad's initial read (panel.js:599) is in flight; the older read can resolve last and set defaultRange and range to the stale value (panel.js:602-604).",
+      "wrong": "defaultRange should equal the saved setting after the last change. Should: keep the latest request's result only (sequence counter), or re-read on each change.",
+      "path": "src/panel/panel.js:596 onDidChange -> src/panel/panel.js:597 .then sets state.defaultRange -> src/panel/panel.js:158 clearFilter('range') uses it -> src/panel/panel.js:161 load()",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs replies to resolve out of order. Host ordering is not verifiable in the repo. The test at tests/panel.test.mjs:272-286 only covers one change, so it cannot hit this.",
+      "class": "unordered async reads writing a shared value with no sequence check",
+      "sweep": "firstLoad initial read vs onDidChange read on the same key (panel.js:599 vs 597): checked-broken by the variant above. readDefaultRange() null branch (panel.js:617-619) leaves the previous defaultRange in place: checked-fine, intended. No other writer of state.defaultRange: rg shows only panel.js:9, 158, 597, 602: checked-fine."
+    }
+  ]
+}
