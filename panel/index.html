@@ -1601,6 +1601,8 @@ function clearFilter(key) {
   }
   if (key === 'range' || (key === 'all' && state.range === 'custom')) {
     state.range = state.defaultRange
+    // Back on the default, so a Default range that is still being read can move it.
+    state.rangePicked = false
     $('custom-range').hidden = true
     $('date-error').hidden = true
   }

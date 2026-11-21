@@ -1,0 +1,84 @@
+{
+  "lanes": [
+    {
+      "agent": "review-hunter",
+      "collected": true,
+      "effort": "medium",
+      "files_walked": [
+        "panel/index.html",
+        "src/panel/panel.js",
+        "tests/panel.test.mjs"
+      ],
+      "id": "L1",
+      "lenses": [
+        "trace",
+        "cases",
+        "journey"
+      ],
+      "output": "lanes/L1.out.md",
+      "prompt": "lanes/L1.prompt.md",
+      "round": 1,
+      "shard": "S1"
+    },
+    {
+      "agent": "review-hunter",
+      "collected": true,
+      "effort": "medium",
+      "files_walked": [
+        "src/panel/panel.js",
+        "panel/index.html",
+        "tests/panel.test.mjs"
+      ],
+      "id": "L2",
+      "lenses": [
+        "state",
+        "time",
+        "ripple"
+      ],
+      "output": "lanes/L2.out.md",
+      "prompt": "lanes/L2.prompt.md",
+      "round": 1,
+      "shard": "S1"
+    },
+    {
+      "agent": "review-hunter",
+      "collected": true,
+      "effort": "low",
+      "files_walked": [
+        "panel/index.html",
+        "src/panel/panel.js",
+        "tests/panel.test.mjs"
+      ],
+      "id": "COLD",
+      "lenses": [
+        "cold"
+      ],
+      "output": "lanes/COLD.out.md",
+      "prompt": "lanes/COLD.prompt.md",
+      "round": 1,
+      "shard": "all"
+    },
+    {
+      "agent": "lead",
+      "files_walked": [
+        "panel/index.html",
+        "src/panel/panel.js",
+        "tests/panel.test.mjs"
+      ],
+      "id": "LEAD",
+      "lenses": [
+        "intent"
+      ],
+      "output": "model.md",
+      "prompt": "model.md",
+      "round": 1,
+      "shard": "all"
+    }
+  ],
+  "rounds": [
+    {
+      "new_confirmed": 1,
+      "round": 1
+    }
+  ]
+}

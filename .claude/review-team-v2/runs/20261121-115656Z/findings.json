@@ -1,0 +1,26 @@
+[
+  {
+    "class": "proxy state used for user intent",
+    "evidence": [
+      {
+        "kind": "trace",
+        "steps": [
+          "src/panel/panel.js:158 sets the range to the placeholder default",
+          "src/panel/panel.js:605 firstLoad skips the move because rangePicked is true"
+        ]
+      }
+    ],
+    "file": "src/panel/panel.js",
+    "fix": "Reset rangePicked when clearFilter returns to the default.",
+    "id": "F-001",
+    "impact": "Panel stays on 7d for the session; the setting is ignored for the shown range.",
+    "line": 158,
+    "mechanism": "clearFilter returns to state.defaultRange but leaves rangePicked true, so firstLoad will not move to the real default.",
+    "origin": "introduced",
+    "quote": "    state.range = state.defaultRange",
+    "severity": "low",
+    "sweep": "clearFilter is the only path that sets the range back to the default (panel.js:158); range clicks and Apply are real picks.",
+    "title": "Clearing a custom range before the Default range is read pins the 7d placeholder",
+    "trigger": "1. Setting read is slow; saved default 30d. 2. Custom \u2192 Apply. 3. Clear the range chip (goes to 7d placeholder). 4. Read answers 30d."
+  }
+]

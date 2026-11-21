@@ -359,6 +359,21 @@ test('a valid Default range answer is kept when a newer read fails', async () =>
   assert.deepEqual(calls.map((c) => c.input.range), ['30d'])
 })
 
+test('a custom range cleared before the Default range is read moves to it once read', async () => {
+  let answer
+  const { calls, get, click, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  click('ranges', { range: 'custom' })
+  get('start-date').value = get('end-date').value = '2026-11-03'
+  get('date-apply').listeners.click()
+  await settle()
+  get('chips').listeners.click({ target: { closest: () => ({ dataset: { clear: 'range' } }) } })
+  await settle()
+  answer('30d')
+  await settle()
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['custom', '7d', '30d'])
+})
+
 test('date and model detail shows exact escaped rows and visible sort choices', async () => {
   const hostile = '<img src=x onerror=alert(1)>'
   const { get, click, settle } = await mountPanel((input) => {

@@ -1,0 +1,25 @@
+{
+  "files_walked": [
+    "src/panel/panel.js",
+    "panel/index.html",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "Older valid Default range answer, read before a settings change, is applied after a newer read fails, so state.defaultRange holds the pre-change value.",
+      "file": "src/panel/panel.js",
+      "line": 629,
+      "quote": "      state.defaultRange = range",
+      "lens": "time",
+      "trigger": "1. Panel opens; read1 = host.settings.get('defaultRange') is slow (pending) and holds pre-change value '30d'. 2. Setting changes to '90d'; onDidChange → readDefaultRange → read2 issued (defaultRangeReads=2). 3. read2 rejects or returns invalid value quickly; its handler returns or swallows (panel.js:626-630). 4. read1 resolves '30d': read1 (1) < defaultRangeApplied (0)? no → applies, defaultRangeApplied=1, state.defaultRange='30d'. 5. Newest read (2) resolves waiters; no later read. 6. User clicks Custom + Apply, then clears the custom chip (clearFilter 'range', panel.js:158): range returns to '30d', not saved '90d'.",
+      "wrong": "Should: state.defaultRange reflects latest saved setting, or stays at last known value. Does: an answer from a read issued before the change overwrites the value the newer change had put in place (or would have, had it answered).",
+      "path": "src/panel/panel.js:622-637 -> src/panel/panel.js:158",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "low; needs host that answers an old get after a newer get failed. Settle by checking whether host get can resolve out of order across a settings change (plugin-panel-shell.js:115 deadline is 120 s, so window is wide but rare).",
+      "class": "stale async answer applied after newer request failed (out-of-order response, failure does not invalidate older generation)",
+      "sweep": "Other writers of state.defaultRange: only panel.js:629 (checked-broken for this trigger, by design: comment at panel.js:614-616 accepts that a failed newer read keeps older valid value). state.range writers at panel.js:158, 295, 606, 855 read state.defaultRange only at 158 (checked-fine). Tests: 'a valid Default range answer is kept when a newer read fails' (panel.test.mjs) covers the reverse order only (not checked: read1 answering with pre-change value after read2 fails)."
+    }
+  ]
+}
