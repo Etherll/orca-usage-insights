@@ -1,0 +1,17 @@
+[
+  {
+    "artifact": "evidence/E-001.txt",
+    "command": "timeout 15 node --test '--test-name-pattern=throws at once' /tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/nc6/tests/panel.test.mjs",
+    "cwd": "/home/etherl/orca/workspaces/orca-usage-insights-Etherll/geoduck",
+    "exit_code": 124,
+    "id": "E-001",
+    "kind": "reproducer",
+    "recorded_at": "2026-11-21T11:53:06Z",
+    "refs": [
+      "C-003"
+    ],
+    "seconds": 15.01,
+    "sha256": "0d907dbe1fa43f61b4df9fb9c9106ca5316014d23905ac14739a3687938bad83",
+    "target_sha": "8fd32f90be1b3aa3a83c8b8d94c2d73b4bdd777c"
+  }
+]

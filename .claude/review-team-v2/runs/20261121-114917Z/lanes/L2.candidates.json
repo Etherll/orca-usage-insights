@@ -1,0 +1,25 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "Custom fields stay open after firstLoad moves the range to the saved Default, so the panel shows a default range with the Custom date fields visible and the Custom radio unchecked.",
+      "file": "src/panel/panel.js",
+      "line": 606,
+      "quote": "    state.range = range",
+      "lens": "state",
+      "trigger": "1. Host settings read is slow (no reply within the 1.5 s fallback), so firstLoad waits on pendingDefaultRead. 2. Person clicks the Custom radio: ranges click handler (src/panel/panel.js:834-840) unhides #custom-range and returns without setting state.rangePicked. 3. Read answers '30d'. firstLoad (src/panel/panel.js:605-610) sees !rangePicked and range !== '30d', sets state.range = '30d', re-checks the radio buttons so Custom is aria-checked=false, and sets moved. 4. Nothing hides #custom-range (only clearFilter at :159 and the non-custom ranges click at :842 do). 5. Result: Custom date fields visible, report shows 30d, no radio marked custom. Dates are not applied until Apply, so the displayed report is still consistent with state.range.",
+      "wrong": "Shows: open custom date form next to a 30d report with no custom radio checked. Should: either keep the form hidden when the default is applied, or treat the Custom click as a pick (set rangePicked) so the default does not move under it.",
+      "path": "src/panel/panel.js:834 (Custom click, no rangePicked) -> src/panel/panel.js:605-610 (firstLoad moves range, no custom-range reset) -> panel/index.html same logic (built, verified identical)",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs a read that outlives the user's Custom click (slow host). Settle by a test: click custom before the setting answers, then answer 30d, assert custom-range hidden or rangePicked set.",
+      "class": "UI control opened by user gesture that does not count as a pick, while a deferred async default later overwrites the mode",
+      "sweep": "Other writers of state.range: applyDates (:295, sets rangePicked) checked-fine; clearFilter (:158, restores default, hides custom-range) checked-fine; ranges click (:844-846) checked-fine. Other deferred default-applies: slow-timer load (:599) only loads, does not move range, checked-fine. Not checked: whether render() reads the custom fields when state.range is not custom."
+    }
+  ]
+}

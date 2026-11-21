@@ -1,0 +1,42 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs",
+    "orca-plugin.json"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "firstLoad waits on the read captured when it started, not the newest one, so a hung first settings read blocks the Default range move even after a newer read answers.",
+      "file": "src/panel/panel.js",
+      "line": 601,
+      "quote": "  while (pendingDefaultRead) await pendingDefaultRead",
+      "lens": "cold",
+      "trigger": "1. Panel opens. firstLoad (panel.js:595) calls readDefaultRange, read 1 = p1 is set as pendingDefaultRead. 2. settings.get for read 1 stalls (no answer until the host deadline). 3. The 1500 ms timer (panel.js:599) fires load() with 7d, so state.report is set. 4. User changes Default range to 90d; onDidChange starts read 2 = p2 and it answers 90d (p2 clears pendingDefaultRead). 5. firstLoad is still awaiting p1 (the `await` at 601 uses the value captured before p2). 6. Only when p1 finally settles does firstLoad reach line 603-611 and move to 90d. Until then the panel shows 7d though the saved default is 90d.",
+      "wrong": "Should: firstLoad acts on the newest answer as soon as it arrives. Now: it waits on the stale promise, so the move is delayed until the stalled read ends; if the stall is longer than the deadline, the move is skipped for the open.",
+      "path": "src/panel/panel.js:601 -> src/panel/panel.js:603-611 -> src/panel/panel.js:620-626",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs settings.get deadline length from the Orca shell to know how long the stall lasts (not read)",
+      "class": "awaiting a captured promise instead of the latest shared promise",
+      "sweep": "readDefaultRange (panel.js:618) and its only other reader firstLoad: checked-broken here. onDidChange path (panel.js:596) does not await, so checked-fine. Not checked: other loops on shared promises in panel.js."
+    },
+    {
+      "key": "K2",
+      "claim": "A Default range answer that lands while the person has the Custom date fields open moves the range under them and leaves the picker visible.",
+      "file": "src/panel/panel.js",
+      "line": 605,
+      "quote": "  if (!state.rangePicked && state.range !== range) {",
+      "lens": "cold",
+      "trigger": "1. Panel opens, setting read is slow (state.range 7d, rangePicked false). 2. User clicks Custom (panel.js:834-840): custom-range shown, rangePicked stays false, Custom button aria-checked unchanged. 3. Setting answers 30d. 4. firstLoad sets state.range = 30d and aria-checked moves to 30d (panel.js:606-607), and load() runs (panel.js:611). 5. Custom fields still visible with the start/end inputs; the 30d chip is checked.",
+      "wrong": "Should: a Custom pick in progress is a pick (or the default move is skipped). Now: the default overrides it without closing the picker.",
+      "path": "src/panel/panel.js:834-840 -> src/panel/panel.js:605-611",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; the window is the settings read latency, so it is rare",
+      "class": "a pick flag set only on some control paths",
+      "sweep": "rangePicked is set at panel.js:296 (applyDates) and 844 (preset click); the Custom click at 834 returns before it. Checked: applyDates and preset paths are fine. Not checked: keyboard radio path (bindRadioKeys) for the same flag."
+    }
+  ]
+}

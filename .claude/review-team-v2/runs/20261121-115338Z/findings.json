@@ -1,0 +1,26 @@
+[
+  {
+    "class": "newest-issued instead of newest-valid wins",
+    "evidence": [
+      {
+        "kind": "trace",
+        "steps": [
+          "src/panel/panel.js:624 discards non-newest answers",
+          "src/panel/panel.js:623 a rejection writes nothing"
+        ]
+      }
+    ],
+    "file": "src/panel/panel.js",
+    "fix": "Track the newest read that produced a valid value and let any newer valid answer win.",
+    "id": "F-001",
+    "impact": "Panel stays on 7d for the session though the setting is 30d.",
+    "line": 624,
+    "mechanism": "Only the newest issued read may write state.defaultRange, so read 1 is discarded and read 2 writes nothing.",
+    "origin": "introduced",
+    "quote": "    .then((range) => { if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range }, () => {})",
+    "severity": "low",
+    "sweep": "Only readDefaultRange writes state.defaultRange besides the initial state.",
+    "title": "A valid answer is dropped when a newer read then fails",
+    "trigger": "1. Open the panel (read 1). 2. Change Default range (read 2). 3. Read 1 answers 30d, read 2 times out."
+  }
+]

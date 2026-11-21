@@ -1,0 +1,41 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "firstLoad awaits readDefaultRange but reads state.defaultRange after it; when a newer onDidChange read is in flight, the awaited older read is discarded and firstLoad opens on the stale default while the setting says otherwise.",
+      "file": "src/panel/panel.js",
+      "line": 597,
+      "quote": "  await readDefaultRange()",
+      "lens": "time",
+      "trigger": "1. Panel mounts; firstLoad registers onDidChange and calls readDefaultRange: read=1, awaits settings.get('defaultRange').  2. Before it answers, the user changes Default range in Orca settings to 30d; onDidChange fires; readDefaultRange: read=2 (defaultRangeReads=2), awaits.  3. Read 1 answers first (e.g. '1d' or the old value): read 1 !== defaultRangeReads 2, so state.defaultRange is not written.  4. readDefaultRange returns; firstLoad line 598 reads state.defaultRange = '7d' (initial value).  5. range 7d === state.range, moved=false; !report && !busy → load() with 7d.  6. Read 2 answers '30d': state.defaultRange = '30d' (read 2 is newest). Panel stays on 7d.",
+      "wrong": "Opens on 7d though setting is 30d. state.defaultRange later becomes 30d, so a cleared custom range goes to 30d while the first view was 7d. Should: firstLoad waits for the newest read (or re-checks after the await) before choosing the opening range.",
+      "path": "src/panel/panel.js:597 -> src/panel/panel.js:598 -> src/panel/panel.js:612-618 (readDefaultRange discard at :616) -> src/panel/panel.js:606",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs a settings change inside the startup settings.get window. Reproducible with a stub: get resolves out of order, onDidChange fired between calls. Not in tests (the out-of-order test at tests/panel.test.mjs:288 covers only the later read winning, not firstLoad's use of the value).",
+      "class": "awaited helper that discards its own write when superseded; caller then reads the shared value the discard protected",
+      "sweep": "Other awaiters of a numbered read in panel.js: none found (readDefaultRange is awaited only at :597). loadPrices (:620) awaits request, not a numbered read: checked-fine. Breakdown bdBusy/bdAgain (:541-574): different pattern, checked-fine."
+    },
+    {
+      "key": "K2",
+      "claim": "The first report now waits on settings.get; while it is pending no load() runs, so no skeleton/status is shown and the first render is delayed by however long the host takes to answer or to time out.",
+      "file": "src/panel/panel.js",
+      "line": 597,
+      "quote": "  await readDefaultRange()",
+      "lens": "time",
+      "trigger": "1. Panel opens; bindControls then firstLoad() runs. firstLoad registers onDidChange and awaits readDefaultRange (:597).  2. host.settings.get is slow or stuck (IPC busy).  3. load() is not called until the read settles; state.busy stays false, state.report stays null.  4. The skeleton (#skeleton, panel/index.html:508) and status are only toggled inside load() (:57-60), so nothing shows progress.  5. Read settles after the host's call deadline (plugin-panel-shell.js:115-119, code timeout) or on answer; only then request('usage.report').",
+      "wrong": "Startup latency and no loading state tied to the wait. Baseline called load() at once (old bindControls ran load() directly). Should: start the first load immediately on the default and redo it on a changed setting, or show the skeleton before the read.",
+      "path": "src/panel/panel.js:934 -> src/panel/panel.js:595-597 -> plugin-panel-shell.js:115-119 -> src/panel/panel.js:606",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; depends on the skeleton's default visibility (panel/index.html:508, not read) and the deadline value for settings.get (C.deadlineMs / userMethodList, not read). Test 'the first report waits for the setting' (tests/panel.test.mjs:230-238) pins the waiting on purpose.",
+      "class": "first paint gated on a side read with no loading state",
+      "sweep": "Other startup awaits before load(): loadPrices (:935) is not gated: checked-fine. Other panels' first load not in this shard: not checked."
+    }
+  ]
+}

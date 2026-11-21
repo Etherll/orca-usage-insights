@@ -1,0 +1,369 @@
+diff --git a/README.md b/README.md
+index 4ef2154..3e1b9e0 100644
+--- a/README.md
++++ b/README.md
+@@ -41,7 +41,7 @@ The panel reads your Claude Code and Codex transcripts, plus the local OpenCode
+ 
+ It updates a few seconds after an agent finishes a turn, so the numbers keep up while you work.
+ 
+-**7d** is the default range. **Today** is the current local day from midnight, not the last 24 hours. **Custom** takes a start and end date (both included, in local time; pick the same date twice for one day). The calendar and streak keep their full history whatever the range.
++**7d** is the default range; **Default range** in **Settings → Plugins → Usage Insights** changes it. **Today** is the current local day from midnight, not the last 24 hours. **Custom** takes a start and end date (both included, in local time; pick the same date twice for one day). The calendar and streak keep their full history whatever the range.
+ 
+ One **Filters** menu narrows it down: only sessions that ran in an Orca worktree, one provider, one or more models, one machine, or no cache tokens. Turning cache tokens off takes them out of every total, share and chart; the cache read and write counts and the cost stay as recorded. A model selection is a fixed list, so a model that shows up later is only included under **All models**.
+ 
+diff --git a/orca-plugin.json b/orca-plugin.json
+index c417d16..3f376a3 100644
+--- a/orca-plugin.json
++++ b/orca-plugin.json
+@@ -83,6 +83,27 @@
+         "multiline": true,
+         "default": "",
+         "placeholder": "~/.codex"
++      },
++      {
++        "key": "defaultRange",
++        "title": "Default range",
++        "description": "The range the panel opens on, and goes back to when you clear a custom range.",
++        "type": "string",
++        "default": "7d",
++        "enum": [
++          "1d",
++          "7d",
++          "30d",
++          "90d",
++          "all"
++        ],
++        "enumLabels": [
++          "Today",
++          "7d",
++          "30d",
++          "90d",
++          "All"
++        ]
+       }
+     ]
+   },
+diff --git a/panel/index.html b/panel/index.html
+index ef1ce0c..be53cea 100644
+--- a/panel/index.html
++++ b/panel/index.html
+@@ -1451,7 +1451,7 @@ function syncBody(result) {
+ 
+ const $ = (id) => document.getElementById(id)
+ const host = globalThis.orca
+-const state = { view: 'usage', range: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
++const state = { view: 'usage', range: '7d', defaultRange: '7d', rangePicked: false, startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+ const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
+ 
+ function money(n) {
+@@ -1600,7 +1600,7 @@ function clearFilter(key) {
+     $('model-search').value = ''
+   }
+   if (key === 'range' || (key === 'all' && state.range === 'custom')) {
+-    state.range = '7d'
++    state.range = state.defaultRange
+     $('custom-range').hidden = true
+     $('date-error').hidden = true
+   }
+@@ -1738,6 +1738,7 @@ function applyDates() {
+   $('start-date').setAttribute('aria-invalid', 'false')
+   $('end-date').setAttribute('aria-invalid', 'false')
+   state.range = 'custom'
++  state.rangePicked = true
+   state.startDate = startDate
+   state.endDate = endDate
+   load()
+@@ -2033,6 +2034,37 @@ function renderBreakdownView() {
+   $('bd-foot').textContent = legend(v)
+ }
+ 
++// The Default range setting picks the range the panel opens on and returns to. A range the person
++// picks before the setting is read is kept; a load that started without one (a background
++// usage.changed) is redone on the default.
++async function firstLoad() {
++  host?.settings?.onDidChange?.((change) => {
++    if (change?.key === 'defaultRange') readDefaultRange().then((range) => { if (range) state.defaultRange = range })
++  })
++  const range = await readDefaultRange()
++  let moved = false
++  if (range) {
++    state.defaultRange = range
++    if (!state.rangePicked && state.range !== range) {
++      state.range = range
++      for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === range))
++      syncRadioTabs()
++      moved = true
++    }
++  }
++  if (moved || (!state.report && !state.busy)) load()
++}
++
++// The saved Default range, or null when it is missing, unknown or can't be read.
++async function readDefaultRange() {
++  try {
++    const range = await host?.settings?.get?.('defaultRange')
++    return range === 'all' || RANGE_DAYS.has(range) ? range : null
++  } catch {
++    return null
++  }
++}
++
+ async function loadPrices() {
+   try {
+     state.prices = await request('prices.status')
+@@ -2247,6 +2279,7 @@ function bindControls() {
+     }
+     $('custom-range').hidden = true
+     $('date-error').hidden = true
++    state.rangePicked = true
+     if (b.dataset.range === state.range) return
+     state.range = b.dataset.range
+     load()
+@@ -2346,7 +2379,7 @@ if (typeof document !== 'undefined' && document.getElementById('app')) {
+   bindControls()
+   bindBreakdown()
+   bindTooltip()
+-  load()
++  firstLoad()
+   loadPrices()
+ }
+ 
+diff --git a/src/panel/panel.js b/src/panel/panel.js
+index 7834d7a..511d2cf 100644
+--- a/src/panel/panel.js
++++ b/src/panel/panel.js
+@@ -2,11 +2,11 @@
+ import { stackedBars, calendarHeatmap, punchCard, donut, hBars, sparkline, areaTrend, segmentBar, providerColor, compact, esc, TOKEN_KEYS, TOKEN_LABELS, TOKEN_COLORS, PROVIDER_LABELS } from './charts.mjs'
+ import { pixelBanner } from './art.mjs'
+ import { headline, tree, findings, notAnalysed, legend, priceLine, syncBody, changedSyncRows } from './breakdown.js'
+-import { normalizeQuery, localDay, dayKey, MIN_USAGE_DATE } from '../core/query.mjs'
++import { normalizeQuery, localDay, dayKey, MIN_USAGE_DATE, RANGE_DAYS } from '../core/query.mjs'
+ 
+ const $ = (id) => document.getElementById(id)
+ const host = globalThis.orca
+-const state = { view: 'usage', range: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
++const state = { view: 'usage', range: '7d', defaultRange: '7d', rangePicked: false, startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+ const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
+ 
+ function money(n) {
+@@ -155,7 +155,7 @@ function clearFilter(key) {
+     $('model-search').value = ''
+   }
+   if (key === 'range' || (key === 'all' && state.range === 'custom')) {
+-    state.range = '7d'
++    state.range = state.defaultRange
+     $('custom-range').hidden = true
+     $('date-error').hidden = true
+   }
+@@ -293,6 +293,7 @@ function applyDates() {
+   $('start-date').setAttribute('aria-invalid', 'false')
+   $('end-date').setAttribute('aria-invalid', 'false')
+   state.range = 'custom'
++  state.rangePicked = true
+   state.startDate = startDate
+   state.endDate = endDate
+   load()
+@@ -588,6 +589,37 @@ function renderBreakdownView() {
+   $('bd-foot').textContent = legend(v)
+ }
+ 
++// The Default range setting picks the range the panel opens on and returns to. A range the person
++// picks before the setting is read is kept; a load that started without one (a background
++// usage.changed) is redone on the default.
++async function firstLoad() {
++  host?.settings?.onDidChange?.((change) => {
++    if (change?.key === 'defaultRange') readDefaultRange().then((range) => { if (range) state.defaultRange = range })
++  })
++  const range = await readDefaultRange()
++  let moved = false
++  if (range) {
++    state.defaultRange = range
++    if (!state.rangePicked && state.range !== range) {
++      state.range = range
++      for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === range))
++      syncRadioTabs()
++      moved = true
++    }
++  }
++  if (moved || (!state.report && !state.busy)) load()
++}
++
++// The saved Default range, or null when it is missing, unknown or can't be read.
++async function readDefaultRange() {
++  try {
++    const range = await host?.settings?.get?.('defaultRange')
++    return range === 'all' || RANGE_DAYS.has(range) ? range : null
++  } catch {
++    return null
++  }
++}
++
+ async function loadPrices() {
+   try {
+     state.prices = await request('prices.status')
+@@ -802,6 +834,7 @@ function bindControls() {
+     }
+     $('custom-range').hidden = true
+     $('date-error').hidden = true
++    state.rangePicked = true
+     if (b.dataset.range === state.range) return
+     state.range = b.dataset.range
+     load()
+@@ -901,6 +934,6 @@ if (typeof document !== 'undefined' && document.getElementById('app')) {
+   bindControls()
+   bindBreakdown()
+   bindTooltip()
+-  load()
++  firstLoad()
+   loadPrices()
+ }
+diff --git a/tests/panel.test.mjs b/tests/panel.test.mjs
+index 76ae5cc..703c219 100644
+--- a/tests/panel.test.mjs
++++ b/tests/panel.test.mjs
+@@ -79,7 +79,7 @@ test('panel requests a report and renders every section', async () => {
+   const ctx = vm.createContext({ document, orca, window: { innerWidth: 800, innerHeight: 600 }, console, Date, Intl, JSON, Math })
+   vm.runInContext(script, ctx)
+   await new Promise((r) => setTimeout(r, 20))
+-  assert.equal(JSON.stringify(calls[0]), JSON.stringify(['usage.report', { range: '7d', includeCache: true }]))
++  assert.equal(JSON.stringify(calls.find(([name]) => name === 'usage.report')), JSON.stringify(['usage.report', { range: '7d', includeCache: true }]))
+   const get = (id) => els.get(id)
+   assert.match(get('tiles').innerHTML, /226\.8k/)
+   assert.match(get('tiles').innerHTML, /Cache hit rate/)
+@@ -128,13 +128,14 @@ test('panel shows an error state when the worker fails', async () => {
+   assert.equal(els.get('status').hidden, false)
+ })
+ 
+-async function mountPanel(makeReport = (input) => sampleReport(input.range, input.includeCache)) {
++async function mountPanel(makeReport = (input) => sampleReport(input.range, input.includeCache), settings) {
+   const html = readFileSync(new URL('../panel/index.html', import.meta.url), 'utf8')
+   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1]
+   const { els, document } = fakeDom()
+   const calls = []
++  const pluginEvents = {}
+   // Price requests (the footer line) are not part of what these tests check.
+-  const orca = { plugin: { request: async (name, input) => { if (name.startsWith('prices.')) return null; calls.push(JSON.parse(JSON.stringify({ name, input }))); return makeReport(input) }, on() {} }, on() {} }
++  const orca = { plugin: { request: async (name, input) => { if (name.startsWith('prices.')) return null; calls.push(JSON.parse(JSON.stringify({ name, input }))); return makeReport(input) }, on(name, handler) { pluginEvents[name] = handler } }, on() {}, settings }
+   const viewport = { innerWidth: 320, innerHeight: 600 }
+   const events = {}
+   vm.runInContext(script, vm.createContext({ document, orca, window: viewport, addEventListener: (name, handler) => { events[name] = handler }, console, Date, Intl, JSON, Math, setTimeout, clearTimeout }))
+@@ -142,7 +143,7 @@ async function mountPanel(makeReport = (input) => sampleReport(input.range, inpu
+   await settle()
+   const get = (id) => els.get(id)
+   const click = (id, dataset) => get(id).listeners.click({ target: { closest: () => ({ dataset }) } })
+-  return { calls, get, click, settle, viewport, events }
++  return { calls, get, click, settle, viewport, events, pluginEvents }
+ }
+ 
+ test('custom dates validate before requesting, allow one local day, and presets discard dates', async () => {
+@@ -213,6 +214,77 @@ test('cache switch requests consistent totals and token charts, and reset querie
+   assert.equal(get('chips').innerHTML, '')
+ })
+ 
++test('the Default range setting picks the opening range and the one a cleared custom range returns to', async () => {
++  const { calls, get, click, settle } = await mountPanel(undefined, { get: async (key) => (key === 'defaultRange' ? '1d' : undefined) })
++  assert.deepEqual(calls, [{ name: 'usage.report', input: { range: '1d', includeCache: true } }])
++  click('ranges', { range: 'custom' })
++  get('start-date').value = get('end-date').value = '2026-11-03'
++  get('date-apply').listeners.click()
++  await settle()
++  assert.equal(calls.at(-1).input.range, 'custom')
++  get('chips').listeners.click({ target: { closest: () => ({ dataset: { clear: 'range' } }) } })
++  await settle()
++  assert.deepEqual(calls.at(-1).input, { range: '1d', includeCache: true })
++})
++
++test('an unknown or unreadable Default range opens on 7d, and a range picked before it is read is kept', async () => {
++  for (const settings of [{ get: async () => '1y' }, { get: async () => { throw new Error('settings offline') } }]) {
++    const { calls } = await mountPanel(undefined, settings)
++    assert.deepEqual(calls, [{ name: 'usage.report', input: { range: '7d', includeCache: true } }])
++  }
++  let answer
++  const { calls, click, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
++  assert.equal(calls.length, 0, 'the first report waits for the setting')
++  click('ranges', { range: '30d' })
++  await settle()
++  answer('1d')
++  await settle()
++  assert.deepEqual(calls.map((c) => c.input.range), ['30d'])
++})
++
++test('a background load, a failed pick or a no-op pick before the Default range is read', async () => {
++  // A usage.changed load that starts without the setting is redone on the default.
++  let answer
++  let mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
++  mounted.pluginEvents['usage.changed']()
++  await mounted.settle()
++  answer('30d')
++  await mounted.settle()
++  await mounted.settle()
++  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d', '30d'])
++  // A picked range whose load fails is kept.
++  let fail = true
++  mounted = await mountPanel((input) => { if (fail) { fail = false; throw new Error('worker down') } return sampleReport(input.range, input.includeCache) }, { get: () => new Promise((resolve) => { answer = resolve }) })
++  mounted.click('ranges', { range: '90d' })
++  await mounted.settle()
++  answer('1d')
++  await mounted.settle()
++  // The failed 90d is retried on 90d, not replaced by the default.
++  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['90d', '90d'])
++  // Clicking the range already shown counts as a pick.
++  mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
++  mounted.click('ranges', { range: '7d' })
++  answer('1d')
++  await mounted.settle()
++  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d'])
++})
++
++test('a Default range changed while the panel is open is where a cleared custom range goes', async () => {
++  let saved = '7d'
++  let listener
++  const { calls, get, click, settle } = await mountPanel(undefined, { get: async () => saved, onDidChange: (fn) => { listener = fn } })
++  saved = '90d'
++  listener({ key: 'defaultRange' })
++  await settle()
++  click('ranges', { range: 'custom' })
++  get('start-date').value = get('end-date').value = '2026-11-03'
++  get('date-apply').listeners.click()
++  await settle()
++  get('chips').listeners.click({ target: { closest: () => ({ dataset: { clear: 'range' } }) } })
++  await settle()
++  assert.deepEqual(calls.at(-1).input, { range: '90d', includeCache: true })
++})
++
+ test('date and model detail shows exact escaped rows and visible sort choices', async () => {
+   const hostile = '<img src=x onerror=alert(1)>'
+   const { get, click, settle } = await mountPanel((input) => {
+diff --git a/tests/worker.test.mjs b/tests/worker.test.mjs
+index 8e92735..ed920f8 100644
+--- a/tests/worker.test.mjs
++++ b/tests/worker.test.mjs
+@@ -191,8 +191,8 @@ test('manifest is the trusted worker with exactly the declared keys', () => {
+ 
+ test('manifest declares the source settings as multiline strings', () => {
+   const manifest = JSON.parse(readFileSync(path.join(root, 'orca-plugin.json'), 'utf8'))
+-  assert.deepEqual(manifest.contributes.settings.map((s) => s.key), ['extraClaudeFolders', 'extraCodexFolders', 'sshHosts', 'disabledFolders'])
+-  for (const setting of manifest.contributes.settings) {
++  assert.deepEqual(manifest.contributes.settings.map((s) => s.key), ['extraClaudeFolders', 'extraCodexFolders', 'sshHosts', 'disabledFolders', 'defaultRange'])
++  for (const setting of manifest.contributes.settings.slice(0, 4)) {
+     assert.deepEqual(Object.keys(setting), ['key', 'title', 'description', 'type', 'multiline', 'default', 'placeholder'])
+     assert.equal(setting.type, 'string')
+     assert.equal(setting.multiline, true)
+@@ -206,6 +206,17 @@ test('manifest declares the source settings as multiline strings', () => {
+   assert.equal(manifest.contributes.settings[3].title, 'Turned-off transcript folders')
+ })
+ 
++test('manifest declares the Default range setting as a picker of the panel ranges', () => {
++  const manifest = JSON.parse(readFileSync(path.join(root, 'orca-plugin.json'), 'utf8'))
++  const setting = manifest.contributes.settings.find((s) => s.key === 'defaultRange')
++  assert.equal(setting.title, 'Default range')
++  assert.equal(setting.type, 'string')
++  assert.equal(setting.default, '7d')
++  assert.deepEqual(setting.enum, ['1d', '7d', '30d', '90d', 'all'])
++  const html = readFileSync(path.join(root, 'src/panel/panel.html'), 'utf8')
++  for (const [i, range] of setting.enum.entries()) assert.match(html, new RegExp(`data-range="${range}"[^>]*>${setting.enumLabels[i]}<`))
++})
++
+ test('startWorker registers the usage.report, usage.refresh and price handlers', async () => {
+   const mock = mockOrca();
+   const worker = startWorker(mock.orca, fakeScanner(), { now: NOON, pollMs: 60_000 });

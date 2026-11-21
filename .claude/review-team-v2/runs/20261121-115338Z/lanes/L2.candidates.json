@@ -1,0 +1,25 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "A stalled newer Default range read makes firstLoad discard an older valid answer; the panel opens on 7d while the setting says otherwise until the next change or restart.",
+      "file": "src/panel/panel.js",
+      "line": 624,
+      "quote": "    .then((range) => { if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range }, () => {})",
+      "lens": "time",
+      "trigger": "1. Panel mounts; firstLoad starts read A (readDefaultRange, read=1, get pending). 2. User changes Default range; onDidChange fires; read B starts (defaultRangeReads=2). 3. Host answers A with '30d' first: second .then checks read === defaultRangeReads (1 vs 2), so state.defaultRange is not set; third .then returns early. 4. B's settings.get stalls; host shell rejects it with code timeout after ~120 s (plugin-panel-shell.js:115, per prior settled fact). 5. B's rejection handler runs, third .then resolves waiters. 6. firstLoad resumes: state.defaultRange is still '7d'; rangePicked false, moved false; the 1.5 s fallback already loaded 7d, so no reload. Panel opens on 7d, clearFilter('range') also returns to 7d.",
+      "wrong": "Should: keep the last valid answer (A's '30d') when the newest read yields nothing usable. Does: the older valid answer is discarded, leaving the setting-less 7d default for the session.",
+      "path": "src/panel/panel.js:624 -> src/panel/panel.js:601 -> src/panel/panel.js:603-611 -> src/panel/panel.js:162 (readDefaultRange, firstLoad, clearFilter)",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs the host to stall settings.get for the newer read. Not reproduced; a test with a never-answering second get and an answered first get would settle it.",
+      "class": "newer-generation guard drops an older valid result when the newer one yields nothing",
+      "sweep": "Sibling: the same guard drops an older valid answer when the newer answer is invalid or unreadable (pack suspicion, checked-broken by same path, low). Other async reads: onDidChange handler at panel.js:596 is the only other reader of settings; loadPrices/priceAction use their own request, not this guard (not checked in depth)."
+    }
+  ]
+}

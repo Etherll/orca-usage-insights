@@ -191,8 +191,8 @@ test('manifest is the trusted worker with exactly the declared keys', () => {
 
 test('manifest declares the source settings as multiline strings', () => {
   const manifest = JSON.parse(readFileSync(path.join(root, 'orca-plugin.json'), 'utf8'))
-  assert.deepEqual(manifest.contributes.settings.map((s) => s.key), ['extraClaudeFolders', 'extraCodexFolders', 'sshHosts', 'disabledFolders'])
-  for (const setting of manifest.contributes.settings) {
+  assert.deepEqual(manifest.contributes.settings.map((s) => s.key), ['extraClaudeFolders', 'extraCodexFolders', 'sshHosts', 'disabledFolders', 'defaultRange'])
+  for (const setting of manifest.contributes.settings.slice(0, 4)) {
     assert.deepEqual(Object.keys(setting), ['key', 'title', 'description', 'type', 'multiline', 'default', 'placeholder'])
     assert.equal(setting.type, 'string')
     assert.equal(setting.multiline, true)
@@ -204,6 +204,17 @@ test('manifest declares the source settings as multiline strings', () => {
   assert.equal(manifest.contributes.settings[2].title, 'SSH hosts')
   assert.match(manifest.contributes.settings[2].description, /Linux or macOS/)
   assert.equal(manifest.contributes.settings[3].title, 'Turned-off transcript folders')
+})
+
+test('manifest declares the Default range setting as a picker of the panel ranges', () => {
+  const manifest = JSON.parse(readFileSync(path.join(root, 'orca-plugin.json'), 'utf8'))
+  const setting = manifest.contributes.settings.find((s) => s.key === 'defaultRange')
+  assert.equal(setting.title, 'Default range')
+  assert.equal(setting.type, 'string')
+  assert.equal(setting.default, '7d')
+  assert.deepEqual(setting.enum, ['1d', '7d', '30d', '90d', 'all'])
+  const html = readFileSync(path.join(root, 'src/panel/panel.html'), 'utf8')
+  for (const [i, range] of setting.enum.entries()) assert.match(html, new RegExp(`data-range="${range}"[^>]*>${setting.enumLabels[i]}<`))
 })
 
 test('startWorker registers the usage.report, usage.refresh and price handlers', async () => {

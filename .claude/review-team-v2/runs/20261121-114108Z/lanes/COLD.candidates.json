@@ -1,0 +1,57 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "Panel reads Default range via host.settings.get, an API no other panel code uses; if Orca does not expose it to panels, the setting is silently ignored and panel always opens on 7d.",
+      "file": "src/panel/panel.js",
+      "line": 616,
+      "quote": "    const range = await host?.settings?.get?.('defaultRange')",
+      "lens": "cold",
+      "trigger": "1. User sets Default range to 90d in plugin settings. 2. Panel mounts; globalThis.orca has no settings member (panel otherwise only uses orca.plugin.request/on, panel.js:30, 918). 3. readDefaultRange hits ?. and returns undefined, then null (616-617). 4. firstLoad keeps 7d (panel.js:601-610). 5. Clear-custom also returns to 7d. Worker reads settings only via orca.host.call (src/worker.mjs:353, 371), a path the panel does not use.",
+      "wrong": "Opens on 90d as the setting says. Instead opens on 7d with no error. Tests pass because mountPanel mocks orca.settings at top level (tests/panel.test.mjs:138), which matches the new code, not the host.",
+      "path": "src/panel/panel.js:616 -> src/panel/panel.js:617 -> src/panel/panel.js:601-610",
+      "origin": "introduced",
+      "severity": "high",
+      "confidence": "medium; settled by Orca panel-global API docs or a real panel run showing orca.settings exists. Not in repo.",
+      "class": "unverified host API used behind optional chaining, so a missing member fails silently",
+      "sweep": "Other panel host calls: host?.plugin?.request (panel.js:30), host?.plugin?.on (panel.js:918): both established usage. panel.js:596 onDidChange same unverified API: not-checked. Worker-side settings reads (worker.mjs:353, 371) use orca.host.call: checked-fine."
+    },
+    {
+      "key": "K2",
+      "claim": "firstLoad awaits the settings read before any load, so a settings read that never settles leaves the panel on skeleton forever; before this change load ran at once.",
+      "file": "src/panel/panel.js",
+      "line": 599,
+      "quote": "  const range = await readDefaultRange()",
+      "lens": "cold",
+      "trigger": "1. Panel opens. 2. host settings.get (panel.js:616) is pending and never resolves (no timeout in readDefaultRange, panel.js:614-621). 3. firstLoad waits at panel.js:599, so load() at panel.js:610 never runs. 4. No usage.report request is sent; state.report stays null and #skeleton stays visible.",
+      "wrong": "Should fall back to 7d after a bounded wait and still load. Instead it never loads. Test at tests/panel.test.mjs:236-237 asserts the wait but no timeout.",
+      "path": "src/panel/panel.js:599 -> src/panel/panel.js:616 -> src/panel/panel.js:610 (not reached)",
+      "origin": "introduced",
+      "severity": "medium",
+      "confidence": "medium; depends on whether host settings reads can hang. Would be settled by a timed-out host call in Orca.",
+      "class": "startup gated on an unbounded async read with no fallback",
+      "sweep": "Same gate for usage.changed path: panel.js:610 covers the no-report case. loadPrices (panel.js:623) is not gated: checked-fine."
+    },
+    {
+      "key": "K3",
+      "claim": "Initial settings read and onDidChange read both write state.defaultRange; if the older read resolves last, the stale default wins.",
+      "file": "src/panel/panel.js",
+      "line": 597,
+      "quote": "    if (change?.key === 'defaultRange') readDefaultRange().then((range) => { if (range) state.defaultRange = range })",
+      "lens": "cold",
+      "trigger": "1. Panel mounts; firstLoad issues get (panel.js:616) and gets 7d in flight. 2. User changes Default range to 90d; onDidChange fires (panel.js:596-597) and issues a second get. 3. Second get resolves 90d first, then first get resolves 7d. 4. Line 602 sets state.defaultRange = 7d (no ordering guard).",
+      "wrong": "defaultRange should match the latest saved value (90d). Instead a later clear-custom returns to 7d.",
+      "path": "src/panel/panel.js:596 -> src/panel/panel.js:597 -> src/panel/panel.js:602",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "low; needs out-of-order host responses. Settled by a sequence-number guard test.",
+      "class": "async writes to shared state without ordering",
+      "sweep": "Other async writers to state.defaultRange: only these two. state.range writes from load (panel.js:47) are ordered by state.busy: checked-fine."
+    }
+  ]
+}

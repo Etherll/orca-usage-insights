@@ -1,0 +1,24 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "Clearing a custom range before the saved Default range is read returns the panel to the 7d placeholder, and rangePicked then stops the real default from ever applying to the shown range.",
+      "file": "src/panel/panel.js",
+      "line": 158,
+      "quote": "    state.range = state.defaultRange",
+      "lens": "cases, journey",
+      "trigger": "1. Host settings.get('defaultRange') is slow (seconds; shell deadline 120 s, plugin-panel-shell.js:115). Saved default is 30d. Panel opens, firstLoad starts readDefaultRange (state.defaultRange still the initial '7d', panel.js:9). 2. User clicks Custom (ranges handler sets state.rangePicked = true, panel.js:843), enters dates, Apply: applyDates sets range 'custom', rangePicked, load() (panel.js:295-299). 3. User clicks the custom chip clear (chip at panel.js:128, handler panel.js:913) or Reset all (panel.js:910) while read still out. 4. clearFilter: state.range = state.defaultRange = '7d' (panel.js:158), load() fetches 7d. 5. Read answers '30d': readDefaultRange sets state.defaultRange = '30d' (panel.js:629). firstLoad resumes: rangePicked true, so no move (panel.js:605); report stays 7d, radio shows 7d. Clearing a custom range should return to 30d.",
+      "path": "src/panel/panel.js:158 -> src/panel/panel.js:9 (placeholder) ; src/panel/panel.js:843/295 (rangePicked) ; src/panel/panel.js:605 (no move) ; src/panel/panel.js:629 (late write, unused)",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs a settings read slower than the user's Custom->Apply->clear sequence. No test covers clear before the read answers (tests/panel.test.mjs 'a Default range changed...' and 'an unknown or unreadable...' cover other paths). Settle by adding a test: pending get, Custom Apply, clear chip, then resolve get('30d'), expect last report 30d.",
+      "class": "reads a value that is still in flight (placeholder initial value) on a consumer path that is not gated on the read, and the late write is then blocked by a 'user already decided' flag",
+      "sweep": "Readers of state.defaultRange: only clearFilter (panel.js:158, checked-broken, this case) and firstLoad (panel.js:603, checked-fine because it waits on defaultRangeWaiters). Writers of state.range: panel.js:158 (broken path), 295 applyDates (picked, fine), 606 firstLoad (gated on rangePicked, fine), 855 ranges click (picked, fine). Writers of rangePicked: 296, 843 only; reader 605 only. Same clear in panel/index.html:1603 (checked-broken, identical copy). Chip render panel.js:128 shows only for custom (checked-fine)."
+    }
+  ]
+}

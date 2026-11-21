@@ -1,0 +1,57 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "If settings.get throws synchronously, readDefaultRange leaves pendingDefaultRead non-null forever, so firstLoad spins on microtasks and the panel never loads, not even via the 1.5 s fallback timer.",
+      "file": "src/panel/panel.js",
+      "line": 620,
+      "quote": "  pendingDefaultRead = (async () => {",
+      "lens": "trace, cases",
+      "trigger": "1. Panel opens; firstLoad calls readDefaultRange (panel.js:597). 2. host.settings.get throws synchronously (not a rejected promise). 3. The IIFE try block catches it synchronously, so line 625 (pendingDefaultRead = null) runs before the IIFE returns. 4. Line 620 then assigns the resolved promise to pendingDefaultRead, overwriting the null. 5. firstLoad reaches while (pendingDefaultRead) await pendingDefaultRead (line 601). Nothing ever resets the variable, so the loop never exits; microtasks never drain, so the 1.5 s setTimeout at line 599 never fires. Demo: node script with this exact pattern, capped at 1e6 iterations, ends with pending still set and the timer only runs after the cap.",
+      "wrong": "Should: an unreadable setting falls back to 7d and the first report loads. Does: the page freezes with no report.",
+      "path": "src/panel/panel.js:597 -> src/panel/panel.js:620 -> src/panel/panel.js:625 -> src/panel/panel.js:601",
+      "origin": "introduced",
+      "severity": "medium",
+      "confidence": "medium; reachable only if settings.get throws synchronously. The shipped facade does not: orca.settings.get returns call(...).then(...) (plugin-panel-shell-facades.js:74) and call returns a Promise for every path (plugin-panel-shell.js:97-135). Settles: a host or test stub whose get throws synchronously. The test suite only uses async throws (tests/panel.test.mjs, \"settings offline\").",
+      "class": "sentinel cleared inside an async IIFE before the outer assignment; a sync throw makes the clear run first and the assignment overwrite it, so a wait loop on the sentinel never exits",
+      "sweep": "checked-fine: load() busy flag at src/panel/panel.js:53-69 is set and cleared in try/finally with request inside try (line 62), so a sync throw still clears busy. loadBreakdown bdBusy at src/panel/panel.js:541-574 same shape. Only pendingDefaultRead has a while loop on a sentinel. not checked: other `while (x) await x` loops in the rest of src/panel (none seen in shard)."
+    },
+    {
+      "key": "K2",
+      "claim": "When the saved Default range arrives after the user opens Custom, the range moves but the Custom date fields stay visible and the Custom radio is unchecked.",
+      "file": "src/panel/panel.js",
+      "line": 605,
+      "quote": "  if (!state.rangePicked && state.range !== range) {",
+      "lens": "journey",
+      "trigger": "1. Host settings.get is slow (up to the 120 s deadline). 2. User clicks Custom: panel.js:836 sets custom-range hidden=false; rangePicked stays false. 3. The read answers 30d. 4. Line 605 is true: state.range = 30d, radios re-checked (606-608), moved=true, load() at 611. 5. Nothing hides $(\"custom-range\") (only clearFilter 159 and the 7d/30d click path 842 do). The date fields stay open under the 30d radio, which shows the range in effect.",
+      "wrong": "Should: fields close when the range the user was choosing is replaced, or the move waits while Custom is open. Does: stale date editor sits next to a different checked range.",
+      "path": "src/panel/panel.js:836 -> src/panel/panel.js:605-611 -> src/panel/panel.js:159 (not reached on move)",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "high on state; medium on how visible it is in the real layout (not rendered). Settles: a browser run of the panel with a delayed settings.get.",
+      "class": "programmatic state change that updates radio state but not the sibling panel it controls",
+      "sweep": "checked-fine: render() at panel.js:352 re-checks ranges but also does not touch custom-range; the same omission applies to the usage.changed path only via moved. not checked: a real-browser layout check."
+    },
+    {
+      "key": "K3",
+      "claim": "When two Default range changes overlap and the newer read fails, the older valid answer is dropped and state.defaultRange keeps a stale value.",
+      "file": "src/panel/panel.js",
+      "line": 623,
+      "quote": "      if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range",
+      "lens": "cases",
+      "trigger": "1. onDidChange fires (read 1 starts, panel.js:619). 2. Setting changes again; onDidChange fires (read 2 starts). 3. Read 2 rejects (host timeout, plugin-panel-shell.js:115-120) or answers an unknown value. 4. Read 1 answers 90d, but read 1 !== defaultRangeReads, so line 623 skips it. 5. state.defaultRange keeps the old value; the next clearFilter(range) returns to it, not 90d.",
+      "wrong": "Should: the setting value (90d, the one still saved) is used. Does: the previous default is used until the next change event.",
+      "path": "src/panel/panel.js:596 -> src/panel/panel.js:619-623 -> src/panel/panel.js:158",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs a timeout on the newer read. Settles: a test that rejects the second get while the first answers.",
+      "class": "latest-wins guard that drops an older valid answer when the newest answer is unusable",
+      "sweep": "checked-fine: the same guard covers out-of-order valid answers (test \"an older Default range read that answers last does not win\", tests/panel.test.mjs). not checked: other numbered-read guards in src/panel (none seen)."
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "Default range never applies if the panel host has no settings object; the panel silently opens on 7d and never reads the saved setting.",
+      "file": "src/panel/panel.js",
+      "line": 625,
+      "quote": "    .then(() => host?.settings?.get?.('defaultRange'))",
+      "lens": "cold",
+      "trigger": "1. User sets Default range to 30d (orca-plugin.json:88-100 declares it). 2. Panel mounts; firstLoad() (panel.js:595) calls readDefaultRange(). 3. If Orca's panel global `orca` has no `settings` property, host?.settings?.get?.() is undefined (panel.js:625). 4. range is undefined, fails the RANGE_DAYS guard (panel.js:627), state.defaultRange stays '7d'. 5. Panel opens on 7d; onDidChange (panel.js:596) is never bound either. Clear-range returns to 7d.",
+      "wrong": "Should read the saved Default range from whatever host call the panel can actually make. Repo has no panel-side settings API: the only settings.get callers are worker-side (src/worker.mjs:353, 371 via orca.host.call). Tests pass only because mountPanel injects orca.settings (tests/panel.test.mjs:138), the same guessed shape.",
+      "path": "src/panel/panel.js:625 -> src/panel/panel.js:627 -> src/panel/panel.js:603",
+      "origin": "introduced",
+      "severity": "high",
+      "confidence": "medium; assumption that Orca panel host lacks settings. Settle with Orca panel host API docs or a live panel run with saved defaultRange 30d.",
+      "class": "feature depends on an unverified host API shape; guards swallow the missing call silently",
+      "sweep": "Same guessed shape at panel.js:596 (onDidChange) and index.html:2041, 2070 (checked-broken by same reasoning, unverified). Worker settings path src/worker.mjs:353, 371 uses orca.host.call('settings.get') (checked-fine: different side, real call). Panel request helper not read: not checked."
+    },
+    {
+      "key": "K2",
+      "claim": "When the newest Default range read fails and an older read answers later, state.defaultRange changes after the panel already loaded on the old range, so the view and the clear-range target disagree.",
+      "file": "src/panel/panel.js",
+      "line": 629,
+      "quote": "      state.defaultRange = range",
+      "lens": "cold",
+      "trigger": "1. Panel mounts; firstLoad (panel.js:595) starts read R1 (defaultRangeReads=1), host get pending. 2. User changes Default range to 30d; onDidChange (panel.js:596) starts R2 (defaultRangeReads=2). 3. R2 rejects or answers an invalid value; defaultRangeApplied stays 0; R2 is newest, so waiters resolve (panel.js:631-636). 4. firstLoad resumes (panel.js:603): state.defaultRange is still 7d; slow timer (panel.js:599) already loaded 7d; no reload. 5. R1 answers '30d': read 1 < 0 is false, so panel.js:629 writes state.defaultRange = 30d. 6. Nothing re-moves state.range. View stays 7d; clearFilter('range') (panel.js:158) goes to 30d.",
+      "wrong": "Late valid answer should either move the view (if still unpicked) or not be applied silently. Currently the stored default and the shown range diverge until the next clear.",
+      "path": "src/panel/panel.js:603 -> src/panel/panel.js:631-636 -> src/panel/panel.js:629 -> src/panel/panel.js:158",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs host to reject the newer read and answer the older one late. Settle with a test: newer read rejects, older answers '30d' after firstLoad resumed.",
+      "class": "post-resolution write to shared state that the awaiting caller already consumed",
+      "sweep": "Only readDefaultRange writes state.defaultRange besides the init (panel.js:158 reads it). Test 'a valid Default range answer is kept when a newer read fails' (tests/panel.test.mjs:349) covers the opposite order only, checked-fine for that order."
+    },
+    {
+      "key": "K3",
+      "claim": "Test weakened: first-call assertion now uses find, so an earlier unexpected usage.report call would pass unnoticed.",
+      "file": "tests/panel.test.mjs",
+      "line": 82,
+      "quote": "  assert.equal(JSON.stringify(calls.find(([name]) => name === 'usage.report')), JSON.stringify(['usage.report', { range: '7d', includeCache: true }]))",
+      "lens": "cold",
+      "trigger": "1. A regression makes panel call usage.report twice, or a non-report call first. 2. calls.find returns the first usage.report only. 3. Test checks its args and still passes if another call comes before it.",
+      "wrong": "Should assert calls[0] or the full calls list when settings are absent, not hide ordering.",
+      "path": "tests/panel.test.mjs:82",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; the reason for the change is not in the diff. Settle by checking why calls[0] changed.",
+      "class": "assertion loosened to absorb a behaviour change",
+      "sweep": "Other calls[0] uses in tests/panel.test.mjs not checked."
+    }
+  ]
+}

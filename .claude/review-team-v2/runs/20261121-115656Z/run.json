@@ -1,0 +1,110 @@
+{
+  "baseline_ref": "origin/main",
+  "baseline_sha": "eae3fa08f21323c5679a7dbbeced2a1777a272a1",
+  "canonical_diff_sha256": "6ade2070a6b5f797c4a5eee5203919c054ed0497204bc757a298bdf3c02303c0",
+  "carried_forward_files": [
+    "README.md",
+    "orca-plugin.json",
+    "tests/worker.test.mjs"
+  ],
+  "carried_forward_finding_ids": [],
+  "changed_file_count": 6,
+  "changed_line_count": 304,
+  "created_at": "2026-11-21T11:56:56Z",
+  "delta_files": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "depth_reasons": [
+    "57 changed source lines in 1 file(s)"
+  ],
+  "effective_depth": "standard",
+  "file_fingerprints": {
+    "README.md": "422a620bab00289de909ddbb369e965b13b62ba9f274be7d898a53e171c09f06",
+    "orca-plugin.json": "3a282cea61ecf13d20858b4e8e1e87f9f612cf2f071ff3dd228795fd926f636c",
+    "panel/index.html": "7f644b3e44860d4515076242bf16dea5565bfdc620ccd3d6d02ef71508aef24b",
+    "src/panel/panel.js": "cbbf220c311863a88cf8e85b6e289a8d94a0401037df3297c40576aeb1fb3a11",
+    "tests/panel.test.mjs": "a9b0e28df4a6a8d486a6ed86f90ebd6861d20dc3d99fb2de2df7508e97745177",
+    "tests/worker.test.mjs": "2d5f05d35a879a69301e5b69bb1697670b767320308a5cc8634d03bc63f345f2"
+  },
+  "merge_base_sha": "eae3fa08f21323c5679a7dbbeced2a1777a272a1",
+  "plan": {
+    "agent_budget": 12,
+    "cold_pass": true,
+    "lanes": [
+      {
+        "effort": "medium",
+        "id": "L1",
+        "lenses": [
+          "trace",
+          "cases",
+          "journey"
+        ],
+        "round": 1,
+        "shard": "S1"
+      },
+      {
+        "effort": "medium",
+        "id": "L2",
+        "lenses": [
+          "state",
+          "time",
+          "ripple"
+        ],
+        "round": 1,
+        "shard": "S1"
+      }
+    ],
+    "lenses": [
+      "trace",
+      "cases",
+      "state",
+      "time",
+      "ripple",
+      "journey"
+    ],
+    "notes": [],
+    "packs": [
+      "persistence"
+    ],
+    "shards": [
+      {
+        "changed_lines": 266,
+        "files": [
+          "panel/index.html",
+          "src/panel/panel.js",
+          "tests/panel.test.mjs"
+        ],
+        "id": "S1",
+        "weight": 128
+      }
+    ],
+    "spare_reserve": 1,
+    "verifier_reserve": 2
+  },
+  "prior_run": {
+    "path": "/tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/pr7fix/.claude/review-team-v2/runs/20261121-115338Z",
+    "target_sha": "05443d3b239f9cb8fbd4a96999b6051d43bdbbdf"
+  },
+  "repo_root": "/tmp/claude-1000/-home-etherl-orca-workspaces-orca-usage-insights-Etherll-geoduck/b69d9523-5f26-4652-ae90-f8a53c710969/scratchpad/pr7fix",
+  "requested_depth": "auto",
+  "review_mode": "delta",
+  "risk_signals": {
+    "persistence": [
+      "panel/index.html",
+      "src/panel/panel.js"
+    ]
+  },
+  "schema": "review-team-v2/run@4",
+  "target_ref": "HEAD",
+  "target_sha": "e4b2f230ce1a48779e3b75f2bfb61440ffd2e7ea",
+  "target_source": {
+    "kind": "github-pr",
+    "number": "7",
+    "repository": "Etherll/orca-usage-insights",
+    "url": "https://github.com/Etherll/orca-usage-insights/pull/7"
+  },
+  "walk_file_count": 3,
+  "working_tree_status": []
+}

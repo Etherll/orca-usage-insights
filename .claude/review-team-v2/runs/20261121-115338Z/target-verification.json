@@ -1,0 +1,11 @@
+{
+  "observed_sha": "05443d3b239f9cb8fbd4a96999b6051d43bdbbdf",
+  "retrieved_at": "2026-11-21T11:56:42Z",
+  "schema": "review-team-v2/target-verification@1",
+  "source": {
+    "kind": "github-pr",
+    "number": "7",
+    "repository": "Etherll/orca-usage-insights",
+    "url": "https://github.com/Etherll/orca-usage-insights/pull/7"
+  }
+}

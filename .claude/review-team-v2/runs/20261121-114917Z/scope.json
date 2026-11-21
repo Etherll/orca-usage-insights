@@ -1,0 +1,351 @@
+{
+  "consumers": [
+    {
+      "defined_in": "src/panel/panel.js",
+      "outside_diff": [],
+      "removed": false,
+      "symbol": "clearFilter",
+      "tests": [],
+      "total": 3,
+      "truncated": false,
+      "unchanged_lines_in_diff_files": [
+        "src/panel/panel.js:147",
+        "src/panel/panel.js:901",
+        "src/panel/panel.js:904"
+      ]
+    },
+    {
+      "defined_in": "src/panel/panel.js",
+      "outside_diff": [],
+      "removed": false,
+      "symbol": "applyDates",
+      "tests": [],
+      "total": 3,
+      "truncated": false,
+      "unchanged_lines_in_diff_files": [
+        "src/panel/panel.js:280",
+        "src/panel/panel.js:849",
+        "src/panel/panel.js:856"
+      ]
+    },
+    {
+      "defined_in": "src/panel/panel.js",
+      "outside_diff": [],
+      "removed": false,
+      "symbol": "renderBreakdownView",
+      "tests": [],
+      "total": 2,
+      "truncated": false,
+      "unchanged_lines_in_diff_files": [
+        "src/panel/panel.js:562",
+        "src/panel/panel.js:576"
+      ]
+    },
+    {
+      "defined_in": "src/panel/panel.js",
+      "outside_diff": [],
+      "removed": false,
+      "symbol": "bindControls",
+      "tests": [],
+      "total": 2,
+      "truncated": false,
+      "unchanged_lines_in_diff_files": [
+        "src/panel/panel.js:817",
+        "src/panel/panel.js:941"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "added": 1,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "The panel reads your Claude Code and Codex transcripts, plus the local OpenCode",
+          "id": "H047",
+          "new_count": 7,
+          "new_start": 41
+        }
+      ],
+      "kind": "docs",
+      "old_path": null,
+      "path": "README.md",
+      "removed": 1,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    },
+    {
+      "added": 21,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "",
+          "id": "H048",
+          "new_count": 27,
+          "new_start": 83
+        }
+      ],
+      "kind": "config",
+      "old_path": null,
+      "path": "orca-plugin.json",
+      "removed": 0,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    },
+    {
+      "added": 43,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "function syncBody(result) {",
+          "id": "H049",
+          "new_count": 7,
+          "new_start": 1451
+        },
+        {
+          "context": "function clearFilter(key) {",
+          "id": "H050",
+          "new_count": 7,
+          "new_start": 1600
+        },
+        {
+          "context": "function applyDates() {",
+          "id": "H051",
+          "new_count": 7,
+          "new_start": 1738
+        },
+        {
+          "context": "function renderBreakdownView() {",
+          "id": "H052",
+          "new_count": 44,
+          "new_start": 2034
+        },
+        {
+          "context": "function bindControls() {",
+          "id": "H053",
+          "new_count": 7,
+          "new_start": 2286
+        },
+        {
+          "context": "if (typeof document !== 'undefined' && document.getElementById('app')) {",
+          "id": "H054",
+          "new_count": 7,
+          "new_start": 2386
+        }
+      ],
+      "kind": "config",
+      "old_path": null,
+      "path": "panel/index.html",
+      "removed": 3,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": true
+    },
+    {
+      "added": 44,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "",
+          "id": "H055",
+          "new_count": 11,
+          "new_start": 2
+        },
+        {
+          "context": "function clearFilter(key) {",
+          "id": "H056",
+          "new_count": 7,
+          "new_start": 155
+        },
+        {
+          "context": "function applyDates() {",
+          "id": "H057",
+          "new_count": 7,
+          "new_start": 293
+        },
+        {
+          "context": "function renderBreakdownView() {",
+          "id": "H058",
+          "new_count": 44,
+          "new_start": 589
+        },
+        {
+          "context": "function bindControls() {",
+          "id": "H059",
+          "new_count": 7,
+          "new_start": 841
+        },
+        {
+          "context": "if (typeof document !== 'undefined' && document.getElementById('app')) {",
+          "id": "H060",
+          "new_count": 6,
+          "new_start": 941
+        }
+      ],
+      "kind": "source",
+      "old_path": null,
+      "path": "src/panel/panel.js",
+      "removed": 4,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [
+        {
+          "exported": false,
+          "hunks": [
+            "H056"
+          ],
+          "line": 147,
+          "name": "clearFilter"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H057"
+          ],
+          "line": 280,
+          "name": "applyDates"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H058"
+          ],
+          "line": 576,
+          "name": "renderBreakdownView"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H058"
+          ],
+          "line": 595,
+          "name": "firstLoad"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H058"
+          ],
+          "line": 616,
+          "name": "defaultRangeReads"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H058"
+          ],
+          "line": 617,
+          "name": "pendingDefaultRead"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H058"
+          ],
+          "line": 618,
+          "name": "readDefaultRange"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H059",
+            "H060"
+          ],
+          "line": 817,
+          "name": "bindControls"
+        }
+      ],
+      "walk": true
+    },
+    {
+      "added": 112,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "test('panel requests a report and renders every section', async () => {",
+          "id": "H061",
+          "new_count": 7,
+          "new_start": 79
+        },
+        {
+          "context": "test('panel shows an error state when the worker fails', async () => {",
+          "id": "H062",
+          "new_count": 14,
+          "new_start": 128
+        },
+        {
+          "context": "async function mountPanel(makeReport = (input) => sampleReport(input.range, inpu",
+          "id": "H063",
+          "new_count": 7,
+          "new_start": 143
+        },
+        {
+          "context": "test('cache switch requests consistent totals and token charts, and reset querie",
+          "id": "H064",
+          "new_count": 113,
+          "new_start": 214
+        }
+      ],
+      "kind": "test",
+      "old_path": null,
+      "path": "tests/panel.test.mjs",
+      "removed": 4,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [
+        {
+          "exported": false,
+          "hunks": [
+            "H061",
+            "H062"
+          ],
+          "line": 45,
+          "name": "fakeDom"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H062",
+            "H063",
+            "H064"
+          ],
+          "line": 131,
+          "name": "mountPanel"
+        }
+      ],
+      "walk": true
+    },
+    {
+      "added": 13,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "test('manifest is the trusted worker with exactly the declared keys', () => {",
+          "id": "H065",
+          "new_count": 8,
+          "new_start": 191
+        },
+        {
+          "context": "test('manifest declares the source settings as multiline strings', () => {",
+          "id": "H066",
+          "new_count": 17,
+          "new_start": 206
+        }
+      ],
+      "kind": "test",
+      "old_path": null,
+      "path": "tests/worker.test.mjs",
+      "removed": 2,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    }
+  ],
+  "siblings": []
+}

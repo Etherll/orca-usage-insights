@@ -1,0 +1,41 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "A valid Default range read that answers before a newer read is discarded; if the newer read fails, the saved default is never applied this session.",
+      "file": "src/panel/panel.js",
+      "line": 624,
+      "quote": "    .then((range) => { if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range }, () => {})",
+      "lens": "trace",
+      "trigger": "1. Panel opens; firstLoad calls readDefaultRange, read R1 (defaultRangeReads=1), host get slow. 2. Person changes defaultRange in Settings; onDidChange fires; R2 starts (defaultRangeReads=2). 3. R1 answers '30d'; panel.js:624 discards it (read 1 !== 2). 4. R2 get rejects (host timeout, plugin-panel-shell.js:115, 120 s). 5. R2 is newest: state.defaultRange stays '7d'; waiters resolve; firstLoad opens 7d (fallback already loaded 7d at 1.5 s). The 30d answer is lost; clearFilter('range') also goes to 7d.",
+      "wrong": "Should: keep the last valid answer when the newest read is unusable, or fall back to the most recent valid read. Does: resets to the 7d default.",
+      "path": "src/panel/panel.js:624 -> src/panel/panel.js:626-630 -> src/panel/panel.js:611 -> src/panel/panel.js:619-631",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; needs a host get that rejects after a settings change during the first read. Host timeout per pack (plugin-panel-shell.js:115), not reread.",
+      "class": "newest-wins token discards an older valid answer when the newest answer is unusable",
+      "sweep": "Other numbered reads in shard: none (only defaultRangeReads). Setting enum (orca-plugin.json:88-96) limits invalid values, so only failure path reaches it. checked-broken: none beyond this. not checked: other panels in repo with the same read pattern (out of shard)."
+    },
+    {
+      "key": "K2",
+      "claim": "When the default is applied after a 7d load is already in flight, the 7d report renders under a radio already set to the new range, a transient label mismatch.",
+      "file": "src/panel/panel.js",
+      "line": 606,
+      "quote": "    state.range = range",
+      "lens": "journey",
+      "trigger": "1. Default range 30d; the first read is slow. 2. The 1.5 s fallback at panel.js:599 calls load() with state.range 7d; request in flight. 3. Read answers '30d'; firstLoad sets state.range='30d' and the radios (panel.js:607) at panel.js:611 load() (queued as state.again). 4. The 7d response arrives; load() calls render() (panel.js:63) with state.range '30d' selected over 7d totals. 5. finally runs load('usage.report') on 30d; the 30d report replaces it.",
+      "wrong": "Should: show only the report matching the selected range. Does: one request of 7d numbers under the 30d control, then corrected.",
+      "path": "src/panel/panel.js:599 -> src/panel/panel.js:606-611 -> src/panel/panel.js:62-63 -> src/panel/panel.js:72-76",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "high that it happens; pack already calls it a probable flash. Low impact, no data loss.",
+      "class": "state changed while a response for the old state is in flight, rendered without a range check",
+      "sweep": "checked-broken: none other. checked-fine: clearFilter (panel.js:158) changes range the same way but its load() is not queued behind a busy request in the same way; same flash possible in theory, not traced further. Not checked: render() range consistency beyond this path."
+    }
+  ]
+}

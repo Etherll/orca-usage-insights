@@ -1,0 +1,41 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "Default range read goes through host.settings, an API nothing else in repo uses; in real host it is likely undefined, so panel always opens on 7d and never honors the setting.",
+      "file": "src/panel/panel.js",
+      "line": 615,
+      "quote": "    const range = await host?.settings?.get?.('defaultRange')",
+      "lens": "cold",
+      "trigger": "1. User sets Default range = 1d in Settings (manifest orca-plugin.json:88 declares it). 2. Panel loads: firstLoad (panel.js:595) calls readDefaultRange (panel.js:612). 3. host is globalThis.orca; host.settings is undefined in the real host (panel code otherwise uses only host.plugin.request/on; worker reads settings via orca.host.call('settings.get', worker.mjs:353)). 4. Optional chain yields undefined; catch swallows nothing; state.defaultRange stays '7d'. 5. Panel opens on 7d and clearing custom goes to 7d.",
+      "wrong": "Should read saved setting via the host API the worker uses (or panel-side equivalent). Today the setting is inert outside tests, where the mock adds orca.settings (tests/panel.test.mjs mountPanel).",
+      "path": "src/panel/panel.js:615 -> src/panel/panel.js:612 -> src/panel/panel.js:595 -> orca-plugin.json:88",
+      "origin": "introduced",
+      "severity": "high",
+      "confidence": "medium; settle by checking the Orca panel global API for a settings member (not in repo). Only test mock supplies it.",
+      "class": "Feature wired to an invented host API that only the test mock satisfies; optional chaining hides the miss.",
+      "sweep": "panel/index.html:1 inline copy of readDefaultRange and firstLoad (same host?.settings?.get?.) checked-broken same cause; onDidChange at panel.js:596 same unverified API, checked-broken same cause; worker.mjs:353,371 use orca.host.call('settings.get') checked-fine (real pattern)."
+    },
+    {
+      "key": "K2",
+      "claim": "firstLoad awaits readDefaultRange with no timeout; a settings read that never settles keeps the panel on the skeleton forever, since no report is requested.",
+      "file": "src/panel/panel.js",
+      "line": 597,
+      "quote": "  await readDefaultRange()",
+      "lens": "cold",
+      "trigger": "1. Panel mounts; firstLoad (panel.js:595) runs, registers onDidChange, awaits readDefaultRange. 2. host.settings.get (panel.js:615) returns a promise that never resolves (host stall, lost reply). 3. Line 606 is never reached; load() is never called (test at panel.test.mjs 'an unknown or unreadable...' documents waiting on the setting). 4. Panel shows skeleton, aria-busy, no error status.",
+      "wrong": "Should fall back to the 7d default after a bounded wait, as request() uses timeoutMs 120000 (panel.js:30). Today no timeout bounds the first load.",
+      "path": "src/panel/panel.js:597 -> src/panel/panel.js:615 -> src/panel/panel.js:606 (not reached)",
+      "origin": "introduced",
+      "severity": "medium",
+      "confidence": "medium; depends on whether host settings read can hang. Settle by host API timeout behavior.",
+      "class": "Startup gate on an unbounded await of a side read.",
+      "sweep": "panel.js:597 is only awaited startup gate; loadPrices (panel.js:620) is fire-and-forget, checked-fine; other request paths use timeoutMs (panel.js:30), checked-fine."
+    }
+  ]
+}

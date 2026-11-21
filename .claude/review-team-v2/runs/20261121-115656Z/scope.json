@@ -1,0 +1,318 @@
+{
+  "consumers": [
+    {
+      "defined_in": "src/panel/panel.js",
+      "outside_diff": [],
+      "removed": false,
+      "symbol": "renderBreakdownView",
+      "tests": [],
+      "total": 2,
+      "truncated": false,
+      "unchanged_lines_in_diff_files": [
+        "src/panel/panel.js:562",
+        "src/panel/panel.js:576"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "added": 1,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "The panel reads your Claude Code and Codex transcripts, plus the local OpenCode",
+          "id": "H094",
+          "new_count": 7,
+          "new_start": 41
+        }
+      ],
+      "kind": "docs",
+      "old_path": null,
+      "path": "README.md",
+      "removed": 1,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    },
+    {
+      "added": 21,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "",
+          "id": "H095",
+          "new_count": 27,
+          "new_start": 83
+        }
+      ],
+      "kind": "config",
+      "old_path": null,
+      "path": "orca-plugin.json",
+      "removed": 0,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    },
+    {
+      "added": 52,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "function syncBody(result) {",
+          "id": "H096",
+          "new_count": 7,
+          "new_start": 1451
+        },
+        {
+          "context": "function clearFilter(key) {",
+          "id": "H097",
+          "new_count": 7,
+          "new_start": 1600
+        },
+        {
+          "context": "function applyDates() {",
+          "id": "H098",
+          "new_count": 7,
+          "new_start": 1738
+        },
+        {
+          "context": "function renderBreakdownView() {",
+          "id": "H099",
+          "new_count": 53,
+          "new_start": 2034
+        },
+        {
+          "context": "function bindControls() {",
+          "id": "H100",
+          "new_count": 7,
+          "new_start": 2285
+        },
+        {
+          "context": "if (typeof document !== 'undefined' && document.getElementById('app')) {",
+          "id": "H101",
+          "new_count": 7,
+          "new_start": 2395
+        }
+      ],
+      "kind": "config",
+      "old_path": null,
+      "path": "panel/index.html",
+      "removed": 3,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": true
+    },
+    {
+      "added": 53,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "",
+          "id": "H102",
+          "new_count": 11,
+          "new_start": 2
+        },
+        {
+          "context": "function clearFilter(key) {",
+          "id": "H103",
+          "new_count": 7,
+          "new_start": 155
+        },
+        {
+          "context": "function applyDates() {",
+          "id": "H104",
+          "new_count": 7,
+          "new_start": 293
+        },
+        {
+          "context": "function renderBreakdownView() {",
+          "id": "H105",
+          "new_count": 53,
+          "new_start": 589
+        },
+        {
+          "context": "function bindControls() {",
+          "id": "H106",
+          "new_count": 7,
+          "new_start": 840
+        },
+        {
+          "context": "if (typeof document !== 'undefined' && document.getElementById('app')) {",
+          "id": "H107",
+          "new_count": 6,
+          "new_start": 950
+        }
+      ],
+      "kind": "source",
+      "old_path": null,
+      "path": "src/panel/panel.js",
+      "removed": 4,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [
+        {
+          "exported": false,
+          "hunks": [
+            "H103"
+          ],
+          "line": 147,
+          "name": "clearFilter"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H104"
+          ],
+          "line": 280,
+          "name": "applyDates"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H105"
+          ],
+          "line": 576,
+          "name": "renderBreakdownView"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H105"
+          ],
+          "line": 595,
+          "name": "firstLoad"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H105"
+          ],
+          "line": 618,
+          "name": "defaultRangeReads"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H105"
+          ],
+          "line": 619,
+          "name": "defaultRangeApplied"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H105"
+          ],
+          "line": 620,
+          "name": "defaultRangeWaiters"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H105"
+          ],
+          "line": 621,
+          "name": "readDefaultRange"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H106",
+            "H107"
+          ],
+          "line": 826,
+          "name": "bindControls"
+        }
+      ],
+      "walk": true
+    },
+    {
+      "added": 150,
+      "carried_forward": false,
+      "hunks": [
+        {
+          "context": "test('panel requests a report and renders every section', async () => {",
+          "id": "H108",
+          "new_count": 7,
+          "new_start": 79
+        },
+        {
+          "context": "test('panel shows an error state when the worker fails', async () => {",
+          "id": "H109",
+          "new_count": 14,
+          "new_start": 128
+        },
+        {
+          "context": "async function mountPanel(makeReport = (input) => sampleReport(input.range, inpu",
+          "id": "H110",
+          "new_count": 7,
+          "new_start": 143
+        },
+        {
+          "context": "test('cache switch requests consistent totals and token charts, and reset querie",
+          "id": "H111",
+          "new_count": 151,
+          "new_start": 214
+        }
+      ],
+      "kind": "test",
+      "old_path": null,
+      "path": "tests/panel.test.mjs",
+      "removed": 4,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [
+        {
+          "exported": false,
+          "hunks": [
+            "H108",
+            "H109"
+          ],
+          "line": 45,
+          "name": "fakeDom"
+        },
+        {
+          "exported": false,
+          "hunks": [
+            "H109",
+            "H110",
+            "H111"
+          ],
+          "line": 131,
+          "name": "mountPanel"
+        }
+      ],
+      "walk": true
+    },
+    {
+      "added": 13,
+      "carried_forward": true,
+      "hunks": [
+        {
+          "context": "test('manifest is the trusted worker with exactly the declared keys', () => {",
+          "id": "H112",
+          "new_count": 8,
+          "new_start": 191
+        },
+        {
+          "context": "test('manifest declares the source settings as multiline strings', () => {",
+          "id": "H113",
+          "new_count": 17,
+          "new_start": 206
+        }
+      ],
+      "kind": "test",
+      "old_path": null,
+      "path": "tests/worker.test.mjs",
+      "removed": 2,
+      "removed_symbols": [],
+      "status": "modified",
+      "symbols": [],
+      "walk": false
+    }
+  ],
+  "siblings": []
+}

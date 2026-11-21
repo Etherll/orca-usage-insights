@@ -79,7 +79,7 @@ test('panel requests a report and renders every section', async () => {
   const ctx = vm.createContext({ document, orca, window: { innerWidth: 800, innerHeight: 600 }, console, Date, Intl, JSON, Math })
   vm.runInContext(script, ctx)
   await new Promise((r) => setTimeout(r, 20))
-  assert.equal(JSON.stringify(calls[0]), JSON.stringify(['usage.report', { range: '7d', includeCache: true }]))
+  assert.equal(JSON.stringify(calls.find(([name]) => name === 'usage.report')), JSON.stringify(['usage.report', { range: '7d', includeCache: true }]))
   const get = (id) => els.get(id)
   assert.match(get('tiles').innerHTML, /226\.8k/)
   assert.match(get('tiles').innerHTML, /Cache hit rate/)
@@ -128,13 +128,14 @@ test('panel shows an error state when the worker fails', async () => {
   assert.equal(els.get('status').hidden, false)
 })
 
-async function mountPanel(makeReport = (input) => sampleReport(input.range, input.includeCache)) {
+async function mountPanel(makeReport = (input) => sampleReport(input.range, input.includeCache), settings) {
   const html = readFileSync(new URL('../panel/index.html', import.meta.url), 'utf8')
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1]
   const { els, document } = fakeDom()
   const calls = []
+  const pluginEvents = {}
   // Price requests (the footer line) are not part of what these tests check.
-  const orca = { plugin: { request: async (name, input) => { if (name.startsWith('prices.')) return null; calls.push(JSON.parse(JSON.stringify({ name, input }))); return makeReport(input) }, on() {} }, on() {} }
+  const orca = { plugin: { request: async (name, input) => { if (name.startsWith('prices.')) return null; calls.push(JSON.parse(JSON.stringify({ name, input }))); return makeReport(input) }, on(name, handler) { pluginEvents[name] = handler } }, on() {}, settings }
   const viewport = { innerWidth: 320, innerHeight: 600 }
   const events = {}
   vm.runInContext(script, vm.createContext({ document, orca, window: viewport, addEventListener: (name, handler) => { events[name] = handler }, console, Date, Intl, JSON, Math, setTimeout, clearTimeout }))
@@ -142,7 +143,7 @@ async function mountPanel(makeReport = (input) => sampleReport(input.range, inpu
   await settle()
   const get = (id) => els.get(id)
   const click = (id, dataset) => get(id).listeners.click({ target: { closest: () => ({ dataset }) } })
-  return { calls, get, click, settle, viewport, events }
+  return { calls, get, click, settle, viewport, events, pluginEvents }
 }
 
 test('custom dates validate before requesting, allow one local day, and presets discard dates', async () => {
@@ -211,6 +212,166 @@ test('cache switch requests consistent totals and token charts, and reset querie
   await settle()
   assert.deepEqual(calls.at(-1).input, { range: '7d', includeCache: true })
   assert.equal(get('chips').innerHTML, '')
+})
+
+test('the Default range setting picks the opening range and the one a cleared custom range returns to', async () => {
+  const { calls, get, click, settle } = await mountPanel(undefined, { get: async (key) => (key === 'defaultRange' ? '1d' : undefined) })
+  assert.deepEqual(calls, [{ name: 'usage.report', input: { range: '1d', includeCache: true } }])
+  click('ranges', { range: 'custom' })
+  get('start-date').value = get('end-date').value = '2026-11-03'
+  get('date-apply').listeners.click()
+  await settle()
+  assert.equal(calls.at(-1).input.range, 'custom')
+  get('chips').listeners.click({ target: { closest: () => ({ dataset: { clear: 'range' } }) } })
+  await settle()
+  assert.deepEqual(calls.at(-1).input, { range: '1d', includeCache: true })
+})
+
+test('an unknown or unreadable Default range opens on 7d, and a range picked before it is read is kept', async () => {
+  for (const settings of [{ get: async () => '1y' }, { get: async () => { throw new Error('settings offline') } }]) {
+    const { calls } = await mountPanel(undefined, settings)
+    assert.deepEqual(calls, [{ name: 'usage.report', input: { range: '7d', includeCache: true } }])
+  }
+  let answer
+  const { calls, click, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  assert.equal(calls.length, 0, 'the first report waits for the setting')
+  click('ranges', { range: '30d' })
+  await settle()
+  answer('1d')
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['30d'])
+})
+
+test('a background load, a failed pick or a no-op pick before the Default range is read', async () => {
+  // A usage.changed load that starts without the setting is redone on the default.
+  let answer
+  let mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  mounted.pluginEvents['usage.changed']()
+  await mounted.settle()
+  answer('30d')
+  await mounted.settle()
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d', '30d'])
+  // A picked range whose load fails is kept.
+  let fail = true
+  mounted = await mountPanel((input) => { if (fail) { fail = false; throw new Error('worker down') } return sampleReport(input.range, input.includeCache) }, { get: () => new Promise((resolve) => { answer = resolve }) })
+  mounted.click('ranges', { range: '90d' })
+  await mounted.settle()
+  answer('1d')
+  await mounted.settle()
+  // The failed 90d is retried on 90d, not replaced by the default.
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['90d', '90d'])
+  // Clicking the range already shown counts as a pick.
+  mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  mounted.click('ranges', { range: '7d' })
+  answer('1d')
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d'])
+})
+
+test('a Default range changed while the panel is open is where a cleared custom range goes', async () => {
+  let saved = '7d'
+  let listener
+  const { calls, get, click, settle } = await mountPanel(undefined, { get: async () => saved, onDidChange: (fn) => { listener = fn } })
+  saved = '90d'
+  listener({ key: 'defaultRange' })
+  await settle()
+  click('ranges', { range: 'custom' })
+  get('start-date').value = get('end-date').value = '2026-11-03'
+  get('date-apply').listeners.click()
+  await settle()
+  get('chips').listeners.click({ target: { closest: () => ({ dataset: { clear: 'range' } }) } })
+  await settle()
+  assert.deepEqual(calls.at(-1).input, { range: '90d', includeCache: true })
+})
+
+test('an older Default range read that answers last does not win over a newer one', async () => {
+  const answers = []
+  let listener
+  const { calls, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => answers.push(resolve)), onDidChange: (fn) => { listener = fn } })
+  listener({ key: 'defaultRange' })
+  await settle()
+  answers[1]('90d')
+  await settle()
+  answers[0]('30d')
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['90d'])
+})
+
+test('a Default range changed while the first read is out opens on the newer value', async () => {
+  const answers = []
+  let listener
+  const { calls, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => answers.push(resolve)), onDidChange: (fn) => { listener = fn } })
+  listener({ key: 'defaultRange' })
+  answers[0]('7d')
+  await settle()
+  assert.equal(calls.length, 0, 'the panel waits for the newest read')
+  answers[1]('90d')
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['90d'])
+})
+
+test('a slow Default range read does not hold the first report back', async () => {
+  let answer
+  const { calls, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  await new Promise((resolve) => setTimeout(resolve, 1600))
+  assert.deepEqual(calls.map((c) => c.input.range), ['7d'])
+  answer('30d')
+  await settle()
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['7d', '30d'])
+})
+
+test('a settings read that throws at once, a stuck first read, or an open Custom picker', async () => {
+  // A get that throws synchronously opens on 7d.
+  let mounted = await mountPanel(undefined, { get: () => { throw new Error('no settings') } })
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d'])
+  // A stuck first read doesn't block a newer answer.
+  let listener
+  const answers = []
+  mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => answers.push(resolve)), onDidChange: (fn) => { listener = fn } })
+  listener({ key: 'defaultRange' })
+  await mounted.settle()
+  answers[1]('90d')
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['90d'])
+  // Opening the Custom picker counts as a pick, so the default doesn't move the range under it.
+  let answer
+  mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  mounted.click('ranges', { range: 'custom' })
+  answer('30d')
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d'])
+  assert.equal(mounted.get('custom-range').hidden, false)
+})
+
+test('a valid Default range answer is kept when a newer read fails', async () => {
+  const answers = []
+  let listener
+  const { calls, settle } = await mountPanel(undefined, { get: () => new Promise((resolve, reject) => answers.push({ resolve, reject })), onDidChange: (fn) => { listener = fn } })
+  listener({ key: 'defaultRange' })
+  await settle()
+  answers[0].resolve('30d')
+  await settle()
+  answers[1].reject(new Error('host did not answer'))
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['30d'])
+})
+
+test('a custom range cleared before the Default range is read moves to it once read', async () => {
+  let answer
+  const { calls, get, click, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  click('ranges', { range: 'custom' })
+  get('start-date').value = get('end-date').value = '2026-11-03'
+  get('date-apply').listeners.click()
+  await settle()
+  get('chips').listeners.click({ target: { closest: () => ({ dataset: { clear: 'range' } }) } })
+  await settle()
+  answer('30d')
+  await settle()
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['custom', '7d', '30d'])
 })
 
 test('date and model detail shows exact escaped rows and visible sort choices', async () => {

@@ -2,11 +2,11 @@
 import { stackedBars, calendarHeatmap, punchCard, donut, hBars, sparkline, areaTrend, segmentBar, providerColor, compact, esc, TOKEN_KEYS, TOKEN_LABELS, TOKEN_COLORS, PROVIDER_LABELS } from './charts.mjs'
 import { pixelBanner } from './art.mjs'
 import { headline, tree, findings, notAnalysed, legend, priceLine, syncBody, changedSyncRows } from './breakdown.js'
-import { normalizeQuery, localDay, dayKey, MIN_USAGE_DATE } from '../core/query.mjs'
+import { normalizeQuery, localDay, dayKey, MIN_USAGE_DATE, RANGE_DAYS } from '../core/query.mjs'
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { view: 'usage', range: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+const state = { view: 'usage', range: '7d', defaultRange: '7d', rangePicked: false, startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
 const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
 
 function money(n) {
@@ -155,7 +155,9 @@ function clearFilter(key) {
     $('model-search').value = ''
   }
   if (key === 'range' || (key === 'all' && state.range === 'custom')) {
-    state.range = '7d'
+    state.range = state.defaultRange
+    // Back on the default, so a Default range that is still being read can move it.
+    state.rangePicked = false
     $('custom-range').hidden = true
     $('date-error').hidden = true
   }
@@ -293,6 +295,7 @@ function applyDates() {
   $('start-date').setAttribute('aria-invalid', 'false')
   $('end-date').setAttribute('aria-invalid', 'false')
   state.range = 'custom'
+  state.rangePicked = true
   state.startDate = startDate
   state.endDate = endDate
   load()
@@ -588,6 +591,53 @@ function renderBreakdownView() {
   $('bd-foot').textContent = legend(v)
 }
 
+// The Default range setting picks the range the panel opens on and returns to. A range the person
+// picks before the setting is read is kept; a load that started without one (a background
+// usage.changed) is redone on the default.
+async function firstLoad() {
+  host?.settings?.onDidChange?.((change) => { if (change?.key === 'defaultRange') readDefaultRange() })
+  readDefaultRange()
+  // A slow host doesn't hold the first report back: it loads now and moves once the setting arrives.
+  const slow = globalThis.setTimeout?.(() => { if (!state.report && !state.busy) load() }, 1500)
+  // A change that lands meanwhile starts a newer read; wait for the newest one to answer.
+  if (defaultRangeWaiters) await new Promise((resolve) => defaultRangeWaiters.push(resolve))
+  globalThis.clearTimeout?.(slow)
+  const range = state.defaultRange
+  let moved = false
+  if (!state.rangePicked && state.range !== range) {
+    state.range = range
+    for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === range))
+    syncRadioTabs()
+    moved = true
+  }
+  if (moved || (!state.report && !state.busy)) load()
+}
+
+// Reads the saved Default range into state.defaultRange; a missing, unknown or unreadable value
+// leaves it as it was. Reads are numbered and the newest valid answer wins, so neither a slower
+// older answer nor a failed newer read undoes it. defaultRangeWaiters is null when no read is out,
+// else what to call once the newest read has answered.
+let defaultRangeReads = 0
+let defaultRangeApplied = 0
+let defaultRangeWaiters = null
+function readDefaultRange() {
+  const read = ++defaultRangeReads
+  defaultRangeWaiters ??= []
+  Promise.resolve()
+    .then(() => host?.settings?.get?.('defaultRange'))
+    .then((range) => {
+      if (read < defaultRangeApplied || (range !== 'all' && !RANGE_DAYS.has(range))) return
+      defaultRangeApplied = read
+      state.defaultRange = range
+    }, () => {})
+    .then(() => {
+      if (read !== defaultRangeReads) return
+      const waiters = defaultRangeWaiters
+      defaultRangeWaiters = null
+      for (const resolve of waiters) resolve()
+    })
+}
+
 async function loadPrices() {
   try {
     state.prices = await request('prices.status')
@@ -792,6 +842,7 @@ function bindControls() {
   $('ranges').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-range]')
     if (!b) return
+    state.rangePicked = true
     if (b.dataset.range === 'custom') {
       // Custom opens the date fields; the range changes on Apply.
       $('custom-range').hidden = false
@@ -901,6 +952,6 @@ if (typeof document !== 'undefined' && document.getElementById('app')) {
   bindControls()
   bindBreakdown()
   bindTooltip()
-  load()
+  firstLoad()
   loadPrices()
 }

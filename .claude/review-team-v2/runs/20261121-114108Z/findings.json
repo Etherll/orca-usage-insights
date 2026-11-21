@@ -1,0 +1,26 @@
+[
+  {
+    "class": "unordered async reads writing one slot",
+    "evidence": [
+      {
+        "kind": "trace",
+        "steps": [
+          "src/panel/panel.js:597 onDidChange read writes state.defaultRange",
+          "src/panel/panel.js:602 initial read writes it again unconditionally"
+        ]
+      }
+    ],
+    "file": "src/panel/panel.js",
+    "fix": "Number each read and apply only the newest; firstLoad applies state.defaultRange after its read.",
+    "id": "F-001",
+    "impact": "The panel opens on, or a cleared custom range returns to, the previous default until the next change.",
+    "line": 597,
+    "mechanism": "firstLoad and the onDidChange handler both write state.defaultRange from independent reads with no ordering.",
+    "origin": "introduced",
+    "quote": "    if (change?.key === 'defaultRange') readDefaultRange().then((range) => { if (range) state.defaultRange = range })",
+    "severity": "low",
+    "sweep": "Only readDefaultRange callers (panel.js:597, :599). request() for reports is serialized by state.busy/again.",
+    "title": "An older Default range read can overwrite a newer one",
+    "trigger": "1. Open the panel; firstLoad starts settings.get. 2. Change Default range in Settings before it answers; onDidChange starts a second get. 3. The second answers first, then the first answers with the old value."
+  }
+]
