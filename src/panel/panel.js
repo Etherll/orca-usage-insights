@@ -594,7 +594,12 @@ function renderBreakdownView() {
 // usage.changed) is redone on the default.
 async function firstLoad() {
   host?.settings?.onDidChange?.((change) => { if (change?.key === 'defaultRange') readDefaultRange() })
-  await readDefaultRange()
+  readDefaultRange()
+  // A slow host doesn't hold the first report back: it loads now and moves once the setting arrives.
+  const slow = globalThis.setTimeout?.(() => { if (!state.report && !state.busy) load() }, 1500)
+  // A change that lands meanwhile starts a newer read; wait for the newest one.
+  while (pendingDefaultRead) await pendingDefaultRead
+  globalThis.clearTimeout?.(slow)
   const range = state.defaultRange
   let moved = false
   if (!state.rangePicked && state.range !== range) {
@@ -609,12 +614,17 @@ async function firstLoad() {
 // Reads the saved Default range into state.defaultRange; a missing, unknown or unreadable value
 // leaves it as it was. Reads are numbered so a slower, older answer can't overwrite a newer one.
 let defaultRangeReads = 0
-async function readDefaultRange() {
+let pendingDefaultRead = null
+function readDefaultRange() {
   const read = ++defaultRangeReads
-  try {
-    const range = await host?.settings?.get?.('defaultRange')
-    if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range
-  } catch {}
+  pendingDefaultRead = (async () => {
+    try {
+      const range = await host?.settings?.get?.('defaultRange')
+      if (read === defaultRangeReads && (range === 'all' || RANGE_DAYS.has(range))) state.defaultRange = range
+    } catch {}
+    if (read === defaultRangeReads) pendingDefaultRead = null
+  })()
+  return pendingDefaultRead
 }
 
 async function loadPrices() {

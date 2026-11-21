@@ -1,0 +1,41 @@
+{
+  "files_walked": [
+    "panel/index.html",
+    "src/panel/panel.js",
+    "tests/panel.test.mjs"
+  ],
+  "candidates": [
+    {
+      "key": "K1",
+      "claim": "firstLoad uses state.defaultRange after awaiting only its own read; when a newer settings read is pending, the older read is discarded, so the panel opens on the stale range while the saved Default range is the newer value.",
+      "file": "src/panel/panel.js",
+      "line": 598,
+      "quote": "  const range = state.defaultRange",
+      "lens": "trace",
+      "trigger": "1. Panel mounts; firstLoad (panel.js:595) sends settings.get, read 1 (defaultRangeReads=1), pending. 2. User changes Default range to 90d in Orca settings; onDidChange (panel.js:596) calls readDefaultRange, read 2 sent. 3. Read 1 answers first with the pre-change value 7d; read 1 !== defaultRangeReads (2), so discarded (panel.js:616). 4. firstLoad resumes at panel.js:598 with state.defaultRange still the initial 7d; moved=false; load() shows 7d. 5. Read 2 answers 90d, sets state.defaultRange=90d; onDidChange path never switches range (P4). 6. Panel opens on 7d though saved setting is 90d; only a later custom clear returns to 90d.",
+      "wrong": "Should: opening range equals saved Default range as of open. Does: opening range is the pre-change value when a settings change lands during startup.",
+      "path": "src/panel/panel.js:596 -> src/panel/panel.js:598 -> src/panel/panel.js:616 -> src/panel/panel.js:605-606",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "medium; settle with a test: answers[1] pending, answers[0](\"7d\") then answers[1](\"90d\"), expect calls [\"90d\"]. Existing test at tests/panel.test.mjs:288-298 answers read 2 first, so this order is untested.",
+      "class": "stale-discard with no fallback: a numbered-latest guard drops an older answer, but the waiting caller does not wait for the newer answer, so it proceeds on the pre-discard value.",
+      "sweep": "readDefaultRange catch (panel.js:617): newer read unreadable after older valid read discarded, same loss, checked-broken by reasoning (state.defaultRange keeps initial 7d). Other numbered-read sites in panel.js not checked."
+    },
+    {
+      "key": "K2",
+      "claim": "firstLoad now waits on settings.get before the first report; a stalled host read delays the first load with no local timeout, where the old code loaded at once.",
+      "file": "src/panel/panel.js",
+      "line": 615,
+      "quote": "    const range = await host?.settings?.get?.('defaultRange')",
+      "lens": "journey",
+      "trigger": "1. Panel mounts with nothing loaded (state.report null). 2. Host settings.get for defaultRange does not answer promptly. 3. firstLoad (panel.js:597) awaits readDefaultRange, so load() at panel.js:606 does not run. 4. User sees skeleton until the host answers or the frame deadline rejects. Shell deadline: plugin-panel-shell.js:50-53 deadlineMs 120000 for non-user methods; whether settings.get is in PLUGIN_FRAME_USER_METHODS (userDeadlineMs 30 min) not checked. 5. Not a dead end: range clicks (panel.js:821-837) and Refresh (panel.js:913) call load() directly.",
+      "wrong": "Should: first report not gated on an optional setting read, or the read bounded. Does: first report waits for the setting up to the host deadline.",
+      "path": "src/panel/panel.js:597 -> src/panel/panel.js:597-615 -> src/panel/panel.js:606",
+      "origin": "introduced",
+      "severity": "low",
+      "confidence": "low; needs host deadline for settings.get (plugin-panel-shell.js) and a real stall to confirm",
+      "class": "optional read gating the primary load with no local bound",
+      "sweep": "loadPrices (panel.js:620) is separate and not gated by firstLoad: checked-fine (panel.js:935 calls it directly)."
+    }
+  ]
+}

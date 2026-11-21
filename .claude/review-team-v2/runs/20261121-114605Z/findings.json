@@ -1,0 +1,50 @@
+[
+  {
+    "class": "awaiting a superseded async read",
+    "evidence": [
+      {
+        "kind": "trace",
+        "steps": [
+          "src/panel/panel.js:597 awaits only the first read",
+          "src/panel/panel.js:598 reads state.defaultRange before the newer read writes it"
+        ]
+      }
+    ],
+    "file": "src/panel/panel.js",
+    "fix": "Track the newest pending read and have firstLoad wait until no read is pending.",
+    "id": "F-001",
+    "impact": "Panel opens on the previous default although the setting says 90d.",
+    "line": 598,
+    "mechanism": "firstLoad awaits only its own read, then uses state.defaultRange, which the newer read has not written yet.",
+    "origin": "introduced",
+    "quote": "  const range = state.defaultRange",
+    "severity": "low",
+    "sweep": "Only firstLoad awaits readDefaultRange.",
+    "title": "Opening read discarded by a newer one leaves the panel on the previous default",
+    "trigger": "1. Open the panel (read 1 starts). 2. Change Default range to 90d before it answers (read 2 starts). 3. Read 1 answers first and is discarded; firstLoad continues with the old state.defaultRange."
+  },
+  {
+    "class": "first paint gated on an optional remote read",
+    "evidence": [
+      {
+        "kind": "trace",
+        "steps": [
+          "src/panel/panel.js:597 awaits the read before load",
+          "src/panel/panel.js:606 load runs only after it"
+        ]
+      }
+    ],
+    "file": "src/panel/panel.js",
+    "fix": "Start a fallback load after a short delay (1.5 s); the default still applies when it arrives via the moved \u2192 load() path.",
+    "id": "F-002",
+    "impact": "Blank panel (no skeleton) for as long as the host takes; the baseline loaded at once.",
+    "line": 597,
+    "mechanism": "firstLoad awaits the setting before calling load(); the frame shell deadline for non-user methods is 120 s (/home/etherl/.cache/orca/appimage/2602f079d4bba7502153504e/fb91f2c5982935052c2fe4bc/resources/app.asar.unpacked/out/shared/plugins/frames/plugin-panel-shell.js:51).",
+    "origin": "introduced",
+    "quote": "  await readDefaultRange()",
+    "severity": "low",
+    "sweep": "loadPrices is not gated (panel.js init).",
+    "title": "First report waits for settings.get up to the 120 s frame deadline",
+    "trigger": "1. Open the panel while the host is slow to answer settings.get. 2. No usage.report is sent until it answers or the shell deadline (120 s) rejects."
+  }
+]

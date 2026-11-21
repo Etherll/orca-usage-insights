@@ -297,6 +297,30 @@ test('an older Default range read that answers last does not win over a newer on
   assert.deepEqual(calls.map((c) => c.input.range), ['90d'])
 })
 
+test('a Default range changed while the first read is out opens on the newer value', async () => {
+  const answers = []
+  let listener
+  const { calls, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => answers.push(resolve)), onDidChange: (fn) => { listener = fn } })
+  listener({ key: 'defaultRange' })
+  answers[0]('7d')
+  await settle()
+  assert.equal(calls.length, 0, 'the panel waits for the newest read')
+  answers[1]('90d')
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['90d'])
+})
+
+test('a slow Default range read does not hold the first report back', async () => {
+  let answer
+  const { calls, settle } = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  await new Promise((resolve) => setTimeout(resolve, 1600))
+  assert.deepEqual(calls.map((c) => c.input.range), ['7d'])
+  answer('30d')
+  await settle()
+  await settle()
+  assert.deepEqual(calls.map((c) => c.input.range), ['7d', '30d'])
+})
+
 test('date and model detail shows exact escaped rows and visible sort choices', async () => {
   const hostile = '<img src=x onerror=alert(1)>'
   const { get, click, settle } = await mountPanel((input) => {

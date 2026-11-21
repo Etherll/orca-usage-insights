@@ -1,0 +1,25 @@
+{
+  "blocking_findings": 0,
+  "blocking_ids": [],
+  "candidates": 7,
+  "canonical_diff_sha256": "2ea6c8566b7b42052538de09b7678ad0a2349b086ad8527937a81e1f1690e38a",
+  "depth": "standard",
+  "findings": 2,
+  "lanes": 4,
+  "ledger_sha256": {
+    "candidates.json": "a4d69c289de53832b036d08f81d9ef61f69649377d36e94ebd3ecb7b38953d0c",
+    "findings.json": "9a52b1ad142d63bf8d5667592e493099f577454d0953d8f9ce8f84ae2d17d71b",
+    "lanes.json": "62d99ffa84f23eb666e33fa24a0a4ecd390ab8524077f1701b2f7a85672266d3",
+    "model.md": "34b21449dea0945ed2d045504f73166d65fa472ffc961482f48b358d6fcc8830",
+    "run.json": "3fb59bc2af5804d4c0bb6afb9dcd86ecb29ca9a254b3af1010cfeaaade8dd2ac",
+    "scope.json": "237ddf2d4c94ec09c41a9a73899283f08b447393bb7036093f641dbf8b801238"
+  },
+  "review_complete": true,
+  "review_mode": "delta",
+  "rounds": 1,
+  "schema": "review-team-v2/receipt@2",
+  "status": "complete",
+  "target_sha": "a883bf781674f013c1e22823a6fab898d6c1cd3b",
+  "validated_at": "2026-11-21T11:49:04Z",
+  "verdict": "non-blocking findings"
+}
