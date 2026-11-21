@@ -133,8 +133,9 @@ async function mountPanel(makeReport = (input) => sampleReport(input.range, inpu
   const script = html.match(/<script>([\s\S]*?)<\/script>/)[1]
   const { els, document } = fakeDom()
   const calls = []
+  const pluginEvents = {}
   // Price requests (the footer line) are not part of what these tests check.
-  const orca = { plugin: { request: async (name, input) => { if (name.startsWith('prices.')) return null; calls.push(JSON.parse(JSON.stringify({ name, input }))); return makeReport(input) }, on() {} }, on() {}, settings }
+  const orca = { plugin: { request: async (name, input) => { if (name.startsWith('prices.')) return null; calls.push(JSON.parse(JSON.stringify({ name, input }))); return makeReport(input) }, on(name, handler) { pluginEvents[name] = handler } }, on() {}, settings }
   const viewport = { innerWidth: 320, innerHeight: 600 }
   const events = {}
   vm.runInContext(script, vm.createContext({ document, orca, window: viewport, addEventListener: (name, handler) => { events[name] = handler }, console, Date, Intl, JSON, Math, setTimeout, clearTimeout }))
@@ -142,7 +143,7 @@ async function mountPanel(makeReport = (input) => sampleReport(input.range, inpu
   await settle()
   const get = (id) => els.get(id)
   const click = (id, dataset) => get(id).listeners.click({ target: { closest: () => ({ dataset }) } })
-  return { calls, get, click, settle, viewport, events }
+  return { calls, get, click, settle, viewport, events, pluginEvents }
 }
 
 test('custom dates validate before requesting, allow one local day, and presets discard dates', async () => {
@@ -239,6 +240,49 @@ test('an unknown or unreadable Default range opens on 7d, and a range picked bef
   answer('1d')
   await settle()
   assert.deepEqual(calls.map((c) => c.input.range), ['30d'])
+})
+
+test('a background load, a failed pick or a no-op pick before the Default range is read', async () => {
+  // A usage.changed load that starts without the setting is redone on the default.
+  let answer
+  let mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  mounted.pluginEvents['usage.changed']()
+  await mounted.settle()
+  answer('30d')
+  await mounted.settle()
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d', '30d'])
+  // A picked range whose load fails is kept.
+  let fail = true
+  mounted = await mountPanel((input) => { if (fail) { fail = false; throw new Error('worker down') } return sampleReport(input.range, input.includeCache) }, { get: () => new Promise((resolve) => { answer = resolve }) })
+  mounted.click('ranges', { range: '90d' })
+  await mounted.settle()
+  answer('1d')
+  await mounted.settle()
+  // The failed 90d is retried on 90d, not replaced by the default.
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['90d', '90d'])
+  // Clicking the range already shown counts as a pick.
+  mounted = await mountPanel(undefined, { get: () => new Promise((resolve) => { answer = resolve }) })
+  mounted.click('ranges', { range: '7d' })
+  answer('1d')
+  await mounted.settle()
+  assert.deepEqual(mounted.calls.map((c) => c.input.range), ['7d'])
+})
+
+test('a Default range changed while the panel is open is where a cleared custom range goes', async () => {
+  let saved = '7d'
+  let listener
+  const { calls, get, click, settle } = await mountPanel(undefined, { get: async () => saved, onDidChange: (fn) => { listener = fn } })
+  saved = '90d'
+  listener({ key: 'defaultRange' })
+  await settle()
+  click('ranges', { range: 'custom' })
+  get('start-date').value = get('end-date').value = '2026-11-03'
+  get('date-apply').listeners.click()
+  await settle()
+  get('chips').listeners.click({ target: { closest: () => ({ dataset: { clear: 'range' } }) } })
+  await settle()
+  assert.deepEqual(calls.at(-1).input, { range: '90d', includeCache: true })
 })
 
 test('date and model detail shows exact escaped rows and visible sort choices', async () => {

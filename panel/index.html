@@ -1451,7 +1451,7 @@ function syncBody(result) {
 
 const $ = (id) => document.getElementById(id)
 const host = globalThis.orca
-const state = { view: 'usage', range: '7d', defaultRange: '7d', startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
+const state = { view: 'usage', range: '7d', defaultRange: '7d', rangePicked: false, startDate: '', endDate: '', models: null, modelSearch: '', provider: 'all', host: 'all', scope: 'all', cache: true, metric: 'tokens', breakdown: 'model', sort: 'default', report: null, busy: false, bd: null, bdPath: [], prices: null, sync: null }
 const NOTE_KEY = 'usage-insights.prices-note.1.2.0'
 
 function money(n) {
@@ -1738,6 +1738,7 @@ function applyDates() {
   $('start-date').setAttribute('aria-invalid', 'false')
   $('end-date').setAttribute('aria-invalid', 'false')
   state.range = 'custom'
+  state.rangePicked = true
   state.startDate = startDate
   state.endDate = endDate
   load()
@@ -2033,21 +2034,35 @@ function renderBreakdownView() {
   $('bd-foot').textContent = legend(v)
 }
 
-// The Default range setting picks the range the panel opens on and returns to. A range picked
-// before the setting is read is kept.
+// The Default range setting picks the range the panel opens on and returns to. A range the person
+// picks before the setting is read is kept; a load that started without one (a background
+// usage.changed) is redone on the default.
 async function firstLoad() {
+  host?.settings?.onDidChange?.((change) => {
+    if (change?.key === 'defaultRange') readDefaultRange().then((range) => { if (range) state.defaultRange = range })
+  })
+  const range = await readDefaultRange()
+  let moved = false
+  if (range) {
+    state.defaultRange = range
+    if (!state.rangePicked && state.range !== range) {
+      state.range = range
+      for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === range))
+      syncRadioTabs()
+      moved = true
+    }
+  }
+  if (moved || (!state.report && !state.busy)) load()
+}
+
+// The saved Default range, or null when it is missing, unknown or can't be read.
+async function readDefaultRange() {
   try {
     const range = await host?.settings?.get?.('defaultRange')
-    if (range === 'all' || RANGE_DAYS.has(range)) {
-      state.defaultRange = range
-      if (!state.report && !state.busy) {
-        state.range = range
-        for (const b of $('ranges').querySelectorAll('button')) b.setAttribute('aria-checked', String(b.dataset.range === range))
-        syncRadioTabs()
-      }
-    }
-  } catch {}
-  if (!state.report && !state.busy) load()
+    return range === 'all' || RANGE_DAYS.has(range) ? range : null
+  } catch {
+    return null
+  }
 }
 
 async function loadPrices() {
@@ -2264,6 +2279,7 @@ function bindControls() {
     }
     $('custom-range').hidden = true
     $('date-error').hidden = true
+    state.rangePicked = true
     if (b.dataset.range === state.range) return
     state.range = b.dataset.range
     load()
