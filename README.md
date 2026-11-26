@@ -3,7 +3,7 @@
   Usage Insights
 </h1>
 
-<h3 align="center">See how much Claude Code, Codex and OpenCode you actually use, inside Orca.</h3>
+<h3 align="center">See how much Claude Code, Codex, OpenCode and Antigravity you actually use, inside Orca.</h3>
 
 <p align="center">
   <a href="#install">Install</a> •
@@ -30,7 +30,7 @@ Needs Orca 1.4.248 or newer.
 
 ## What you get
 
-The panel reads your Claude Code and Codex transcripts, plus the local OpenCode database, and turns them into:
+The panel reads your Claude Code and Codex transcripts, plus the local OpenCode and Antigravity (`agy`) databases, and turns them into:
 
 * **Totals** for today, 7 days, 30 days, 90 days, everything or dates you pick: tokens, estimated cost, today, cache hit rate, sessions and your streak.
 * **Daily charts** of tokens or cost, per token type and per provider.
@@ -116,6 +116,8 @@ By default the plugin reads this machine's `~/.claude`, `~/.config/claude` and `
 
 OpenCode 2.x is read from `${XDG_DATA_HOME:-~/.local/share}/opencode/opencode.db` (on Windows, `%USERPROFILE%\.local\share\opencode`, not `%APPDATA%`), or from the file `OPENCODE_DB` names. Channel builds such as `opencode-dev.db` count too, and installs older than 2.x are read from their old tables. The database is opened read-only and only changed messages are read. **Refresh** also drops messages deleted in OpenCode. It needs `node:sqlite` (Node 22.5 or newer, which Orca ships); without it the source shows a warning and everything else still works. SSH hosts don't read OpenCode yet.
 
+Antigravity (`agy`) is read from `~/.gemini/antigravity-cli/conversations/*.db`, or from `ANTIGRAVITY_APP_DATA_DIR/conversations` when `ANTIGRAVITY_APP_DATA_DIR` is set. Each conversation database is opened read-only and queried incrementally past the last generation index read; SSH hosts with `python3` read remote Antigravity conversation databases too.
+
 Histories from all of them are combined. A transcript that several accounts share counts once, and so does a hard link or a copied Codex turn. Codex turns are matched by turn ID, so a session resumed or copied under a new session ID still counts once. Older Codex logs have no turn IDs and can't be matched across sessions. The transcripts don't say which subscription paid for a turn, so the totals cover all accounts together. The source strip under the filters shows each folder's status, files, turns and latest usage, and a transcript that several folders share is counted in each of them there.
 
 Click a folder there to leave it out, and click it again to count it again. A folder you turn off stays off after a restart; the list is in Settings as **Turned-off transcript folders**. Turning one back on doesn't read its files again.
@@ -157,7 +159,7 @@ The first open after updating from 1.1.0 reads everything once, like a first ins
 
 Your transcripts stay on your machines. The plugin makes no network requests of its own, with two exceptions you start yourself: the SSH connections you add, and **Sync prices**, which downloads the public price lists from `raw.githubusercontent.com` (LiteLLM) and `models.dev` when you click it. Nothing about your usage is sent with those requests.
 
-**What it reads:** your Claude Code and Codex transcripts, including Codex's compressed `.jsonl.zst` files, and your local OpenCode SQLite database. Breakdown does not read OpenCode yet, so its spend shows under **Not analysed**.
+**What it reads:** your Claude Code and Codex transcripts, including Codex's compressed `.jsonl.zst` files, plus your OpenCode and Antigravity SQLite databases. Breakdown does not read OpenCode or Antigravity yet, so their spend shows under **Not analysed**.
 
 **What it keeps** in its cache folder, so later opens are fast:
 

@@ -9,6 +9,7 @@ import { createRecordStore } from '../core/record-store.mjs';
 import { NameDict } from '../core/table.mjs';
 import { PROVIDERS } from '../core/providers.mjs';
 import { MARKER_BYTES, createRecordsConsumer, markedLines } from './lines.mjs';
+import { createAntigravitySource } from './antigravity-source.mjs';
 import { createOpencodeSource } from './opencode-source.mjs';
 import { createParsePool } from './parse-pool.mjs';
 import { pathFor, rootSpecs } from './paths.mjs';
@@ -18,6 +19,7 @@ export { markedLines };
 
 const CACHE_VERSION = 6;
 const OPENCODE_CACHE_FILE = 'opencode-cache-v1.json';
+const ANTIGRAVITY_CACHE_FILE = 'antigravity-cache-v1.json';
 // Earlier caches, read when there is no current one. Their Claude entries carry over unread (parsers convert
 // pre-columns states); Codex files are read again, as their keys predate turn-based identity.
 const LEGACY_CACHE_VERSIONS = new Set([4, 5]);
@@ -40,6 +42,7 @@ export function createScanner({
   cacheFile,
   legacyCacheFile = null, // a path or a list of paths, newest first
   opencodeCacheFile = cacheFile ? pathFor(platform).join(pathFor(platform).dirname(cacheFile), OPENCODE_CACHE_FILE) : null,
+  antigravityCacheFile = cacheFile ? pathFor(platform).join(pathFor(platform).dirname(cacheFile), ANTIGRAVITY_CACHE_FILE) : null,
   concurrency = 8,
   // Threads that parse files read whole for the first time (first open, rewritten files).
   // 0 parses on the calling thread. Tail reads always parse inline: they are small.
@@ -56,8 +59,9 @@ export function createScanner({
   // Every file's table interns into one dictionary, so the store copies their columns in bulk.
   const names = new NameDict();
   let store = createRecordStore({ names });
-  // OpenCode databases are a second kind of source; their tables intern into the same dictionary.
+  // OpenCode and Antigravity databases are separate sources; their tables intern into the same dictionary.
   const opencode = createOpencodeSource({ platform, env, home, fs, names, cacheFile: opencodeCacheFile });
+  const antigravity = createAntigravitySource({ platform, env, home, fs, names, cacheFile: antigravityCacheFile });
   let extra = { claude: [], codex: [], disabled: [] }; // folders from settings, see setExtraRoots
   let extraKey = '[[],[],[]]';
   let rootsGen = 0;
@@ -124,6 +128,7 @@ export function createScanner({
     generation++;
     files = new Map();
     opencode.reset();
+    antigravity.reset();
     store = createRecordStore({ names });
     baseGen = null;
     loaded = true;
@@ -153,9 +158,12 @@ export function createScanner({
     await mapLimit(order, limit, (file) =>
       refreshFile(run, file, stats.get(file.path)).catch((error) => countFileError(run, file.path, error)),
     );
-    const opencodeRun = await opencode.scan({ force, disabled: folderSpecs.disabled });
-    run.errors += opencodeRun.errors;
-    if (opencodeRun.changed) run.changed = true;
+    const [opencodeRun, antigravityRun] = await Promise.all([
+      opencode.scan({ force, disabled: folderSpecs.disabled }),
+      antigravity.scan({ force, disabled: folderSpecs.disabled }),
+    ]);
+    run.errors += opencodeRun.errors + antigravityRun.errors;
+    if (opencodeRun.changed || antigravityRun.changed) run.changed = true;
     const walked = new Set(found.map((file) => file.path));
     // Cached files under a turned-off folder stay cached, so turning it on again reads only what changed.
     const off = (path) => !walked.has(path) && underAny(run.disabled, path, p.sep);
@@ -175,7 +183,7 @@ export function createScanner({
       }
       sources.push({ id: path, table: entry.parser.table() });
     }
-    sources.push(...opencodeRun.sources);
+    sources.push(...opencodeRun.sources, ...antigravityRun.sources);
     const records = store.update(sources);
     // Each root counts every file it reaches, shared ones included, and the cached files under a dir of it
     // that failed to list.
@@ -188,11 +196,12 @@ export function createScanner({
       return publicFolder({ ...folder, files: folder.paths.size, records: rows, latestRecordAt: latest > -Infinity ? new Date(latest).toISOString() : null });
     });
     statuses.push(publicFolder(opencodeRun.folder));
+    statuses.push(publicFolder(antigravityRun.folder));
     return {
       records,
       sources,
       names,
-      files: found.length + opencodeRun.files,
+      files: found.length + opencodeRun.files + antigravityRun.files,
       errors: run.errors,
       changed: run.changed,
       folders: statuses,
@@ -384,7 +393,7 @@ export function createScanner({
   }
 
   function persist() {
-    const job = saveChain.then(writeCache).then(() => opencode.flush());
+    const job = saveChain.then(writeCache).then(() => opencode.flush()).then(() => antigravity.flush());
     saveChain = job.catch(() => {});
     return job;
   }

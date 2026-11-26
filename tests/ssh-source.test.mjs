@@ -42,7 +42,7 @@ function localSource(home, extra = {}) {
   const source = createSshSource({
     host: 'box',
     command: () => ['sh', ['-s']],
-    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: '', CODEX_HOME: '', XDG_CONFIG_HOME: path.join(home, '.config') },
+    env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: '', CODEX_HOME: '', ANTIGRAVITY_APP_DATA_DIR: '', ANTIGRAVITY_CLI_DIR: '', XDG_CONFIG_HOME: path.join(home, '.config') },
     spawn: (cmd, args, opts) => {
       const child = spawn(cmd, args, opts);
       const end = child.stdin.end.bind(child.stdin);

@@ -4,7 +4,7 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { createClaudeParser, createCodexParser } from '../core/records.mjs';
+import { createAntigravityParser, createClaudeParser, createCodexParser } from '../core/records.mjs';
 import { createRecordStore } from '../core/record-store.mjs';
 import { NameDict } from '../core/table.mjs';
 import { LIST_SCRIPT, createReadParser, parseListing, readScript } from './ssh-script.mjs';
@@ -98,7 +98,7 @@ export function createSshSource({
         // Same rule as the local scanner: a grown file is read from its stored offset; anything
         // else (new, shrunk, rewritten) is read from the start with a fresh parser.
         // A tail needs the entry's parser now: lines arrive before collect() would build it.
-        const tail = entry && entry.kind === file.kind && file.size >= entry.offset && grew(entry.key, file.key) && ensureParser(entry);
+        const tail = file.kind !== 'antigravity' && entry && entry.kind === file.kind && file.size >= entry.offset && grew(entry.key, file.key) && ensureParser(entry);
         const target = tail ? entry : freshEntry(file);
         if (!tail) files.set(file.path, target);
         target.pendingKey = file.key;
@@ -235,13 +235,17 @@ export function createSshSource({
   }
 
   function freshEntry(file) {
-    const ctx = { sessionId: path.posix.basename(file.path).replace(/\.jsonl$/i, ''), project: path.posix.basename(path.posix.dirname(file.path)), host: id };
+    const ctx = { sessionId: path.posix.basename(file.path).replace(/\.(jsonl|db)$/i, ''), project: path.posix.basename(path.posix.dirname(file.path)), host: id };
     return { key: null, offset: 0, kind: file.kind, ctx, state: null, parser: makeParser(file.kind, ctx) };
   }
 
   // Every row's host is this source's id; an older cache's state may name another, so restores are relabelled.
   function makeParser(kind, ctx, state) {
-    const parser = kind === 'claude' ? createClaudeParser(ctx, state, { names }) : createCodexParser(ctx, state, { names });
+    const parser = kind === 'claude'
+      ? createClaudeParser(ctx, state, { names })
+      : kind === 'antigravity'
+        ? createAntigravityParser(ctx, state, { names })
+        : createCodexParser(ctx, state, { names });
     if (state) {
       const table = parser.table();
       table.host.fill(names.id(id), 0, table.length);
@@ -279,7 +283,7 @@ export function createSshSource({
       const legacy = LEGACY_CACHE_VERSIONS.has(raw?.version);
       if ((raw?.version !== CACHE_VERSION && !legacy) || raw.host !== host || typeof raw.files !== 'object' || raw.files === null) return;
       for (const [p, e] of Object.entries(raw.files)) {
-        if (!e || (e.kind !== 'claude' && e.kind !== 'codex') || !Number.isSafeInteger(e.offset) || e.offset < 0 || !e.state || typeof e.state !== 'object') continue;
+        if (!e || (e.kind !== 'claude' && e.kind !== 'codex' && e.kind !== 'antigravity') || !Number.isSafeInteger(e.offset) || e.offset < 0 || !e.state || typeof e.state !== 'object') continue;
         if (legacy && e.kind === 'codex') continue;
         files.set(p, { key: typeof e.key === 'string' ? e.key : null, offset: e.offset, kind: e.kind, ctx: { ...e.ctx, host: id }, state: e.state, parser: null });
       }

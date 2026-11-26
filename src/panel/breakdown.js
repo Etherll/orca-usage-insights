@@ -17,6 +17,7 @@ export const BUCKET_INFO = {
 export const REASON_INFO = {
   ssh: { label: 'On SSH hosts', next: 'Breakdown reads transcripts on this machine only. SSH usage still counts in the total.' },
   opencode: { label: 'OpenCode sessions', next: 'Breakdown reads Claude Code and Codex transcripts. OpenCode usage still counts in the total.' },
+  antigravity: { label: 'Antigravity sessions', next: 'Breakdown reads Claude Code and Codex transcripts. Antigravity usage still counts in the total.' },
   zstd: { label: 'Compressed Codex files', next: "This Orca's Node.js can't read .zst files. Updating Orca fixes it." },
   'too-large': { label: 'Files too large', next: 'Compressed transcripts over 64 MB are skipped.' },
   parse: { label: "Files that couldn't be read", next: 'See the This machine status above for which files failed.' },
