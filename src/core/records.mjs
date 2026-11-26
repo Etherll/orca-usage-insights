@@ -172,6 +172,48 @@ export function createCodexIdentity(ctx, state) {
   };
 }
 
+export function createAntigravityParser(ctx, state, { names } = {}) {
+  const { sessionId = '', project = '' } = ctx ?? {};
+  const host = ctx?.host ?? 'local';
+  const table = restoreTable(state, names);
+  const inRange = yearCheck();
+  let rowOf = null;
+  const add = (obj) => {
+    if (obj?.type !== 'antigravity_usage') return;
+    const ms = typeof obj.ms === 'number' && Number.isFinite(obj.ms) ? obj.ms : NaN;
+    if (!inRange(ms)) return;
+    const input = count(obj.input);
+    const output = count(obj.output);
+    const cacheRead = count(obj.cacheRead);
+    if (input === 0 && output === 0 && cacheRead === 0) return;
+    const model = nonEmptyString(obj.model) ?? 'unknown';
+    const cwd = rawCwd(obj.cwd);
+    const recordProject = lastSegment(cwd) || project;
+    const recordSession = nonEmptyString(obj.sessionId) ?? sessionId;
+    const key = nonEmptyString(obj.key) ?? null;
+    if (key === null) {
+      table.push(undefined, ms, 'antigravity', model, recordProject, recordSession, cwd, host, input, output, cacheRead, 0, 0);
+      return;
+    }
+    if (rowOf === null) rowOf = keyRows(table);
+    const at = rowOf.get(key);
+    if (at === undefined) rowOf.set(key, table.push(key, ms, 'antigravity', model, recordProject, recordSession, cwd, host, input, output, cacheRead, 0, 0));
+    else table.replace(at, ms, 'antigravity', model, recordProject, recordSession, cwd, host, input, output, cacheRead, 0, 0);
+  };
+  return {
+    push(text) {
+      for (const line of completeLines(text)) {
+        const obj = parseJson(line);
+        if (obj) add(obj);
+      }
+    },
+    pushObject: add,
+    table: () => table,
+    records: () => table.toRecords(),
+    state: ({ binary = false } = {}) => ({ table: encodeTable(table, { binary }) }),
+  };
+}
+
 function restoreTable(state, names = new NameDict()) {
   if (state?.table) return decodeTable(state.table, names);
   const table = tableFromRecords(state?.packed ? unpackRecords(state.packed) : Array.isArray(state?.records) ? state.records : [], names);

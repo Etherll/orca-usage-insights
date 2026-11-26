@@ -24,24 +24,37 @@ export const LIST_SCRIPT = [
   '  c="${CODEX_HOME:-$HOME/.codex}"',
   "  printf '%s/sessions\\n%s/archived_sessions\\n' \"$c\" \"$c\"",
   '}',
+  'roots_antigravity() {',
+  '  a="${ANTIGRAVITY_APP_DATA_DIR:-${ANTIGRAVITY_CLI_DIR:-$HOME/.gemini/antigravity-cli}}"',
+  "  printf '%s/conversations\\n' \"$a\"",
+  '}',
   "if find / -maxdepth 0 -printf '' >/dev/null 2>&1; then GNU=1; else GNU=0; fi",
   'seen=""',
   'list() {',
-  '  kind=$1',
+  '  kind=$1; pat=${2:-*.jsonl}',
   '  while IFS= read -r d; do',
   '    [ -d "$d" ] || continue',
   '    real=$(cd "$d" 2>/dev/null && pwd -P) || continue',
   '    case " $seen " in *" $real "*) continue ;; esac',
   '    seen="$seen $real"',
   '    if [ "$GNU" = 1 ]; then',
-  "      find \"$real\" -type f -name '*.jsonl' -printf \"$RS\"\"F\\t$kind\\t%s\\t%T@\\t%p\\n\" 2>/dev/null",
+  "      find \"$real\" -type f -name \"$pat\" -printf \"$RS\"\"F\\t$kind\\t%s\\t%T@\\t%p\\n\" 2>/dev/null",
   '    else',
-  "      find \"$real\" -type f -name '*.jsonl' -exec stat -f \"$RS\"\"F\t$kind\t%z\t%m\t%N\" {} + 2>/dev/null",
+  "      find \"$real\" -type f -name \"$pat\" -exec stat -f \"$RS\"\"F\t$kind\t%z\t%m\t%N\" {} + 2>/dev/null",
   '    fi',
   '  done',
   '}',
   'roots_claude | list claude',
   'roots_codex | list codex',
+  'if command -v python3 >/dev/null 2>&1; then',
+  '  roots_antigravity | while IFS= read -r d; do',
+  '    [ -d "$d" ] || continue',
+  '    real=$(cd "$d" 2>/dev/null && pwd -P) || continue',
+  '    case " $seen " in *" $real "*) continue ;; esac',
+  '    seen="$seen $real"',
+  `    python3 -c 'import os,sys; d=sys.argv[1]; rs="\\x1e"\nfor e in sorted(os.scandir(d), key=lambda x: x.name):\n  if not e.name.endswith(".db") or not (e.is_file() or e.is_symlink()): continue\n  try: st=os.stat(e.path)\n  except OSError: continue\n  sz=st.st_size; mt=st.st_mtime\n  try:\n    wst=os.stat(e.path+"-wal"); sz+=wst.st_size\n    if wst.st_mtime>mt: mt=wst.st_mtime\n  except OSError: pass\n  sys.stdout.write(f"{rs}F\\tantigravity\\t{sz}\\t{mt:.6f}\\t{e.path}\\n")' "$real" 2>/dev/null`,
+  '  done',
+  'fi',
   "printf '%sE\\n' \"$RS\"",
   '',
 ].join('\n');
@@ -93,12 +106,146 @@ def codex(o):
     if t == 'event_msg' and p.get('type') == 'token_count':
         return {'type': t, 'id': o.get('id'), 'timestamp': o.get('timestamp'), 'payload': {'id': p.get('id'), 'type': 'token_count', 'info': p.get('info')}}
     return None
+def _rv(buf, i):
+    v = s = 0
+    n = len(buf)
+    lim = min(n, i + 10)
+    while i < lim:
+        b = buf[i]; i += 1
+        v |= (b & 0x7f) << s
+        if not (b & 0x80): return v, i
+        s += 7
+    return None, i
+def _pb(buf):
+    i, n = 0, len(buf)
+    while i < n:
+        tag, i = _rv(buf, i)
+        if tag is None: return
+        fn, wt = tag >> 3, tag & 7
+        if fn <= 0: return
+        if wt == 0:
+            v, i = _rv(buf, i)
+            if v is None: return
+            yield fn, 0, v
+        elif wt == 1:
+            if i + 8 > n: return
+            yield fn, 1, buf[i:i+8]; i += 8
+        elif wt == 2:
+            ln, i = _rv(buf, i)
+            if ln is None or i + ln > n: return
+            yield fn, 2, buf[i:i+ln]; i += ln
+        elif wt == 5:
+            if i + 4 > n: return
+            yield fn, 5, buf[i:i+4]; i += 4
+        else:
+            return
+def _ts_ms(buf):
+    sec = nano = 0; has = False
+    for fn, wt, val in _pb(buf):
+        if wt != 0: return None
+        if fn == 1: sec = val; has = True
+        elif fn == 2: nano = val
+        else: return None
+    if not has or sec < 1577836800 or sec > 2524608000: return None
+    return sec * 1000 + nano // 1000000
+def _step_ms(buf):
+    found = {}
+    for fn, wt, val in _pb(buf):
+        if wt != 2: continue
+        ms = _ts_ms(val)
+        if ms is not None:
+            if fn == 1: return ms
+            found.setdefault(fn, ms)
+    for fn in (1, 6, 7, 8):
+        if fn in found: return found[fn]
+    return next(iter(found.values()), None)
+def read_antigravity(path):
+    import sqlite3, urllib.parse
+    try:
+        st = os.stat(path)
+        conn = sqlite3.connect('file:' + urllib.parse.quote(path, safe='/') + '?mode=ro', uri=True, timeout=2.0)
+    except Exception:
+        return -1
+    try:
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if 'gen_metadata' not in tables:
+            return st.st_size
+        cwd = ''; fallback_ms = int(st.st_mtime * 1000); sid = os.path.splitext(os.path.basename(path))[0]
+        if 'trajectory_metadata_blob' in tables:
+            row = conn.execute('SELECT data FROM trajectory_metadata_blob LIMIT 1').fetchone()
+            if row and row[0]:
+                for fn, wt, val in _pb(row[0]):
+                    if wt != 2: continue
+                    if fn == 1 and not cwd:
+                        for sf, sw, sv in _pb(val):
+                            if sf == 1 and sw == 2:
+                                u = sv.decode('utf-8', 'replace').strip()
+                                cwd = urllib.parse.unquote(u[7:]) if u.startswith('file://') else u
+                                break
+                    elif fn == 2:
+                        ms = _ts_ms(val)
+                        if ms is not None: fallback_ms = ms
+                    elif fn == 6 and val:
+                        sid = val.decode('utf-8', 'replace').strip() or sid
+        has_steps = 'steps' in tables
+        step_cache = {}
+        last_ms = fallback_ms
+        for idx, blob in conn.execute('SELECT idx, data FROM gen_metadata ORDER BY idx ASC').fetchall():
+            if not blob: continue
+            inner = next((val for fn, wt, val in _pb(blob) if fn == 1 and wt == 2), None)
+            if not inner: continue
+            model = ''; usage_b = None; req = ''; cid = ''; step_idx = -1
+            for fn, wt, val in _pb(inner):
+                if wt != 2: continue
+                if fn == 4: usage_b = val
+                elif fn == 19: model = val.decode('utf-8', 'replace').strip()
+                elif fn == 20:
+                    k = v = ''
+                    for sf, sw, sv in _pb(val):
+                        if sw == 2:
+                            if sf == 1: k = sv.decode('utf-8', 'replace')
+                            elif sf == 2: v = sv.decode('utf-8', 'replace')
+                    if k == 'request_id' and v: req = v
+                    elif k == 'cascade_id' and v: cid = v
+                    elif k == 'last_step_index' and v.isdigit(): step_idx = int(v)
+            if not usage_b: continue
+            inp = out = cr = th = tx = 0
+            for fn, wt, val in _pb(usage_b):
+                if wt != 0: continue
+                if fn == 2: inp = val
+                elif fn == 3: out = val
+                elif fn == 5: cr = val
+                elif fn == 9: th = val
+                elif fn == 10: tx = val
+            if out == 0 and (th > 0 or tx > 0): out = th + tx
+            if inp == 0 and out == 0 and cr == 0: continue
+            ms = None
+            if has_steps and step_idx >= 0:
+                if step_idx not in step_cache:
+                    sr = conn.execute('SELECT metadata FROM steps WHERE idx = ?', (step_idx,)).fetchone()
+                    step_cache[step_idx] = _step_ms(sr[0]) if sr and sr[0] else None
+                ms = step_cache[step_idx]
+            if ms is None: ms = last_ms
+            last_ms = ms
+            rec_sid = cid or sid
+            rec = {'type': 'antigravity_usage', 'key': 'antigravity:' + (req or f'{rec_sid}:{idx}'), 'ms': ms, 'model': model or 'unknown', 'cwd': cwd, 'sessionId': rec_sid, 'input': inp, 'output': out, 'cacheRead': cr}
+            w(json.dumps(rec, separators=(',', ':'), ensure_ascii=False).encode('utf-8', 'surrogatepass') + b'\n')
+        return st.st_size
+    except Exception:
+        return -1
+    finally:
+        try: conn.close()
+        except Exception: pass
 for job in sys.stdin.read().split('\n'):
     if not job:
         continue
     kind, off, sz, path = job.split('\t', 3)
     off, sz = int(off), int(sz)
     w((RS + 'B\t' + path + '\n').encode('utf-8', 'surrogateescape'))
+    if kind == 'antigravity':
+        res = read_antigravity(path)
+        w((RS + 'N\t' + str(res) + '\n').encode())
+        continue
     try:
         if os.stat(path).st_size < sz:
             w((RS + 'N\t-1\n').encode())
@@ -147,7 +294,8 @@ export function readScript(jobs) {
     '  p=$1; off=$2; sz=$3; n=$((sz - off))',
     "  printf '\\036B\\t%s\\n' \"$p\"",
     // Unreadable, vanished or shrunk since the listing: -1 tells the caller to read it whole next time.
-    "  if [ ! -r \"$p\" ]; then printf '\\036N\\t-1\\n'; return; fi",
+    '  if [ "$4" = antigravity ]; then printf \'\\036N\\t0\\n\'; return; fi',
+    '  if [ ! -r "$p" ]; then printf \'\\036N\\t-1\\n\'; return; fi',
     "  cur=$(wc -c < \"$p\" 2>/dev/null | tr -d ' ') || cur=0",
     "  if [ -z \"$cur\" ] || [ \"$cur\" -lt \"$sz\" ]; then printf '\\036N\\t-1\\n'; return; fi",
     "  if [ \"$n\" -le 0 ]; then printf '\\036N\\t0\\n'; return; fi",
@@ -168,7 +316,7 @@ export function readScript(jobs) {
   const calls = jobs.map((job) => {
     const off = Math.max(0, Math.floor(job.offset) || 0);
     const size = Math.max(0, Math.floor(job.size) || 0);
-    return { kind: job.kind === 'codex' ? 'codex' : 'claude', path: String(job.path), off, size };
+    return { kind: job.kind === 'codex' ? 'codex' : job.kind === 'antigravity' ? 'antigravity' : 'claude', path: String(job.path), off, size };
   });
   // Paths with a newline can't be framed; they never come out of the listing either.
   const safe = calls.filter((c) => !c.path.includes('\n'));
@@ -198,7 +346,7 @@ export function parseListing(text) {
     if (!raw.startsWith(`${RS}F\t`)) continue;
     const [, kind, size, mtime, ...rest] = raw.slice(1).split('\t');
     const path = rest.join('\t');
-    if ((kind !== 'claude' && kind !== 'codex') || !path || !/^\d+$/.test(size)) continue;
+    if ((kind !== 'claude' && kind !== 'codex' && kind !== 'antigravity') || !path || !/^\d+$/.test(size)) continue;
     files.push({ kind, path, size: Number(size), key: `${size}:${mtime}` });
   }
   return complete ? files : null;
